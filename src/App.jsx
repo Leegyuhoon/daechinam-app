@@ -100,6 +100,38 @@ function isHoliday(date, settings) {
   return !!(settings.holidays && settings.holidays.includes(date));
 }
 
+// 정부 발표 기준 공휴일 (관공서의 공휴일에 관한 규정 / law.go.kr). 음력 명절은 매년 날짜가 달라 연도별로 미리 계산해둠.
+const KR_HOLIDAYS = {
+  "2026": [
+    ["2026-01-01", "신정"],
+    ["2026-02-16", "설날 연휴"], ["2026-02-17", "설날"], ["2026-02-18", "설날 연휴"],
+    ["2026-03-01", "삼일절"], ["2026-03-02", "삼일절 대체휴일"],
+    ["2026-05-01", "근로자의 날"],
+    ["2026-05-05", "어린이날"],
+    ["2026-05-24", "부처님오신날"], ["2026-05-25", "부처님오신날 대체휴일"],
+    ["2026-06-06", "현충일"],
+    ["2026-08-15", "광복절"], ["2026-08-17", "광복절 대체휴일"],
+    ["2026-09-24", "추석 연휴"], ["2026-09-25", "추석"], ["2026-09-26", "추석 연휴"],
+    ["2026-10-03", "개천절"], ["2026-10-05", "개천절 대체휴일"],
+    ["2026-10-09", "한글날"],
+    ["2026-12-25", "크리스마스"],
+  ],
+  "2027": [
+    ["2027-01-01", "신정"],
+    ["2027-02-06", "설날 대체휴일"], ["2027-02-07", "설날"], ["2027-02-08", "설날 연휴"], ["2027-02-09", "설날 연휴"],
+    ["2027-03-01", "삼일절"],
+    ["2027-05-01", "근로자의 날"],
+    ["2027-05-05", "어린이날"],
+    ["2027-05-13", "부처님오신날"],
+    ["2027-06-06", "현충일"], ["2027-06-07", "현충일 대체휴일"],
+    ["2027-08-15", "광복절"], ["2027-08-16", "광복절 대체휴일"],
+    ["2027-09-14", "추석 연휴"], ["2027-09-15", "추석"], ["2027-09-16", "추석 연휴"],
+    ["2027-10-03", "개천절"], ["2027-10-04", "개천절 대체휴일"],
+    ["2027-10-09", "한글날"], ["2027-10-11", "한글날 대체휴일"],
+    ["2027-12-25", "크리스마스"], ["2027-12-27", "크리스마스 대체휴일"],
+  ],
+};
+
 function calcRec(rec, settings) {
   if (!rec.clockOut) return { open: true, gross: 0, brk: 0, net: 0 };
   const i = new Date(rec.clockIn).getTime();
@@ -1775,17 +1807,46 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             등록된 날짜에 근무한 시간은 시급(또는 타임 지급액)의 {settings.holidayMultiplier ?? 1.5}배로 자동 계산됩니다.
           </div>
 
+          <div className="flex gap-2" style={{ marginTop: 10 }}>
+            {Object.keys(KR_HOLIDAYS).map((year) => (
+              <button key={year}
+                onClick={() => {
+                  const dates = KR_HOLIDAYS[year].map(([d]) => d);
+                  update((d) => ({
+                    ...d,
+                    settings: {
+                      ...d.settings,
+                      holidays: Array.from(new Set([...d.settings.holidays, ...dates])).sort(),
+                    },
+                  }));
+                  setToast(`${year}년 공휴일 ${dates.length}일을 채웠습니다`);
+                }}
+                style={{
+                  flex: 1, padding: "10px 0", fontSize: 12.5, fontWeight: 800,
+                  background: C.tileSoft, border: `1px solid ${C.line}`, color: C.text,
+                }}>
+                {year}년 공휴일 자동 채우기
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+            정부 발표(관공서의 공휴일에 관한 규정) 기준 날짜예요. 근로자의 날(5/1)도 포함되어 있어요 — 5인 미만 사업장이라도 근로기준법상 유급휴일이라 근무 시 수당 대상이에요. 실제 지정 여부는 자유롭게 태그를 눌러 빼실 수 있어요.
+          </div>
+
           {settings.holidays && settings.holidays.length > 0 ? (
             <div className="flex flex-wrap gap-1.5" style={{ marginTop: 10 }}>
-              {settings.holidays.map((h) => (
-                <button key={h} onClick={() => update((d) => ({ ...d, settings: { ...d.settings, holidays: d.settings.holidays.filter((x) => x !== h) } }))}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5, padding: "6px 10px",
-                    background: C.tileSoft, border: `1px solid ${C.line}`, fontSize: 12, fontFamily: MONO, color: C.text,
-                  }}>
-                  {h} <X size={12} color={C.sub} />
-                </button>
-              ))}
+              {settings.holidays.map((h) => {
+                const label = Object.values(KR_HOLIDAYS).flat().find(([d]) => d === h)?.[1];
+                return (
+                  <button key={h} onClick={() => update((d) => ({ ...d, settings: { ...d.settings, holidays: d.settings.holidays.filter((x) => x !== h) } }))}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 5, padding: "6px 10px",
+                      background: C.tileSoft, border: `1px solid ${C.line}`, fontSize: 12, fontFamily: MONO, color: C.text,
+                    }}>
+                    {h}{label ? ` ${label}` : ""} <X size={12} color={C.sub} />
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div style={{ fontSize: 12, color: C.sub, marginTop: 10 }}>등록된 공휴일이 없습니다.</div>
