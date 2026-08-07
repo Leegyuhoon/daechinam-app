@@ -100,6 +100,17 @@ function isHoliday(date, settings) {
   return !!(settings.holidays && settings.holidays.includes(date));
 }
 
+// 추가근무 시간을 "N회 + M분" 형태로 표시 (1회 = 120분 기준). 실제 급여는 otMin(30분 단위) 그대로 계산되고, 이건 표시용.
+const OT_UNIT_MIN = 120;
+function otLabel(otMin) {
+  if (!otMin) return "";
+  const units = Math.floor(otMin / OT_UNIT_MIN);
+  const rest = otMin % OT_UNIT_MIN;
+  if (units > 0 && rest > 0) return `${units}회 +${minStr(rest)}`;
+  if (units > 0) return `${units}회`;
+  return `+${minStr(rest)}`;
+}
+
 // 정부 발표 기준 공휴일 (관공서의 공휴일에 관한 규정 / law.go.kr). 음력 명절은 매년 날짜가 달라 연도별로 미리 계산해둠.
 const KR_HOLIDAYS = {
   "2026": [
@@ -1080,7 +1091,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <>
                         <div style={{ marginTop: 3 }}>
                           {p.blocks > 0 ? (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 +{p.blocks}회</span>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 {otLabel(p.otMin)}</span>
                           ) : shortish ? (
                             <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
                           ) : (
@@ -1366,7 +1377,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
               <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
               <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
               <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.aquaDeep : shortish ? C.amber : C.sub }}>
-                {!agg.shift ? "—" : q.blocks > 0 ? `추가 +${q.blocks}회` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
+                {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
               </span>
               <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{money(q.pay)}</span>
             </div>
