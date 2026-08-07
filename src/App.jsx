@@ -1,0 +1,1917 @@
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import {
+  MapPin, ChevronLeft, ChevronRight, X, Plus, Trash2, Check, AlertTriangle,
+  Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, Copy, Lock,
+  ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
+  Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal,
+} from "lucide-react";
+
+/* ─────────────────────────  토큰  ───────────────────────── */
+const C = {
+  bg: "#08171D", bgSoft: "#0E2029", grout: "#0A1A21",
+  tile: "#FFFFFF", tileSoft: "#F2F6F7",
+  text: "#0A1A20", sub: "#5E7986",
+  onDark: "#E6F2F4", onDarkSub: "#7FA0AB",
+  aqua: "#25C4D8", aquaDeep: "#0A8497",
+  amber: "#FFB020", coral: "#FF6B5E",
+  line: "#DFE8EA", lineDark: "#1B3540",
+};
+const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
+const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
+const KEY = "cleanwork:v1";        // 공유 — 근무자·현장·기록
+const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
+
+/* ─────────────────────────  유틸  ───────────────────────── */
+const pad = (n) => String(n).padStart(2, "0");
+const dKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseKey = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+const money = (n) => Math.round(n).toLocaleString("ko-KR");
+const hm = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}시간 ${m % 60}분`; };
+const hmc = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
+const tstr = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const uid = () => Math.random().toString(36).slice(2, 10);
+const dist = (m) => (m == null ? "—" : m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`);
+
+function haversine(a, b) {
+  const R = 6371000, rad = (x) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function nearestSite(loc, sites) {
+  let best = null;
+  sites.forEach((s) => { const d = haversine(loc, s); if (!best || d < best.d) best = { site: s, d }; });
+  return best;
+}
+const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
+
+const DEFAULTS = {
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {},
+  settings: {
+    payMode: "shift",        // shift = 타임제, hourly = 시간제
+    shiftHours: 2,           // 1타임 기본 시간
+    shiftPay: 30000,         // 1타임 지급액
+    otThreshold: 30,         // 이 분을 넘겨야 추가근무 인정
+    otPay: 7500,             // 인정 1회당 추가 지급액
+    otRepeat: true,          // 기준 분 단위로 반복 가산
+    shortThreshold: 15,      // 이 분 이상 모자라면 부족으로 표시
+    wage: 15000, stdHours: 8, otPremium: false, autoBreak: true,
+    adminPin: null, geofence: true, defaultRadius: 200, companyName: "대신치워주는남자",
+  },
+};
+const DEV_DEFAULT = { deviceId: null, workerId: null, boundAt: null };
+
+function migrate(p) {
+  const d = { ...DEFAULTS, ...p, settings: { ...DEFAULTS.settings, ...(p.settings || {}) } };
+  d.sites = (d.sites || []).map((s) =>
+    typeof s === "string" ? { id: uid(), name: s, lat: null, lng: null, radius: d.settings.defaultRadius } : s);
+  d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
+  delete d.deviceWorkerId;
+  return d;
+}
+
+/* 정산서 계산 */
+const EMPTY_ADJ = { extraLabel: "", extra: 0, deductLabel: "", deduct: 0, tax: false, memo: "" };
+function payslipCalc(data, workerId, ym) {
+  const worker = data.workers.find((w) => w.id === workerId);
+  const recs = data.records
+    .filter((r) => r.workerId === workerId && r.date.slice(0, 7) === ym && r.clockOut)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.clockIn.localeCompare(b.clockIn));
+  const agg = aggregate(recs, worker, data.settings);
+  const adj = { ...EMPTY_ADJ, ...(data.adjustments[`${workerId}:${ym}`] || {}) };
+  const base = Math.round(agg.pay);
+  const extra = Number(adj.extra) || 0;
+  const gross = base + extra;
+  const tax = adj.tax ? Math.floor((gross * 0.033) / 10) * 10 : 0;
+  const deduct = Number(adj.deduct) || 0;
+  return { worker, recs, agg, adj, base, extra, gross, tax, deduct, net: gross - tax - deduct };
+}
+const ymLabel = (ym) => `${ym.slice(0, 4)}년 ${Number(ym.slice(5, 7))}월`;
+
+const autoBreakH = (g) => (g >= 8 ? 1 : g >= 4 ? 0.5 : 0);
+const minStr = (m) => {
+  const r = Math.round(Math.abs(m));
+  return r < 60 ? `${r}분` : r % 60 === 0 ? `${r / 60}시간` : `${Math.floor(r / 60)}시간 ${r % 60}분`;
+};
+
+function calcRec(rec, settings) {
+  if (!rec.clockOut) return { open: true, gross: 0, brk: 0, net: 0 };
+  const i = new Date(rec.clockIn).getTime();
+  let o = new Date(rec.clockOut).getTime();
+  if (o <= i) o += 86400000;
+  const gross = (o - i) / 3600000;
+  let brk = 0;
+  if (rec.breakMinutes != null) brk = rec.breakMinutes / 60;
+  else if (settings.payMode !== "shift" && settings.autoBreak) brk = autoBreakH(gross);
+  return { open: false, gross, brk, net: Math.max(0, gross - brk) };
+}
+
+/* 기록 한 건(= 한 타임)의 판정과 금액 */
+function calcPay(rec, worker, settings) {
+  const c = calcRec(rec, settings);
+  if (c.open) return { ...c, open: true, pay: 0 };
+  if (settings.payMode !== "shift") {
+    const wage = worker?.wage ?? settings.wage;
+    return { ...c, open: false, pay: c.net * wage, base: c.net * wage, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0 };
+  }
+  const sh = worker?.shiftHours ?? settings.shiftHours;
+  const sp = worker?.shiftPay ?? settings.shiftPay;
+  const th = Math.max(1, settings.otThreshold);
+  const diffMin = Math.round((c.net - sh) * 60);
+  let blocks = 0;
+  if (diffMin >= th) blocks = settings.otRepeat ? Math.floor(diffMin / th) : 1;
+  const otPay = blocks * settings.otPay;
+  return {
+    ...c, open: false, base: sp, otPay, pay: sp + otPay, blocks, diffMin,
+    otMin: blocks * th, shortMin: Math.max(0, -diffMin), overMin: Math.max(0, diffMin), target: sh,
+  };
+}
+
+function aggregate(records, worker, settings) {
+  const shift = settings.payMode === "shift";
+  const std = worker?.stdHours ?? settings.stdHours;
+  const sh = worker?.shiftHours ?? settings.shiftHours;
+  const byDate = {};
+  let net = 0, pay = 0, times = 0, base = 0, otPay = 0, blocks = 0;
+  let otMin = 0, shortMin = 0, overMin = 0, flags = 0;
+
+  records.forEach((r) => {
+    if (r.outFlag) flags++;
+    const p = calcPay(r, worker, settings);
+    if (p.open) return;
+    times++; net += p.net; pay += p.pay;
+    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0 });
+    b.net += p.net; b.times++; b.target += shift ? sh : 0;
+    if (shift) {
+      base += p.base; otPay += p.otPay; blocks += p.blocks;
+      otMin += p.otMin; shortMin += p.shortMin; overMin += p.overMin;
+    }
+  });
+
+  if (!shift) {
+    Object.values(byDate).forEach((b) => {
+      b.target = std;
+      if (b.net > std) otMin += (b.net - std) * 60; else shortMin += (std - b.net) * 60;
+    });
+    const wage = worker?.wage ?? settings.wage;
+    base = (net - otMin / 60) * wage;
+    otPay = settings.otPremium ? (otMin / 60) * wage * 1.5 : (otMin / 60) * wage;
+    pay = base + otPay;
+    overMin = otMin;
+  }
+
+  return {
+    net, days: Object.keys(byDate).length, times, pay, base, otPay, blocks,
+    otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
+    byDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
+  };
+}
+
+function rangeOf(mode, anchor) {
+  const a = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  if (mode === "day") return [a, a];
+  if (mode === "week") { const s = new Date(a); s.setDate(a.getDate() - ((a.getDay() + 6) % 7)); const e = new Date(s); e.setDate(s.getDate() + 6); return [s, e]; }
+  if (mode === "month") return [new Date(a.getFullYear(), a.getMonth(), 1), new Date(a.getFullYear(), a.getMonth() + 1, 0)];
+  return [new Date(a.getFullYear(), 0, 1), new Date(a.getFullYear(), 11, 31)];
+}
+function shift(mode, anchor, dir) {
+  const a = new Date(anchor);
+  if (mode === "day") a.setDate(a.getDate() + dir);
+  if (mode === "week") a.setDate(a.getDate() + 7 * dir);
+  if (mode === "month") a.setMonth(a.getMonth() + dir, 1);
+  if (mode === "year") a.setFullYear(a.getFullYear() + dir, 0, 1);
+  return a;
+}
+function labelOf(mode, anchor) {
+  const [s, e] = rangeOf(mode, anchor);
+  if (mode === "day") return `${s.getMonth() + 1}월 ${s.getDate()}일 (${WD[s.getDay()]})`;
+  if (mode === "week") return `${s.getMonth() + 1}.${s.getDate()} – ${e.getMonth() + 1}.${e.getDate()}`;
+  if (mode === "month") return `${s.getFullYear()}년 ${s.getMonth() + 1}월`;
+  return `${s.getFullYear()}년`;
+}
+
+function getLoc() {
+  return new Promise((res) => {
+    if (!navigator.geolocation) return res(null);
+    const t = setTimeout(() => res(null), 11000);
+    navigator.geolocation.getCurrentPosition(
+      (p) => { clearTimeout(t); res({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) }); },
+      () => { clearTimeout(t); res(null); },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+}
+
+function sampleData() {
+  const sites = [
+    { id: "s1", name: "강남타워", lat: 37.4979, lng: 127.0276, radius: 200 },
+    { id: "s2", name: "판교 A동", lat: 37.3948, lng: 127.1112, radius: 200 },
+    { id: "s3", name: "서초 오피스", lat: 37.4837, lng: 127.0324, radius: 150 },
+  ];
+  const workers = [
+    { id: "w1", name: "김순자", siteId: "s1" },
+    { id: "w2", name: "박영호", siteId: "s2" },
+    { id: "w3", name: "이미경", siteId: "s3" },
+  ];
+  // 한 타임 2시간 기준: 정상 / 조금 초과 / 30분 넘게 초과 / 부족 이 섞이도록
+  const mins = [118, 125, 152, 100, 120, 135, 168, 112, 122, 145, 96, 130];
+  const records = [];
+  const today = new Date();
+  for (let i = 0; i < 34; i++) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    if (d.getDay() === 0) continue;
+    workers.forEach((w, wi) => {
+      if ((i + wi) % 7 === 3) return;
+      const s = sites[wi];
+      const times = wi === 0 && i % 3 === 0 ? 2 : 1;   // 김순자는 가끔 하루 두 타임
+      for (let t = 0; t < times; t++) {
+        const m = mins[(i * 3 + wi * 5 + t * 7) % mins.length];
+        const ci = new Date(d); ci.setHours(t === 0 ? 8 : 14, [0, 5, 12, 2][(i + wi) % 4], 0, 0);
+        const co = new Date(ci.getTime() + m * 60000);
+        const far = i === 5 && wi === 0 && t === 0;
+        records.push({
+          id: uid(), workerId: w.id, date: dKey(d), site: s.name, siteId: s.id,
+          clockIn: ci.toISOString(), clockOut: co.toISOString(), breakMinutes: null,
+          inLoc: { lat: s.lat, lng: s.lng, acc: 12 }, inDist: 20 + wi * 9,
+          outLoc: null, outDist: far ? 3400 : 40, outFlag: far,
+          note: i === 2 && wi === 1 ? "지하 3층 왁스 작업 추가" : "",
+        });
+      }
+    });
+  }
+  return { ...DEFAULTS, sites, workers, records };
+}
+
+/* ─────────────────────────  공용 UI  ───────────────────────── */
+const Eyebrow = ({ children, dark }) => (
+  <div style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: dark ? C.onDarkSub : C.sub }}>{children}</div>
+);
+const Num = ({ children, size = 20, color = C.text, weight = 700 }) => (
+  <span style={{ fontFamily: MONO, fontSize: size, fontWeight: weight, color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{children}</span>
+);
+function Tile({ children, style, onClick, soft }) {
+  return (
+    <div onClick={onClick} style={{ background: soft ? C.tileSoft : C.tile, padding: 14, cursor: onClick ? "pointer" : "default", ...style }}>
+      {children}
+    </div>
+  );
+}
+function Modal({ open, onClose, children, title }) {
+  if (!open) return null;
+  return (
+    <div className="absolute inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(4,12,16,0.72)" }} onClick={onClose}>
+      <div className="w-full" style={{ background: C.tile, maxHeight: "92%", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        {title && (
+          <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${C.line}` }}>
+            <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{title}</div>
+            <button onClick={onClose} className="p-1"><X size={18} color={C.sub} /></button>
+          </div>
+        )}
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+const Btn = ({ children, onClick, kind = "primary", full, small, disabled }) => {
+  const st = {
+    primary: { background: C.aquaDeep, color: "#fff", border: "none" },
+    ghost: { background: "transparent", color: C.sub, border: `1px solid ${C.line}` },
+    danger: { background: "transparent", color: C.coral, border: `1px solid ${C.coral}` },
+  }[kind];
+  return (
+    <button onClick={onClick} disabled={disabled} className={full ? "w-full" : ""}
+      style={{ ...st, opacity: disabled ? 0.35 : 1, padding: small ? "8px 12px" : "13px 16px", fontSize: small ? 13 : 14.5, fontWeight: 700, fontFamily: SANS }}>
+      {children}
+    </button>
+  );
+};
+const Field = ({ label, children }) => (
+  <label className="block mb-3">
+    <div className="mb-1.5"><Eyebrow>{label}</Eyebrow></div>
+    {children}
+  </label>
+);
+const inputStyle = { width: "100%", padding: "11px 12px", border: `1px solid ${C.line}`, background: C.tileSoft, fontSize: 15, fontFamily: SANS, color: C.text, outline: "none" };
+const Row = ({ k, v, mono }) => (
+  <div className="flex items-center justify-between gap-3">
+    <span style={{ fontSize: 13, color: C.sub, fontWeight: 700, flexShrink: 0 }}>{k}</span>
+    <span style={{ fontSize: 14, color: C.text, fontWeight: 800, fontFamily: mono ? MONO : SANS, textAlign: "right" }}>{v}</span>
+  </div>
+);
+
+/* ─────────────────────────  앱  ───────────────────────── */
+export default function App() {
+  const [data, setData] = useState(null);
+  const [dev, setDev] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("clock");
+  const [unlocked, setUnlocked] = useState(false);
+  const [now, setNow] = useState(new Date());
+  const [toast, setToast] = useState("");
+  const dataRef = useRef(null), devRef = useRef(null);
+
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t); }, [toast]);
+
+  useEffect(() => {
+    (async () => {
+      let d = DEFAULTS, v = { ...DEV_DEFAULT };
+      try { const r = await window.storage.get(KEY, true); if (r && r.value) d = migrate(JSON.parse(r.value)); } catch (e) {}
+      try { const r = await window.storage.get(DKEY, false); if (r && r.value) v = { ...DEV_DEFAULT, ...JSON.parse(r.value) }; } catch (e) {}
+      if (!v.deviceId) {
+        v.deviceId = uid() + uid();
+        try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
+      }
+      dataRef.current = d; devRef.current = v;
+      setData(d); setDev(v); setLoading(false);
+    })();
+  }, []);
+
+  const update = useCallback(async (mut) => {
+    const next = typeof mut === "function" ? mut(dataRef.current) : mut;
+    dataRef.current = next; setData(next);
+    try { await window.storage.set(KEY, JSON.stringify(next), true); }
+    catch (e) { setToast("저장 실패 — 기록이 이 화면에만 남아 있습니다"); }
+  }, []);
+
+  const updateDev = useCallback(async (mut) => {
+    const next = typeof mut === "function" ? mut(devRef.current) : mut;
+    devRef.current = next; setDev(next);
+    try { await window.storage.set(DKEY, JSON.stringify(next), false); } catch (e) {}
+  }, []);
+
+  const goTab = (k) => { if (k === "clock") setUnlocked(false); setTab(k); };
+
+  if (loading || !data || !dev) {
+    return (
+      <div className="flex items-center justify-center" style={{ background: C.bg, minHeight: 640, fontFamily: SANS }}>
+        <Loader2 className="animate-spin" size={22} color={C.aqua} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: C.bg, fontFamily: SANS, minHeight: 720 }}>
+      <div className="relative mx-auto flex flex-col" style={{ maxWidth: 560, minHeight: 720, background: C.bg, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} />}
+          {tab === "admin" && (
+            unlocked
+              ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} />
+              : <AdminGate data={data} update={update} setToast={setToast} onPass={() => setUnlocked(true)} />
+          )}
+        </div>
+
+        <div className="sticky bottom-0 grid grid-cols-2 gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}` }}>
+          {[["clock", "출퇴근", Clock3], ["admin", "관리자", Lock]].map(([k, l, I]) => (
+            <button key={k} onClick={() => goTab(k)} className="flex flex-col items-center justify-center gap-1 py-3"
+              style={{ background: tab === k ? C.bgSoft : C.bg, color: tab === k ? C.aqua : C.onDarkSub }}>
+              <I size={19} />
+              <span style={{ fontSize: 11, fontWeight: 700 }}>{l}</span>
+            </button>
+          ))}
+        </div>
+
+        {toast && (
+          <div className="absolute left-0 right-0 flex justify-center px-6" style={{ bottom: 78 }}>
+            <div style={{ background: C.onDark, color: C.text, fontSize: 13, fontWeight: 700, padding: "10px 16px", textAlign: "center" }}>{toast}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────  근무자 화면  ───────────────────────── */
+function ClockTab({ data, update, dev, now, setToast, goTab }) {
+  const { workers, sites, records, settings } = data;
+  const [confirm, setConfirm] = useState(null);
+  const [chk, setChk] = useState({ state: "idle" });
+  const [manualSite, setManualSite] = useState("");
+  const worker = workers.find((w) => w.id === dev.workerId) || null;
+  const today = dKey(now);
+
+  const open = useMemo(
+    () => records.find((r) => worker && r.workerId === worker.id && r.date === today && !r.clockOut),
+    [records, worker, today]
+  );
+  const doneToday = useMemo(
+    () => records.filter((r) => worker && r.workerId === worker.id && r.date === today && r.clockOut).slice(-1)[0],
+    [records, worker, today]
+  );
+
+  const geoSites = sites.filter((s) => s.lat != null);
+  const geoOn = settings.geofence && geoSites.length > 0;
+
+  const openConfirm = async (kind) => {
+    setConfirm(kind); setChk({ state: "loading" });
+    const v = await getLoc();
+    if (!v) { setChk({ state: "fail" }); return; }
+    if (kind === "in") {
+      if (!geoOn) {
+        setManualSite(sites.find((s) => s.id === worker.siteId)?.name || sites[0]?.name || "");
+        setChk({ state: "nogeo", loc: v });
+        return;
+      }
+      const n = nearestSite(v, geoSites);
+      const inside = n.d - TOL(v.acc) <= n.site.radius;
+      setChk({ state: inside ? "inside" : "outside", loc: v, site: n.site, d: n.d });
+    } else {
+      const s = sites.find((x) => x.id === open.siteId) || sites.find((x) => x.name === open.site);
+      const d = s && s.lat != null ? haversine(v, s) : null;
+      const outside = d != null && d - TOL(v.acc) > s.radius;
+      setChk({ state: "outdone", loc: v, site: s, d, outside });
+    }
+  };
+
+  const doClockIn = () => {
+    const ts = new Date();
+    const s = chk.state === "inside" ? chk.site : sites.find((x) => x.name === manualSite);
+    update((d) => ({
+      ...d, records: [...d.records, {
+        id: uid(), workerId: worker.id, date: dKey(ts),
+        site: s?.name || "현장 미지정", siteId: s?.id || null,
+        clockIn: ts.toISOString(), clockOut: null, breakMinutes: null,
+        inLoc: chk.loc, inDist: chk.state === "inside" ? Math.round(chk.d) : null,
+        outLoc: null, outDist: null, outFlag: false,
+        deviceId: dev.deviceId, note: "",
+      }],
+    }));
+    setConfirm(null); setToast(`출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
+  };
+  const doClockOut = () => {
+    const ts = new Date();
+    update((d) => ({
+      ...d, records: d.records.map((r) => (r.id === open.id ? {
+        ...r, clockOut: ts.toISOString(), outLoc: chk.loc || null,
+        outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: !!chk.outside,
+      } : r)),
+    }));
+    setConfirm(null);
+    setToast(chk.outside ? "퇴근 처리됐습니다 · 현장 밖으로 기록됨" : `퇴근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
+  };
+
+  if (!worker) {
+    return (
+      <div className="px-5 pt-20 pb-10" style={{ flex: 1 }}>
+        <Eyebrow dark>기기 등록이 필요합니다</Eyebrow>
+        <div style={{ color: C.onDark, fontSize: 25, fontWeight: 900, lineHeight: 1.35, marginTop: 10 }}>
+          이 휴대폰을 쓸 근무자가<br />아직 등록되지 않았습니다.
+        </div>
+        <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 12, lineHeight: 1.6 }}>
+          관리자가 PIN을 입력하고 이 기기에 이름을 한 번 연결하면 출근 버튼이 열립니다. 연결된 뒤에는 그 이름으로만 기록됩니다.
+        </div>
+        <div className="mt-6 flex flex-col gap-2">
+          <Btn full onClick={() => goTab("admin")}>관리자 탭 열기</Btn>
+          {workers.length === 0 && <Btn full kind="ghost" onClick={() => update(sampleData())}>샘플 데이터로 먼저 둘러보기</Btn>}
+        </div>
+      </div>
+    );
+  }
+
+  const std = worker.stdHours ?? settings.stdHours;
+  const elapsed = open ? (now.getTime() - new Date(open.clockIn).getTime()) / 1000 : 0;
+  const prog = open ? Math.min(1, elapsed / 3600 / std) : 0;
+  const R = 112, CIRC = 2 * Math.PI * R;
+  const canGo = confirm === "out" || chk.state === "inside" || chk.state === "nogeo";
+
+  return (
+    <div className="flex flex-col items-center px-5" style={{ flex: 1, paddingTop: 40, paddingBottom: 32 }}>
+      <Eyebrow dark>{now.getFullYear()}년 {now.getMonth() + 1}월 {now.getDate()}일 {WD[now.getDay()]}요일</Eyebrow>
+      <div className="mt-1.5"><Num size={40} color={C.onDark} weight={800}>{pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}</Num></div>
+      <div style={{ color: C.onDark, fontSize: 17, fontWeight: 800, marginTop: 14 }}>{worker.name} 님</div>
+
+      <button onClick={() => openConfirm(open ? "out" : "in")} className="relative" style={{ width: 264, height: 264, marginTop: 34 }}>
+        <svg width="264" height="264" viewBox="0 0 264 264" style={{ position: "absolute", inset: 0 }}>
+          <circle cx="132" cy="132" r={R} fill="none" stroke={C.lineDark} strokeWidth="11" />
+          {open && (
+            <circle cx="132" cy="132" r={R} fill="none" stroke={C.aqua} strokeWidth="11"
+              strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - prog)} strokeLinecap="butt"
+              transform="rotate(-90 132 132)" style={{ transition: "stroke-dashoffset 0.6s linear" }} />
+          )}
+          <circle cx="132" cy="132" r={R - 13} fill={open ? C.bgSoft : C.aquaDeep} />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          {open ? (
+            <>
+              <Eyebrow dark>근무 중 · {open.site}</Eyebrow>
+              <div className="mt-2"><Num size={40} color={C.onDark} weight={800}>
+                {pad(Math.floor(elapsed / 3600))}:{pad(Math.floor(elapsed / 60) % 60)}:{pad(Math.floor(elapsed) % 60)}
+              </Num></div>
+              <div style={{ marginTop: 12, color: C.aqua, fontSize: 21, fontWeight: 900, letterSpacing: "0.06em" }}>퇴근</div>
+            </>
+          ) : (
+            <>
+              <div style={{ color: "#fff", fontSize: 46, fontWeight: 900, letterSpacing: "0.04em" }}>출근</div>
+              <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 13.5, fontWeight: 700, marginTop: 5 }}>눌러서 기록하기</div>
+            </>
+          )}
+        </div>
+      </button>
+
+      <div style={{ marginTop: 26, minHeight: 22, textAlign: "center" }}>
+        {open ? (
+          <div style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO }}>{tstr(open.clockIn)} 출근 완료</div>
+        ) : doneToday ? (
+          <div className="flex items-center gap-1.5" style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO }}>
+            <Check size={14} color={C.aqua} /> 오늘 {tstr(doneToday.clockIn)} – {tstr(doneToday.clockOut)} 완료
+          </div>
+        ) : (
+          <div style={{ color: C.onDarkSub, fontSize: 13 }}>오늘 출근 기록이 아직 없습니다.</div>
+        )}
+      </div>
+
+      {/* 재확인 팝업 */}
+      <Modal open={!!confirm} onClose={() => setConfirm(null)}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: C.text, lineHeight: 1.35 }}>
+          {confirm === "in" ? "출근 처리 하시겠습니까?" : "퇴근 처리 하시겠습니까?"}
+        </div>
+
+        {/* 현장 확인 배너 */}
+        <div className="mt-4 flex items-start gap-2.5" style={{
+          padding: "12px 13px",
+          background: chk.state === "inside" ? "#E8F7F9" : chk.state === "loading" ? C.tileSoft : chk.state === "nogeo" ? C.tileSoft : "#FFF4E0",
+          border: `1px solid ${chk.state === "inside" ? C.aquaDeep : chk.state === "outside" || chk.state === "fail" ? C.amber : C.line}`,
+        }}>
+          {chk.state === "loading" && <Loader2 size={17} className="animate-spin" color={C.sub} style={{ flexShrink: 0, marginTop: 1 }} />}
+          {chk.state === "inside" && <Crosshair size={17} color={C.aquaDeep} style={{ flexShrink: 0, marginTop: 1 }} />}
+          {(chk.state === "outside" || chk.state === "fail") && <ShieldAlert size={17} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />}
+          {(chk.state === "nogeo" || chk.state === "outdone") && <MapPin size={17} color={C.sub} style={{ flexShrink: 0, marginTop: 1 }} />}
+          <div style={{ minWidth: 0 }}>
+            {chk.state === "loading" && <div style={{ fontSize: 13.5, fontWeight: 700, color: C.sub }}>현장 위치를 확인하고 있습니다…</div>}
+            {chk.state === "inside" && (
+              <>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{chk.site.name} 현장 안</div>
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 2, fontFamily: MONO }}>중심에서 {dist(chk.d)} · 허용 반경 {chk.site.radius}m</div>
+              </>
+            )}
+            {chk.state === "outside" && (
+              <>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>현장에서 벗어나 있습니다</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>
+                  가장 가까운 {chk.site.name}까지 {dist(chk.d)}. 현장에 도착한 뒤 다시 눌러주세요.
+                </div>
+              </>
+            )}
+            {chk.state === "fail" && (
+              <>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>위치를 확인할 수 없습니다</div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, lineHeight: 1.55 }}>
+                  {confirm === "in"
+                    ? "휴대폰 위치 권한을 켜고 실외에서 다시 시도해 주세요. 계속 안 되면 관리자에게 알려주세요."
+                    : "위치 없이 퇴근 시각만 기록됩니다."}
+                </div>
+              </>
+            )}
+            {chk.state === "nogeo" && (
+              <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.55 }}>
+                현장 좌표가 아직 등록되지 않아 위치 확인 없이 기록됩니다.
+              </div>
+            )}
+            {chk.state === "outdone" && (
+              <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.55, fontFamily: MONO }}>
+                {chk.d == null ? "현장 좌표 없음" : `${chk.site.name}에서 ${dist(chk.d)}`}
+                {chk.outside && <span style={{ color: C.amber, fontWeight: 800 }}> · 현장 밖 퇴근으로 표시됩니다</span>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-0.5" style={{ background: C.line }}>
+          <Tile soft style={{ padding: "11px 14px" }}><Row k="근무자" v={worker.name} /></Tile>
+          <Tile soft style={{ padding: "11px 14px" }}>
+            <Row k={confirm === "in" ? "출근 시각" : "퇴근 시각"} v={`${now.getMonth() + 1}/${now.getDate()} ${pad(now.getHours())}:${pad(now.getMinutes())}`} mono />
+          </Tile>
+          {confirm === "out" && open && (
+            <Tile soft style={{ padding: "11px 14px" }}><Row k="근무시간" v={hm((now.getTime() - new Date(open.clockIn).getTime()) / 3600000)} mono /></Tile>
+          )}
+          <Tile soft style={{ padding: "11px 14px" }}>
+            {confirm === "in" && chk.state === "nogeo" && sites.length > 1 ? (
+              <div className="flex items-center justify-between gap-3">
+                <span style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>현장</span>
+                <select value={manualSite} onChange={(e) => setManualSite(e.target.value)}
+                  style={{ ...inputStyle, width: "auto", padding: "6px 8px", fontSize: 13.5, fontWeight: 800, background: C.tile }}>
+                  {sites.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              <Row k="현장" v={
+                confirm === "out" ? open.site
+                  : chk.state === "inside" ? chk.site.name
+                    : chk.state === "nogeo" ? (manualSite || "현장 미지정") : "확인 중"
+              } />
+            )}
+          </Tile>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setConfirm(null)}>{canGo ? "취소" : "닫기"}</Btn>
+          <Btn full disabled={!canGo} onClick={confirm === "in" ? doClockIn : doClockOut}>
+            {confirm === "in" ? "출근하기" : "퇴근하기"}
+          </Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  관리자 잠금  ───────────────────────── */
+function AdminGate({ data, update, setToast, onPass }) {
+  const saved = data.settings.adminPin;
+  const [pin, setPin] = useState("");
+  const [first, setFirst] = useState("");
+  const [err, setErr] = useState("");
+  const [reset, setReset] = useState(false);
+  const creating = !saved;
+
+  const submit = (v) => {
+    if (creating) {
+      if (!first) { setFirst(v); setPin(""); return; }
+      if (first === v) { update((d) => ({ ...d, settings: { ...d.settings, adminPin: v } })); setToast("관리자 PIN을 설정했습니다"); onPass(); }
+      else { setErr("두 번 입력한 번호가 다릅니다"); setFirst(""); setPin(""); }
+      return;
+    }
+    if (v === saved) onPass();
+    else { setErr("PIN이 맞지 않습니다"); setPin(""); }
+  };
+  const push = (n) => {
+    if (pin.length >= 4) return;
+    const next = pin + n;
+    setPin(next); setErr("");
+    if (next.length === 4) setTimeout(() => submit(next), 130);
+  };
+
+  return (
+    <div className="flex flex-col items-center px-6" style={{ flex: 1, paddingTop: 52, paddingBottom: 24 }}>
+      <ShieldCheck size={30} color={C.aqua} />
+      <div style={{ color: C.onDark, fontSize: 21, fontWeight: 900, marginTop: 14 }}>
+        {creating ? (first ? "한 번 더 입력하세요" : "관리자 PIN을 만드세요") : "관리자 PIN을 입력하세요"}
+      </div>
+      <div style={{ color: C.onDarkSub, fontSize: 13, marginTop: 8, textAlign: "center", lineHeight: 1.6, maxWidth: 300 }}>
+        근무 기록과 급여, 기기 연결은 이 번호를 아는 사람만 다룰 수 있습니다.
+      </div>
+
+      <div className="flex gap-3 mt-8">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} style={{ width: 15, height: 15, borderRadius: 999, background: i < pin.length ? C.aqua : "transparent", border: `2px solid ${i < pin.length ? C.aqua : C.lineDark}` }} />
+        ))}
+      </div>
+      <div style={{ color: C.coral, fontSize: 12.5, fontWeight: 700, marginTop: 12, minHeight: 18 }}>{err}</div>
+
+      <div className="grid grid-cols-3 gap-0.5 mt-3" style={{ background: C.grout, width: "100%", maxWidth: 300 }}>
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((k, i) => (
+          <button key={i} disabled={k === ""} onClick={() => (k === "del" ? setPin(pin.slice(0, -1)) : k && push(k))}
+            className="flex items-center justify-center"
+            style={{ background: k === "" ? C.bg : C.bgSoft, height: 62, color: C.onDark, fontFamily: MONO, fontSize: 22, fontWeight: 700 }}>
+            {k === "del" ? <Delete size={20} color={C.onDarkSub} /> : k}
+          </button>
+        ))}
+      </div>
+
+      {!creating && (
+        <button onClick={() => setReset(true)} style={{ color: C.onDarkSub, fontSize: 12, marginTop: 20, textDecoration: "underline" }}>
+          PIN을 잊으셨나요?
+        </button>
+      )}
+
+      <Modal open={reset} onClose={() => setReset(false)} title="PIN 재설정">
+        <div style={{ fontSize: 14.5, color: C.text, lineHeight: 1.65 }}>
+          PIN을 되찾을 방법은 없습니다. 계속하면 근무자, 현장, 모든 출퇴근 기록이 함께 지워지고 처음부터 다시 시작합니다.
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setReset(false)}>취소</Btn>
+          <Btn kind="danger" full onClick={() => { update(DEFAULTS); setReset(false); setPin(""); setToast("초기화했습니다"); }}>지우고 다시 시작</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  관리자 영역  ───────────────────────── */
+function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
+  const [view, setView] = useState("records");
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <div className="flex items-center px-4 pt-4">
+        <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout, flex: 1 }}>
+          {[["records", "근무 기록", ClipboardList], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
+            <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5"
+              style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 13, fontWeight: 800 }}>
+              <I size={14} />{l}
+            </button>
+          ))}
+        </div>
+        <button onClick={onLock} className="flex items-center justify-center" title="잠그기"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, marginLeft: 6 }}>
+          <Lock size={16} color={C.onDarkSub} />
+        </button>
+      </div>
+      {view === "records"
+        ? <RecordsView data={data} update={update} setToast={setToast} />
+        : <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
+    </div>
+  );
+}
+
+/* ─────────────────────────  근무 기록  ───────────────────────── */
+function RecordsView({ data, update, setToast }) {
+  const { workers, records, settings } = data;
+  const [mode, setMode] = useState("month");
+  const [anchor, setAnchor] = useState(new Date());
+  const [detail, setDetail] = useState(null);
+  const [csv, setCsv] = useState(null);
+  const [slip, setSlip] = useState(null);   // { workerId, ym }
+  const [book, setBook] = useState(null);   // ym
+
+  const [s, e] = rangeOf(mode, anchor);
+  const sk = dKey(s), ek = dKey(e);
+  const inRange = useMemo(() => records.filter((r) => r.date >= sk && r.date <= ek), [records, sk, ek]);
+
+  const rows = useMemo(() => workers.map((w) => {
+    const rs = inRange.filter((r) => r.workerId === w.id);
+    return { w, ...aggregate(rs, w, settings) };
+  }).sort((a, b) => b.net - a.net), [workers, inRange, settings]);
+
+  const shift = settings.payMode === "shift";
+  const tot = rows.reduce((a, r) => ({
+    net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
+    blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
+  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0 });
+  const maxNet = Math.max(1, ...rows.map((r) => r.net));
+
+  const makeCsv = () => {
+    const head = shift
+      ? "이름,날짜,요일,현장,출근,퇴근,근무(분),기준(분),증감(분),추가인정,기본급,추가수당,금액,현장밖퇴근,비고"
+      : "이름,날짜,요일,현장,출근,퇴근,휴게(분),근무시간,시급,금액,현장밖퇴근,비고";
+    const lines = inRange.slice().sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
+      const w = workers.find((x) => x.id === r.workerId);
+      const p = calcPay(r, w, settings);
+      const d = parseKey(r.date);
+      const common = [w?.name || "?", r.date, WD[d.getDay()], r.site || "", tstr(r.clockIn), r.clockOut ? tstr(r.clockOut) : ""];
+      const tail = [r.outFlag ? "Y" : "", (r.note || "").replace(/,/g, " ")];
+      return shift
+        ? [...common, Math.round(p.net * 60), Math.round((p.target || 0) * 60), p.diffMin ?? "", p.blocks ?? 0,
+           Math.round(p.base || 0), Math.round(p.otPay || 0), Math.round(p.pay || 0), ...tail].join(",")
+        : [...common, Math.round((p.brk || 0) * 60), (p.net || 0).toFixed(2), w?.wage ?? settings.wage,
+           Math.round(p.pay || 0), ...tail].join(",");
+    });
+    setCsv([head, ...lines].join("\n"));
+  };
+
+  return (
+    <div className="pb-6">
+      <div className="px-4 pt-5 pb-4">
+        <div className="flex items-center justify-between">
+          <button onClick={() => setAnchor(shift(mode, anchor, -1))} className="p-2" style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}` }}>
+            <ChevronLeft size={18} color={C.onDark} />
+          </button>
+          <div style={{ color: C.onDark, fontSize: 20, fontWeight: 900 }}>{labelOf(mode, anchor)}</div>
+          <button onClick={() => setAnchor(shift(mode, anchor, 1))} className="p-2" style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}` }}>
+            <ChevronRight size={18} color={C.onDark} />
+          </button>
+        </div>
+        <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.grout }}>
+          {[["day", "일"], ["week", "주"], ["month", "월"], ["year", "년"]].map(([k, l]) => (
+            <button key={k} onClick={() => setMode(k)} className="py-2.5"
+              style={{ background: mode === k ? C.onDark : C.bgSoft, color: mode === k ? C.bg : C.onDarkSub, fontSize: 13.5, fontWeight: 800 }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mx-4 grid grid-cols-3 gap-0.5" style={{ background: C.grout }}>
+        <Tile style={{ padding: 12 }}>
+          <Eyebrow>{shift ? "총 타임" : "총 근무시간"}</Eyebrow>
+          <div className="mt-1"><Num size={19}>{shift ? `${tot.times}회` : hmc(tot.net)}</Num></div>
+        </Tile>
+        <Tile style={{ padding: 12 }}>
+          <Eyebrow>{shift ? "총 근무시간" : "총 근무일수"}</Eyebrow>
+          <div className="mt-1"><Num size={19}>{shift ? hmc(tot.net) : `${tot.days}일`}</Num></div>
+        </Tile>
+        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={19} color={C.aquaDeep}>{money(tot.pay)}</Num></div></Tile>
+      </div>
+      <div className="mx-4 mt-0.5 grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
+        <Tile soft style={{ padding: 12 }}>
+          <Eyebrow>{shift ? `추가 인정 (${tot.blocks}회)` : "추가근무"}</Eyebrow>
+          <div className="mt-1"><Num size={17} color={C.aquaDeep}>+{minStr(tot.otMin)}</Num></div>
+        </Tile>
+        <Tile soft style={{ padding: 12 }}>
+          <Eyebrow>부족시간 누계</Eyebrow>
+          <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.amber : C.sub}>−{minStr(tot.shortMin)}</Num></div>
+        </Tile>
+      </div>
+      {tot.flags > 0 && (
+        <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
+          <ShieldAlert size={15} color={C.amber} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>현장 밖에서 퇴근한 기록 {tot.flags}건</span>
+        </div>
+      )}
+
+      <div className="px-4 mt-5">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow dark>이름별 · 눌러서 상세 보기</Eyebrow>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setBook(dKey(s).slice(0, 7))} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700 }}>
+              <Receipt size={12} /> 급여대장
+            </button>
+            <button onClick={makeCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
+              <FileText size={12} /> 엑셀
+            </button>
+          </div>
+        </div>
+        {rows.length === 0 && (
+          <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요.</div></Tile>
+        )}
+        <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+          {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags }) => (
+            <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 999, background: C.bgSoft, color: C.onDark, fontSize: 13, fontWeight: 800, flexShrink: 0 }} className="flex items-center justify-center">{w.name.slice(0, 1)}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
+                      {flags > 0 && <ShieldAlert size={13} color={C.amber} />}
+                    </div>
+                    <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
+                      {shift ? `${times}타임 · ${days}일` : `${days}일 근무`}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right" style={{ flexShrink: 0 }}>
+                  <Num size={17}>{hmc(net)}</Num>
+                  <div style={{ marginTop: 1 }}><Num size={12.5} color={C.aquaDeep} weight={700}>{money(pay)}원</Num></div>
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center gap-2">
+                <div style={{ flex: 1, height: 5, background: C.line }}>
+                  <div style={{ width: `${(net / maxNet) * 100}%`, height: "100%", background: C.aquaDeep }} />
+                </div>
+                {blocks > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.aquaDeep, fontFamily: MONO }}>추가 {blocks}회</span>}
+                {shortMin > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.amber, fontFamily: MONO }}>−{minStr(shortMin)}</span>}
+              </div>
+            </Tile>
+          ))}
+        </div>
+      </div>
+
+      {detail && (
+        <WorkerDetail data={data} update={update} workerId={detail} mode={mode} anchor={anchor}
+          onClose={() => setDetail(null)} setToast={setToast}
+          onPayslip={() => setSlip({ workerId: detail, ym: dKey(s).slice(0, 7) })} />
+      )}
+      {slip && <PayslipView data={data} update={update} {...slip} onClose={() => setSlip(null)} setToast={setToast} />}
+      {book && <PayrollBook data={data} ym={book} onClose={() => setBook(null)} setToast={setToast}
+        onOpenSlip={(wid) => { setBook(null); setSlip({ workerId: wid, ym: book }); }} />}
+
+      <Modal open={!!csv} onClose={() => setCsv(null)} title="엑셀용 데이터 (CSV)">
+        <textarea readOnly value={csv || ""} style={{ ...inputStyle, height: 200, fontFamily: MONO, fontSize: 11.5 }} />
+        <div className="mt-3">
+          <Btn full onClick={() => { navigator.clipboard?.writeText(csv || ""); setToast("복사했습니다 — 엑셀에 붙여넣으세요"); setCsv(null); }}>
+            <span className="flex items-center justify-center gap-2"><Copy size={15} /> 전체 복사</span>
+          </Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  개인 상세  ───────────────────────── */
+function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast, onPayslip }) {
+  const { records, settings } = data;
+  const worker = data.workers.find((w) => w.id === workerId);
+  const [edit, setEdit] = useState(null);
+  const [s, e] = rangeOf(mode, anchor);
+  const sk = dKey(s), ek = dKey(e);
+
+  const recs = useMemo(
+    () => records.filter((r) => r.workerId === workerId && r.date >= sk && r.date <= ek)
+      .sort((a, b) => b.date.localeCompare(a.date) || b.clockIn.localeCompare(a.clockIn)),
+    [records, workerId, sk, ek]
+  );
+  const agg = aggregate(recs, worker, settings);
+  const dayList = Object.entries(agg.byDate).sort((a, b) => a[0].localeCompare(b[0]));
+  const maxDay = Math.max(agg.sh, ...dayList.map((d) => d[1].net), 1);
+
+  const addManual = () => setEdit({
+    id: null, workerId, date: dKey(new Date()),
+    siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
+  });
+  const openEdit = (r) => setEdit({
+    id: r.id, workerId, date: r.date, siteId: r.siteId || "",
+    inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
+    breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
+  });
+  const saveEdit = () => {
+    const mk = (t) => { if (!t) return null; const [h, m] = t.split(":").map(Number); const d = parseKey(edit.date); d.setHours(h, m, 0, 0); return d.toISOString(); };
+    const site = data.sites.find((x) => x.id === edit.siteId);
+    update((d) => {
+      const base = {
+        workerId, date: edit.date, site: site?.name || "현장 미지정", siteId: site?.id || null,
+        clockIn: mk(edit.inT), clockOut: mk(edit.outT),
+        breakMinutes: edit.breakMinutes === "" ? null : Number(edit.breakMinutes), note: edit.note,
+      };
+      return {
+        ...d,
+        records: edit.id
+          ? d.records.map((r) => (r.id === edit.id ? { ...r, ...base } : r))
+          : [...d.records, { id: uid(), ...base, inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false, manual: true }],
+      };
+    });
+    setEdit(null); setToast("기록을 저장했습니다");
+  };
+  const removeRec = () => {
+    update((d) => ({ ...d, records: d.records.filter((r) => r.id !== edit.id) }));
+    setEdit(null); setToast("기록을 삭제했습니다");
+  };
+
+  return (
+    <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
+      <div className="sticky top-0 flex items-center gap-3 px-4 py-3.5" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
+        <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: C.onDark, fontSize: 18, fontWeight: 900 }}>{worker.name}</div>
+          <div style={{ color: C.onDarkSub, fontSize: 11.5 }}>
+            {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+          </div>
+        </div>
+        <button onClick={addManual} className="flex items-center justify-center" title="기록 직접 추가"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36 }}>
+          <Plus size={16} />
+        </button>
+        <button onClick={onPayslip} className="flex items-center gap-1 px-2.5 py-2"
+          style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 36 }}>
+          <Receipt size={13} /> 정산서
+        </button>
+      </div>
+
+      <div className="p-4">
+        <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
+          <Tile style={{ padding: 15 }}>
+            <Eyebrow>{agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
+            <div className="mt-1.5"><Num size={30}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 16 }}>회</span>}</Num></div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
+          </Tile>
+          <Tile style={{ padding: 15 }}>
+            <Eyebrow>{agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
+            <div className="mt-1.5"><Num size={30}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 16 }}>일</span>}</Num></div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
+              {agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
+            </div>
+          </Tile>
+          <Tile soft style={{ padding: 15 }}>
+            <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
+            <div className="mt-1.5"><Num size={22} color={C.aquaDeep}>+{minStr(agg.otMin)}</Num></div>
+            {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>{money(agg.otPay)}원</div>}
+          </Tile>
+          <Tile soft style={{ padding: 15 }}>
+            <Eyebrow>부족시간 누계</Eyebrow>
+            <div className="mt-1.5"><Num size={22} color={agg.shortMin > 0 ? C.amber : C.sub}>−{minStr(agg.shortMin)}</Num></div>
+            {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
+          </Tile>
+        </div>
+
+        <div className="mt-0.5" style={{ background: C.aquaDeep, padding: 16 }}>
+          <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
+          <div className="mt-1.5"><Num size={34} color="#fff" weight={800}>{money(agg.pay)}<span style={{ fontSize: 18 }}> 원</span></Num></div>
+          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, marginTop: 5, fontFamily: MONO }}>
+            {agg.shift
+              ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
+              : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
+          </div>
+        </div>
+
+        {dayList.length > 1 && (
+          <div className="mt-4" style={{ border: `1px solid ${C.lineDark}`, padding: 13 }}>
+            <Eyebrow dark>{agg.shift ? `일자별 근무시간 · 타임당 ${agg.sh}시간 기준` : `일자별 근무시간 · 기준선 ${agg.std}시간`}</Eyebrow>
+            <div className="flex items-end gap-0.5 mt-3" style={{ height: 74 }}>
+              {dayList.map(([d, v]) => (
+                <div key={d} style={{ flex: 1, height: "100%" }} className="flex flex-col justify-end" title={`${d} ${hmc(v.net)}`}>
+                  <div style={{ height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.amber, minHeight: 2 }} />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between mt-1.5" style={{ color: C.onDarkSub, fontSize: 10, fontFamily: MONO }}>
+              <span>{dayList[0][0].slice(5)}</span><span>{dayList[dayList.length - 1][0].slice(5)}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 mb-1"><Eyebrow dark>일별 상세 · 눌러서 수정</Eyebrow></div>
+        <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+          {recs.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 기간에 기록이 없습니다.</div></Tile>}
+          {recs.map((r) => {
+            const p = calcPay(r, worker, settings);
+            const d = parseKey(r.date);
+            const shortish = agg.shift && !p.open && p.shortMin >= settings.shortThreshold;
+            return (
+              <Tile key={r.id} onClick={() => openEdit(r)} style={{ padding: "12px 14px" }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="flex items-center gap-1.5">
+                      <Num size={14.5}>{r.date.slice(5).replace("-", ".")}</Num>
+                      <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
+                      {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
+                      {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
+                    </div>
+                    <div style={{ marginTop: 4, fontFamily: MONO, fontSize: 13, color: C.text, fontWeight: 700 }}>
+                      {tstr(r.clockIn)} – {r.clockOut ? tstr(r.clockOut) : "근무 중"}
+                      {p.brk > 0 && <span style={{ color: C.sub, fontWeight: 600 }}> · 휴게 {Math.round(p.brk * 60)}분</span>}
+                    </div>
+                    <div className="flex items-center gap-1 mt-1" style={{ color: C.sub, fontSize: 11.5, fontFamily: MONO }}>
+                      <Building2 size={11} />{r.site || "현장 미지정"}
+                      {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4 }} />{dist(r.inDist)}</>}
+                    </div>
+                    {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
+                  </div>
+                  <div className="text-right" style={{ flexShrink: 0 }}>
+                    <Num size={17}>{p.open ? "—" : hmc(p.net)}</Num>
+                    {!p.open && agg.shift && (
+                      <>
+                        <div style={{ marginTop: 3 }}>
+                          {p.blocks > 0 ? (
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 +{minStr(p.otMin)}</span>
+                          ) : shortish ? (
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
+                          ) : (
+                            <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>
+                              {p.diffMin === 0 ? "정확" : p.diffMin > 0 ? `+${minStr(p.diffMin)}` : `−${minStr(p.shortMin)}`}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ marginTop: 4 }}><Num size={11.5} color={C.sub} weight={700}>{money(p.pay)}원</Num></div>
+                      </>
+                    )}
+                    {!p.open && !agg.shift && (
+                      <div style={{ marginTop: 4 }}><Num size={11.5} color={C.sub} weight={700}>{money(p.pay)}원</Num></div>
+                    )}
+                    <Pencil size={12} color={C.line} style={{ marginLeft: "auto", marginTop: 6 }} />
+                  </div>
+                </div>
+              </Tile>
+            );
+          })}
+        </div>
+      </div>
+
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "기록 수정" : "기록 직접 추가"}>
+        {edit && (
+          <>
+            <Field label="날짜"><input type="date" value={edit.date} onChange={(ev) => setEdit({ ...edit, date: ev.target.value })} style={inputStyle} /></Field>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="출근"><input type="time" value={edit.inT} onChange={(ev) => setEdit({ ...edit, inT: ev.target.value })} style={inputStyle} /></Field>
+              <Field label="퇴근"><input type="time" value={edit.outT} onChange={(ev) => setEdit({ ...edit, outT: ev.target.value })} style={inputStyle} /></Field>
+            </div>
+            <Field label="현장">
+              <select value={edit.siteId} onChange={(ev) => setEdit({ ...edit, siteId: ev.target.value })} style={inputStyle}>
+                <option value="">현장 미지정</option>
+                {data.sites.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
+              </select>
+            </Field>
+            <Field label="휴게시간 (분) · 비우면 자동 계산">
+              <input type="number" inputMode="numeric" placeholder="자동" value={edit.breakMinutes} onChange={(ev) => setEdit({ ...edit, breakMinutes: ev.target.value })} style={inputStyle} />
+            </Field>
+            <Field label="비고">
+              <textarea value={edit.note} placeholder="추가 작업, 지각 사유, 위치 오류로 인한 수기 입력 등" onChange={(ev) => setEdit({ ...edit, note: ev.target.value })} style={{ ...inputStyle, height: 74 }} />
+            </Field>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              {edit.id ? <Btn kind="danger" full onClick={removeRec}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
+                : <Btn kind="ghost" full onClick={() => setEdit(null)}>취소</Btn>}
+              <Btn full onClick={saveEdit}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  정산서 공용  ───────────────────────── */
+const PRINT_CSS = `@media print {
+  body * { visibility: hidden !important; }
+  #paper, #paper * { visibility: visible !important; }
+  #paper { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; padding: 0 !important; }
+  .no-print { display: none !important; }
+}`;
+
+const PaperShell = ({ title, onClose, actions, children }) => (
+  <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.tileSoft }}>
+    <style>{PRINT_CSS}</style>
+    <div className="sticky top-0 flex items-center gap-2 px-4 py-3 no-print" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
+      <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
+      <div style={{ flex: 1, color: C.onDark, fontSize: 15, fontWeight: 800 }}>{title}</div>
+      {actions}
+    </div>
+    <div className="p-3">
+      <div id="paper" style={{ background: C.tile, padding: 22 }}>{children}</div>
+      <div style={{ height: 20 }} />
+    </div>
+  </div>
+);
+
+const Rule = ({ thick }) => <div style={{ height: thick ? 2 : 1, background: thick ? C.text : C.line, margin: "12px 0" }} />;
+const LineItem = ({ k, v, sub, bold, color }) => (
+  <div className="flex items-baseline justify-between gap-3" style={{ padding: "7px 0" }}>
+    <div style={{ minWidth: 0 }}>
+      <span style={{ fontSize: bold ? 14 : 13.5, fontWeight: bold ? 800 : 600, color: C.text }}>{k}</span>
+      {sub && <span style={{ fontSize: 11.5, color: C.sub, marginLeft: 6 }}>{sub}</span>}
+    </div>
+    <Num size={bold ? 16 : 14.5} color={color || C.text} weight={bold ? 800 : 700}>{v}</Num>
+  </div>
+);
+
+/* ─────────────────────────  개인 월 정산서  ───────────────────────── */
+function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
+  const [adjOpen, setAdjOpen] = useState(false);
+  const [withDays, setWithDays] = useState(true);
+  const [draft, setDraft] = useState(null);
+  const p = payslipCalc(data, workerId, ym);
+  const { worker, recs, agg, adj } = p;
+  const company = data.settings.companyName || "";
+  const issued = new Date();
+
+  const text = useMemo(() => {
+    const L = [];
+    if (company) L.push(company);
+    L.push(`[${ymLabel(ym)} 근무 정산서]`, `${worker.name} 님`, "");
+    if (agg.shift) {
+      L.push(`근무 타임  ${agg.times}회 (${agg.days}일)`);
+      L.push(`근무시간   ${hm(agg.net)}`);
+      if (agg.blocks) L.push(`추가 인정  ${agg.blocks}회 (+${minStr(agg.otMin)})`);
+      if (agg.shortMin > 0) L.push(`부족시간   -${minStr(agg.shortMin)} (지급 반영 없음)`);
+      L.push("", `기본 타임  ${agg.times}회 × ${money(worker.shiftPay ?? data.settings.shiftPay)}원 = ${money(agg.base)}원`);
+      if (agg.blocks) L.push(`추가근무   ${agg.blocks}회 × ${money(data.settings.otPay)}원 = ${money(agg.otPay)}원`);
+    } else {
+      L.push(`근무일수  ${agg.days}일`, `근무시간  ${hm(agg.net)}`);
+      L.push("", `기본급    ${money(p.base)}원`);
+    }
+    if (p.extra) L.push(`${adj.extraLabel || "기타 수당"}  ${money(p.extra)}원`);
+    L.push(`지급 합계  ${money(p.gross)}원`);
+    if (p.tax) L.push(`원천징수  -${money(p.tax)}원 (3.3%)`);
+    if (p.deduct) L.push(`${adj.deductLabel || "기타 공제"}  -${money(p.deduct)}원`);
+    L.push("──────────────", `실지급액  ${money(p.net)}원`);
+    if (withDays && recs.length) {
+      L.push("", "■ 타임별 내역");
+      recs.forEach((r) => {
+        const q = calcPay(r, worker, data.settings);
+        const d = parseKey(r.date);
+        const mark = q.blocks > 0 ? ` 추가+${minStr(q.otMin)}` : q.shortMin >= data.settings.shortThreshold ? ` 부족-${minStr(q.shortMin)}` : "";
+        L.push(`${r.date.slice(5)}(${WD[d.getDay()]}) ${tstr(r.clockIn)}-${tstr(r.clockOut)} ${minStr(q.net * 60)}${mark} ${money(q.pay)}원`);
+      });
+    }
+    if (adj.memo) L.push("", `※ ${adj.memo}`);
+    return L.join("\n");
+  }, [data, workerId, ym, withDays]);
+
+  const saveAdj = () => {
+    update((d) => ({
+      ...d,
+      adjustments: {
+        ...d.adjustments,
+        [`${workerId}:${ym}`]: {
+          extraLabel: draft.extraLabel.trim(), extra: Number(draft.extra) || 0,
+          deductLabel: draft.deductLabel.trim(), deduct: Number(draft.deduct) || 0,
+          tax: draft.tax, memo: draft.memo.trim(),
+        },
+      },
+    }));
+    setAdjOpen(false); setToast("정산 항목을 저장했습니다");
+  };
+
+  return (
+    <PaperShell title="월 정산서" onClose={onClose} actions={
+      <>
+        <button onClick={() => { setDraft({ ...adj, extra: adj.extra || "", deduct: adj.deduct || "" }); setAdjOpen(true); }}
+          className="flex items-center justify-center" title="수당·공제"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 36, height: 34 }}>
+          <SlidersHorizontal size={15} />
+        </button>
+        <button onClick={() => { navigator.clipboard?.writeText(text); setToast("복사했습니다 — 문자나 카톡에 붙여넣으세요"); }}
+          className="flex items-center gap-1 px-2.5" style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 34 }}>
+          <Copy size={13} /> 복사
+        </button>
+        <button onClick={() => window.print()} className="flex items-center justify-center" title="인쇄 / PDF"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 36, height: 34 }}>
+          <Printer size={15} />
+        </button>
+      </>
+    }>
+      {/* 표지 */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          {company && <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, letterSpacing: "0.06em" }}>{company}</div>}
+          <div style={{ fontSize: 23, fontWeight: 900, color: C.text, marginTop: 4, letterSpacing: "-0.02em" }}>
+            {ymLabel(ym)} 근무 정산서
+          </div>
+        </div>
+        <div className="text-right" style={{ flexShrink: 0 }}>
+          <Eyebrow>발행일</Eyebrow>
+          <div style={{ marginTop: 2 }}><Num size={12}>{dKey(issued)}</Num></div>
+        </div>
+      </div>
+      <Rule thick />
+
+      <div className="flex items-baseline justify-between">
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></div>
+        <div style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>
+          {agg.shift
+            ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
+            : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+        </div>
+      </div>
+
+      {/* 근무 요약 */}
+      <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.line }}>
+        {(agg.shift
+          ? [["근무 타임", `${agg.times}회`, C.text], ["근무시간", hmc(agg.net), C.text],
+             ["추가 인정", `${agg.blocks}회`, C.aquaDeep], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.amber : C.sub]]
+          : [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
+             ["추가근무", `+${hmc(agg.ot)}`, C.aquaDeep], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? C.amber : C.sub]]
+        ).map(([k, v, col]) => (
+          <div key={k} style={{ background: C.tileSoft, padding: "10px 8px" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.sub, letterSpacing: "0.06em" }}>{k}</div>
+            <div style={{ marginTop: 3 }}><Num size={15} color={col}>{v}</Num></div>
+          </div>
+        ))}
+      </div>
+
+      {/* 지급 · 공제 */}
+      <div className="mt-5"><Eyebrow>지급 내역</Eyebrow></div>
+      <div style={{ marginTop: 4 }}>
+        {agg.shift ? (
+          <>
+            <LineItem k="기본 타임" sub={`${agg.times}회 × ${money(worker.shiftPay ?? data.settings.shiftPay)}원`} v={`${money(agg.base)}원`} />
+            {agg.blocks > 0 && <LineItem k="추가근무" sub={`${agg.blocks}회 × ${money(data.settings.otPay)}원`} v={`${money(agg.otPay)}원`} />}
+          </>
+        ) : (
+          <LineItem k="기본급" sub={`${agg.net.toFixed(1)}시간 × ${money(agg.wage)}원`} v={`${money(p.base)}원`} />
+        )}
+        {p.extra > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(p.extra)}원`} />}
+        <div style={{ borderTop: `1px solid ${C.line}` }} />
+        <LineItem k="지급 합계" v={`${money(p.gross)}원`} bold />
+      </div>
+      {agg.shift && agg.shortMin > 0 && (
+        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+          기준보다 모자란 {minStr(agg.shortMin)}은 지급액에서 빼지 않았습니다. 확인용으로만 표시합니다.
+        </div>
+      )}
+
+      {(p.tax > 0 || p.deduct > 0) && (
+        <>
+          <div className="mt-4"><Eyebrow>공제 내역</Eyebrow></div>
+          <div style={{ marginTop: 4 }}>
+            {p.tax > 0 && <LineItem k="원천징수" sub="사업소득 3.3%" v={`−${money(p.tax)}원`} color={C.coral} />}
+            {p.deduct > 0 && <LineItem k={adj.deductLabel || "기타 공제"} v={`−${money(p.deduct)}원`} color={C.coral} />}
+          </div>
+        </>
+      )}
+
+      <div className="mt-4" style={{ background: C.text, padding: "15px 16px" }}>
+        <div className="flex items-baseline justify-between">
+          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</span>
+          <Num size={28} color="#fff" weight={800}>{money(p.net)}<span style={{ fontSize: 15 }}> 원</span></Num>
+        </div>
+      </div>
+
+      {adj.memo && (
+        <div style={{ marginTop: 12, fontSize: 12.5, color: C.text, background: C.tileSoft, padding: "9px 11px", lineHeight: 1.6 }}>
+          ※ {adj.memo}
+        </div>
+      )}
+
+      {/* 일자별 */}
+      <div className="flex items-center justify-between mt-6 mb-2">
+        <Eyebrow>{agg.shift ? "타임별 근무 내역" : "일자별 근무 내역"}</Eyebrow>
+        <button onClick={() => setWithDays(!withDays)} className="no-print" style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>
+          복사에 {withDays ? "포함됨" : "제외됨"}
+        </button>
+      </div>
+      <div style={{ borderTop: `2px solid ${C.text}` }}>
+        <div className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 800, color: C.sub, letterSpacing: "0.04em" }}>
+          <span style={{ width: 58 }}>날짜</span>
+          <span style={{ flex: 1 }}>현장</span>
+          <span style={{ width: 84, textAlign: "right" }}>출퇴근</span>
+          <span style={{ width: 46, textAlign: "right" }}>근무</span>
+          <span style={{ width: 54, textAlign: "right" }}>증감</span>
+          <span style={{ width: 58, textAlign: "right" }}>금액</span>
+        </div>
+        {recs.map((r) => {
+          const q = calcPay(r, worker, data.settings);
+          const d = parseKey(r.date);
+          const shortish = q.shortMin >= data.settings.shortThreshold;
+          return (
+            <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ width: 58, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: C.text }}>
+                {r.date.slice(5).replace("-", ".")}<span style={{ color: d.getDay() === 0 ? C.coral : C.sub }}>({WD[d.getDay()]})</span>
+              </span>
+              <span style={{ flex: 1, fontSize: 11.5, color: C.sub, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", paddingRight: 6 }}>
+                {r.site}{r.note ? ` · ${r.note}` : ""}
+              </span>
+              <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
+              <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
+              <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.aquaDeep : shortish ? C.amber : C.sub }}>
+                {!agg.shift ? "—" : q.blocks > 0 ? `추가 +${minStr(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
+              </span>
+              <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{money(q.pay)}</span>
+            </div>
+          );
+        })}
+        {recs.length === 0 && <div style={{ padding: "14px 0", fontSize: 12.5, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
+        <div className="flex items-center" style={{ padding: "9px 0", borderBottom: `2px solid ${C.text}` }}>
+          <span style={{ flex: 1, fontSize: 12, fontWeight: 800, color: C.text }}>
+            합계 {agg.shift ? `${agg.times}타임 (${agg.days}일)` : `${agg.days}일`}
+          </span>
+          <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net)}</Num></span>
+          <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: C.aquaDeep }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
+          <span style={{ width: 58, textAlign: "right" }}><Num size={12}>{money(agg.pay)}</Num></span>
+        </div>
+      </div>
+
+      <div className="flex items-end justify-between" style={{ marginTop: 26 }}>
+        <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, maxWidth: 200 }}>
+          위 근무 내역과 지급액을 확인하였습니다.
+        </div>
+        <div className="text-right">
+          <div style={{ borderBottom: `1px solid ${C.text}`, width: 130, height: 26 }} />
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>근무자 확인 (서명)</div>
+        </div>
+      </div>
+
+      {/* 수당·공제 편집 */}
+      <Modal open={adjOpen} onClose={() => setAdjOpen(false)} title="수당 · 공제 입력">
+        {draft && (
+          <>
+            <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.6, marginBottom: 14 }}>
+              {worker.name} 님의 {ymLabel(ym)} 정산에만 적용됩니다.
+            </div>
+            <Field label="기타 수당">
+              <div className="flex gap-2">
+                <input value={draft.extraLabel} onChange={(e) => setDraft({ ...draft, extraLabel: e.target.value })} placeholder="항목 (예: 교통비)" style={{ ...inputStyle, flex: 1 }} />
+                <input type="number" inputMode="numeric" value={draft.extra} onChange={(e) => setDraft({ ...draft, extra: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, textAlign: "right" }} />
+              </div>
+            </Field>
+            <Field label="기타 공제">
+              <div className="flex gap-2">
+                <input value={draft.deductLabel} onChange={(e) => setDraft({ ...draft, deductLabel: e.target.value })} placeholder="항목 (예: 가불금)" style={{ ...inputStyle, flex: 1 }} />
+                <input type="number" inputMode="numeric" value={draft.deduct} onChange={(e) => setDraft({ ...draft, deduct: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, textAlign: "right" }} />
+              </div>
+            </Field>
+            <div style={{ border: `1px solid ${C.line}`, padding: "4px 12px", marginBottom: 12 }}>
+              <Toggle label="원천징수 3.3% 공제" desc="사업소득으로 지급하는 경우에 켭니다" first
+                on={draft.tax} onChange={(v) => setDraft({ ...draft, tax: v })} />
+            </div>
+            <Field label="비고">
+              <textarea value={draft.memo} onChange={(e) => setDraft({ ...draft, memo: e.target.value })} placeholder="정산서에 함께 표시할 내용" style={{ ...inputStyle, height: 64 }} />
+            </Field>
+            <div className="grid grid-cols-2 gap-2">
+              <Btn kind="ghost" full onClick={() => setAdjOpen(false)}>취소</Btn>
+              <Btn full onClick={saveAdj}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+    </PaperShell>
+  );
+}
+
+/* ─────────────────────────  전체 급여대장  ───────────────────────── */
+function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
+  const shift = data.settings.payMode === "shift";
+  const rows = data.workers.map((w) => ({ w, ...payslipCalc(data, w.id, ym) })).filter((r) => r.agg.times > 0 || r.extra || r.deduct);
+  const sum = rows.reduce((a, r) => ({
+    days: a.days + r.agg.days, times: a.times + r.agg.times, net: a.net + r.agg.net,
+    blocks: a.blocks + r.agg.blocks, gross: a.gross + r.gross,
+    cut: a.cut + r.tax + r.deduct, pay: a.pay + r.net,
+  }), { days: 0, times: 0, net: 0, blocks: 0, gross: 0, cut: 0, pay: 0 });
+
+  const text = useMemo(() => {
+    const L = [];
+    if (data.settings.companyName) L.push(data.settings.companyName);
+    L.push(`[${ymLabel(ym)} 급여대장]`, "");
+    rows.forEach((r) => L.push(
+      shift
+        ? `${r.w.name}  ${r.agg.times}타임  추가${r.agg.blocks}회  ${money(r.net)}원`
+        : `${r.w.name}  ${r.agg.days}일  ${hmc(r.agg.net)}  ${money(r.net)}원`));
+    L.push("──────────────", `합계 ${rows.length}명  ${money(sum.pay)}원`);
+    return L.join("\n");
+  }, [data, ym]);
+
+  return (
+    <PaperShell title="급여대장" onClose={onClose} actions={
+      <>
+        <button onClick={() => { navigator.clipboard?.writeText(text); setToast("복사했습니다"); }}
+          className="flex items-center gap-1 px-2.5" style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 34 }}>
+          <Copy size={13} /> 복사
+        </button>
+        <button onClick={() => window.print()} className="flex items-center justify-center" title="인쇄 / PDF"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 36, height: 34 }}>
+          <Printer size={15} />
+        </button>
+      </>
+    }>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          {data.settings.companyName && <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, letterSpacing: "0.06em" }}>{data.settings.companyName}</div>}
+          <div style={{ fontSize: 23, fontWeight: 900, color: C.text, marginTop: 4, letterSpacing: "-0.02em" }}>{ymLabel(ym)} 급여대장</div>
+        </div>
+        <div className="text-right" style={{ flexShrink: 0 }}>
+          <Eyebrow>인원</Eyebrow>
+          <div style={{ marginTop: 2 }}><Num size={14}>{rows.length}명</Num></div>
+        </div>
+      </div>
+      <Rule thick />
+
+      <div className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 800, color: C.sub }}>
+        <span style={{ flex: 1 }}>이름</span>
+        <span style={{ width: 42, textAlign: "right" }}>{shift ? "타임" : "일수"}</span>
+        <span style={{ width: 44, textAlign: "right" }}>추가</span>
+        <span style={{ width: 66, textAlign: "right" }}>지급</span>
+        <span style={{ width: 56, textAlign: "right" }}>공제</span>
+        <span style={{ width: 72, textAlign: "right" }}>실지급</span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.w.id} onClick={() => onOpenSlip(r.w.id)} className="flex items-center"
+          style={{ padding: "9px 0", borderBottom: `1px solid ${C.line}`, cursor: "pointer" }}>
+          <span style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
+          <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.sub }}>{shift ? r.agg.times : r.agg.days}</span>
+          <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.agg.blocks ? C.aquaDeep : C.sub }}>{r.agg.blocks || "—"}</span>
+          <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.text }}>{money(r.gross)}</span>
+          <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.tax + r.deduct > 0 ? C.coral : C.sub }}>
+            {r.tax + r.deduct > 0 ? `−${money(r.tax + r.deduct)}` : "—"}
+          </span>
+          <span style={{ width: 72, textAlign: "right" }}><Num size={13}>{money(r.net)}</Num></span>
+        </div>
+      ))}
+      {rows.length === 0 && <div style={{ padding: "16px 0", fontSize: 13, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
+
+      <div className="flex items-center" style={{ padding: "11px 0", borderBottom: `2px solid ${C.text}` }}>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 900, color: C.text }}>합계</span>
+        <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800 }}>{shift ? sum.times : sum.days}</span>
+        <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>{sum.blocks || "—"}</span>
+        <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800 }}>{money(sum.gross)}</span>
+        <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>
+          {sum.cut > 0 ? `−${money(sum.cut)}` : "—"}
+        </span>
+        <span style={{ width: 72, textAlign: "right" }}><Num size={14} weight={800}>{money(sum.pay)}</Num></span>
+      </div>
+
+      <div style={{ marginTop: 14, fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+        {shift ? `총 ${sum.times}타임 · 추가근무 ${sum.blocks}회 · 실근무 ${hm(sum.net)}` : `총 ${sum.days}일 · 실근무 ${hm(sum.net)}`}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+        이름을 누르면 그 사람의 정산서로 넘어갑니다.
+      </div>
+    </PaperShell>
+  );
+}
+
+/* ─────────────────────────  설정  ───────────────────────── */
+function SettingsView({ data, update, dev, updateDev, setToast }) {
+  const { workers, sites, settings } = data;
+  const [wEdit, setWEdit] = useState(null);
+  const [sEdit, setSEdit] = useState(null);
+  const [cap, setCap] = useState("idle");
+  const [bind, setBind] = useState(null);
+  const [reset, setReset] = useState(false);
+  const [pinEdit, setPinEdit] = useState(null);
+
+  const bound = workers.find((w) => w.id === dev.workerId);
+  const noCoord = sites.filter((s) => s.lat == null).length;
+
+  const saveWorker = () => {
+    if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
+    const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
+    const w = {
+      id: wEdit.id || uid(), name: wEdit.name.trim(), siteId: wEdit.siteId || null,
+      wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
+      shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
+    };
+    update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
+    setWEdit(null); setToast("근무자를 저장했습니다");
+  };
+  const delWorker = () => {
+    update((d) => ({
+      ...d, workers: d.workers.filter((x) => x.id !== wEdit.id),
+      records: d.records.filter((r) => r.workerId !== wEdit.id),
+    }));
+    if (dev.workerId === wEdit.id) updateDev({ ...dev, workerId: null, boundAt: null });
+    setWEdit(null); setToast("근무자와 기록을 삭제했습니다");
+  };
+
+  const saveSite = () => {
+    if (!sEdit.name.trim()) { setToast("현장 이름을 입력하세요"); return; }
+    const s = {
+      id: sEdit.id || uid(), name: sEdit.name.trim(),
+      lat: sEdit.lat === "" || sEdit.lat == null ? null : Number(sEdit.lat),
+      lng: sEdit.lng === "" || sEdit.lng == null ? null : Number(sEdit.lng),
+      radius: Number(sEdit.radius) || settings.defaultRadius,
+    };
+    update((d) => ({ ...d, sites: sEdit.id ? d.sites.map((x) => (x.id === s.id ? s : x)) : [...d.sites, s] }));
+    setSEdit(null); setCap("idle"); setToast("현장을 저장했습니다");
+  };
+  const capture = async () => {
+    setCap("loading");
+    const v = await getLoc();
+    if (v) { setSEdit((p) => ({ ...p, lat: v.lat, lng: v.lng, acc: v.acc })); setCap("ok"); }
+    else setCap("fail");
+  };
+
+  const doBind = (workerId) => {
+    const at = new Date().toISOString();
+    updateDev({ ...dev, workerId, boundAt: workerId ? at : null });
+    if (workerId) {
+      update((d) => {
+        const prev = d.bindings[workerId];
+        const changed = prev && prev.deviceId !== dev.deviceId;
+        return {
+          ...d,
+          bindings: { ...d.bindings, [workerId]: { deviceId: dev.deviceId, at } },
+          bindLog: changed
+            ? [{ workerId, at, from: prev.deviceId.slice(0, 6), to: dev.deviceId.slice(0, 6) }, ...d.bindLog].slice(0, 30)
+            : d.bindLog,
+        };
+      });
+    }
+    setBind(null);
+    setToast(workerId ? "이 기기를 연결했습니다" : "기기 연결을 해제했습니다");
+  };
+
+  return (
+    <div className="px-4 pt-5 pb-8">
+      {/* 기기 연결 */}
+      <Sec title="이 기기의 근무자">
+        <Tile style={{ padding: 14 }}>
+          <div className="flex items-start gap-2.5">
+            <Smartphone size={17} color={bound ? C.aquaDeep : C.sub} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {bound ? (
+                <>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: C.text }}>{bound.name}</div>
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, fontFamily: MONO }}>
+                    {dev.boundAt ? `${dev.boundAt.slice(0, 10)} 연결됨` : "연결됨"} · 기기 {dev.deviceId.slice(0, 6)}
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>연결 안 됨</div>
+              )}
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 8, lineHeight: 1.6 }}>
+                이 휴대폰의 출퇴근은 연결된 한 사람 이름으로만 기록됩니다. 근무자 화면에서는 이름을 바꿀 수 없어, 한 대로 여러 명이 찍는 대리출석이 되지 않습니다.
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Btn small kind="ghost" onClick={() => setBind({ id: bound?.id || "" })}>{bound ? "다른 사람으로 변경" : "근무자 연결"}</Btn>
+            {bound && <Btn small kind="danger" onClick={() => doBind(null)}>연결 해제</Btn>}
+          </div>
+        </Tile>
+      </Sec>
+
+      {/* 현장 */}
+      <Sec title="현장 · 좌표와 반경" right={
+        <button onClick={() => { setCap("idle"); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius }); }}
+          className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
+        {sites.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>현장을 추가하고, 현장에 도착해서 좌표를 등록하세요.</div></Tile>}
+        {sites.map((s) => (
+          <Tile key={s.id} onClick={() => { setCap("idle"); setSEdit({ ...s }); }} style={{ padding: "12px 14px" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{s.name}</div>
+                {s.lat != null ? (
+                  <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2, fontFamily: MONO }}>
+                    {s.lat}, {s.lng} · 반경 {s.radius}m
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1" style={{ color: C.amber, fontSize: 11.5, marginTop: 3, fontWeight: 700 }}>
+                    <AlertTriangle size={11} /> 좌표 미등록 — 위치 확인 없이 기록됨
+                  </div>
+                )}
+              </div>
+              <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
+            </div>
+          </Tile>
+        ))}
+        <Tile soft style={{ padding: 13 }}>
+          <Toggle label="현장 반경 확인" desc="현장 밖에서는 출근 버튼이 눌리지 않습니다"
+            on={settings.geofence} onChange={(v) => update((d) => ({ ...d, settings: { ...d.settings, geofence: v } }))} first />
+          {settings.geofence && noCoord > 0 && (
+            <div style={{ color: C.amber, fontSize: 11.5, marginTop: 8, lineHeight: 1.5, fontWeight: 700 }}>
+              좌표가 없는 현장 {noCoord}곳은 아직 위치 확인이 되지 않습니다.
+            </div>
+          )}
+        </Tile>
+      </Sec>
+
+      {/* 근무자 */}
+      <Sec title="근무자" right={
+        <button onClick={() => setWEdit({ id: null, name: "", siteId: sites[0]?.id || "", wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
+          className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
+        {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
+        {workers.map((w) => (
+          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteId: w.siteId || "" })} style={{ padding: "12px 14px" }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
+                  {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
+                </div>
+                <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2, fontFamily: MONO }}>
+                  {sites.find((s) => s.id === w.siteId)?.name || "현장 미지정"} · {settings.payMode === "shift"
+                    ? `1타임 ${w.shiftHours ?? settings.shiftHours}h / ${money(w.shiftPay ?? settings.shiftPay)}원`
+                    : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
+                </div>
+              </div>
+              <Pencil size={14} color={C.sub} />
+            </div>
+          </Tile>
+        ))}
+      </Sec>
+
+      {/* 정산 */}
+      <Sec title="정산 기준">
+        <Tile style={{ padding: 14 }}>
+          <Field label="회사명 · 정산서 머리글에 표시됩니다">
+            <input value={settings.companyName || ""} placeholder="예: 한빛클린" style={inputStyle}
+              onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, companyName: e.target.value } }))} />
+          </Field>
+          <div className="mb-3">
+            <div className="mb-1.5"><Eyebrow>정산 방식</Eyebrow></div>
+            <div className="grid grid-cols-2 gap-0.5" style={{ background: C.line }}>
+              {[["shift", "타임제", "한 타임 단위로 지급"], ["hourly", "시간제", "실근무 시간 × 시급"]].map(([k, l, d2]) => (
+                <button key={k} onClick={() => update((d) => ({ ...d, settings: { ...d.settings, payMode: k } }))}
+                  className="py-2.5 px-2" style={{ background: settings.payMode === k ? C.aquaDeep : C.tileSoft, color: settings.payMode === k ? "#fff" : C.sub }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800 }}>{l}</div>
+                  <div style={{ fontSize: 10.5, marginTop: 2, opacity: 0.85 }}>{d2}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {settings.payMode === "shift" ? (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="1타임 기본 시간">
+                  <input type="number" step="0.5" value={settings.shiftHours} style={inputStyle}
+                    onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, shiftHours: Number(e.target.value) || 0 } }))} />
+                </Field>
+                <Field label="1타임 지급액 (원)">
+                  <input type="number" value={settings.shiftPay} style={inputStyle}
+                    onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, shiftPay: Number(e.target.value) || 0 } }))} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="추가 인정 기준 (분 이상)">
+                  <input type="number" value={settings.otThreshold} style={inputStyle}
+                    onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, otThreshold: Number(e.target.value) || 1 } }))} />
+                </Field>
+                <Field label="추가 1회 지급액 (원)">
+                  <input type="number" value={settings.otPay} style={inputStyle}
+                    onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, otPay: Number(e.target.value) || 0 } }))} />
+                </Field>
+              </div>
+              <Toggle label={`${settings.otThreshold}분마다 반복 가산`} first
+                desc={settings.otRepeat
+                  ? `${settings.otThreshold * 2}분 이상 초과하면 ${money(settings.otPay * 2)}원으로 늘어납니다`
+                  : `얼마를 초과하든 ${money(settings.otPay)}원만 더합니다`}
+                on={settings.otRepeat} onChange={(v) => update((d) => ({ ...d, settings: { ...d.settings, otRepeat: v } }))} />
+              <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 12, marginTop: 4 }}>
+                <Field label="부족 표시 기준 (분 이상)">
+                  <input type="number" value={settings.shortThreshold} style={inputStyle}
+                    onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, shortThreshold: Number(e.target.value) || 0 } }))} />
+                </Field>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: -8, lineHeight: 1.6 }}>
+                  기준보다 모자란 타임에 부족 표시가 붙습니다. 지급액은 그대로 {money(settings.shiftPay)}원입니다.
+                </div>
+              </div>
+              <div style={{ background: C.tileSoft, padding: 12, marginTop: 14 }}>
+                <Eyebrow>지금 설정으로 계산하면</Eyebrow>
+                <div style={{ fontSize: 12, color: C.text, marginTop: 7, lineHeight: 1.8, fontFamily: MONO }}>
+                  {[Math.round(settings.shiftHours * 60) - 20, Math.round(settings.shiftHours * 60) + 12,
+                    Math.round(settings.shiftHours * 60) + settings.otThreshold,
+                    Math.round(settings.shiftHours * 60) + settings.otThreshold * 2].map((m, i) => {
+                    const fake = { clockIn: new Date(2020, 0, 1, 8, 0).toISOString(), clockOut: new Date(2020, 0, 1, 8, 0, 0).toISOString() };
+                    const q = calcPay({ ...fake, clockOut: new Date(2020, 0, 1, 8, m).toISOString() }, null, settings);
+                    return (
+                      <div key={i} className="flex items-center justify-between">
+                        <span style={{ color: C.sub }}>{minStr(m)} 근무</span>
+                        <span style={{ fontWeight: 800, color: q.blocks ? C.aquaDeep : q.shortMin >= settings.shortThreshold ? C.amber : C.text }}>
+                          {money(q.pay)}원{q.blocks ? ` (추가 ${q.blocks}회)` : q.shortMin >= settings.shortThreshold ? ` (부족 −${minStr(q.shortMin)})` : ""}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="기본 시급 (원)">
+                  <input type="number" value={settings.wage} onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, wage: Number(e.target.value) || 0 } }))} style={inputStyle} />
+                </Field>
+                <Field label="1일 소정근로 (시간)">
+                  <input type="number" step="0.5" value={settings.stdHours} onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, stdHours: Number(e.target.value) || 0 } }))} style={inputStyle} />
+                </Field>
+              </div>
+              <Toggle label="휴게시간 자동 차감" first desc="4시간 근무 시 30분, 8시간 이상 60분을 뺍니다"
+                on={settings.autoBreak} onChange={(v) => update((d) => ({ ...d, settings: { ...d.settings, autoBreak: v } }))} />
+              <Toggle label="연장근로 1.5배 적용" desc="1일 소정시간을 넘긴 시간에 가산 수당을 계산합니다"
+                on={settings.otPremium} onChange={(v) => update((d) => ({ ...d, settings: { ...d.settings, otPremium: v } }))} />
+            </>
+          )}
+        </Tile>
+      </Sec>
+
+      {/* 기기 변경 이력 */}
+      {data.bindLog.length > 0 && (
+        <Sec title="기기 변경 이력">
+          {data.bindLog.slice(0, 8).map((l, i) => (
+            <Tile key={i} soft style={{ padding: "10px 14px" }}>
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={13} color={C.amber} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>
+                  {workers.find((w) => w.id === l.workerId)?.name || "삭제된 근무자"} 님이 다른 기기로 연결됨
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 3, fontFamily: MONO, marginLeft: 21 }}>
+                {l.at.slice(0, 10)} {l.at.slice(11, 16)} · {l.from} → {l.to}
+              </div>
+            </Tile>
+          ))}
+        </Sec>
+      )}
+
+      <Sec title="보안 · 데이터">
+        <Tile style={{ padding: 14 }}>
+          <div style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.6 }}>
+            근무 기록과 급여는 관리자 PIN을 아는 사람만 볼 수 있습니다. 출퇴근 탭으로 나가면 자동으로 다시 잠깁니다.
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Btn small kind="ghost" onClick={() => setPinEdit({ a: "", b: "" })}>PIN 변경</Btn>
+            {workers.length === 0 && <Btn small kind="ghost" onClick={() => update(sampleData())}>샘플 데이터 넣기</Btn>}
+            <Btn small kind="danger" onClick={() => setReset(true)}>전체 초기화</Btn>
+          </div>
+        </Tile>
+      </Sec>
+
+      {/* 기기 연결 모달 */}
+      <Modal open={!!bind} onClose={() => setBind(null)} title="이 기기에 연결할 근무자">
+        {bind && (
+          <>
+            <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.6, marginBottom: 12 }}>
+              연결한 뒤에는 이 휴대폰의 모든 출퇴근이 이 사람 이름으로 남습니다. 근무자 본인 휴대폰에서 설정해 주세요.
+            </div>
+            <div className="flex flex-col gap-0.5" style={{ background: C.line }}>
+              {workers.map((w) => (
+                <Tile key={w.id} onClick={() => doBind(w.id)} style={{ padding: "13px 14px" }}>
+                  <div className="flex items-center justify-between">
+                    <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
+                    {w.id === dev.workerId && <Check size={17} color={C.aquaDeep} />}
+                  </div>
+                </Tile>
+              ))}
+              {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>먼저 근무자를 등록하세요.</div></Tile>}
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 현장 편집 */}
+      <Modal open={!!sEdit} onClose={() => { setSEdit(null); setCap("idle"); }} title={sEdit?.id ? "현장 수정" : "현장 추가"}>
+        {sEdit && (
+          <>
+            <Field label="현장 이름"><input value={sEdit.name} onChange={(e) => setSEdit({ ...sEdit, name: e.target.value })} placeholder="예: 강남타워" style={inputStyle} /></Field>
+
+            <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
+              <Eyebrow>현장 좌표</Eyebrow>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+                현장에 도착해서 아래 버튼을 누르면 지금 서 있는 자리가 현장 중심으로 등록됩니다. 건물 정문 앞이 가장 정확합니다.
+              </div>
+              <div className="mt-3">
+                <Btn small full onClick={capture} disabled={cap === "loading"}>
+                  <span className="flex items-center justify-center gap-2">
+                    {cap === "loading" ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
+                    {cap === "loading" ? "위치 확인 중…" : "현재 위치로 등록"}
+                  </span>
+                </Btn>
+              </div>
+              {cap === "fail" && <div style={{ color: C.amber, fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>위치를 가져오지 못했습니다. 실외에서 다시 시도하거나 아래에 직접 입력하세요.</div>}
+              {cap === "ok" && <div style={{ color: C.aquaDeep, fontSize: 11.5, marginTop: 8, fontWeight: 700, fontFamily: MONO }}>등록됨 · 오차 ±{sEdit.acc}m</div>}
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <Field label="위도"><input value={sEdit.lat ?? ""} onChange={(e) => setSEdit({ ...sEdit, lat: e.target.value })} placeholder="37.4979" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
+                <Field label="경도"><input value={sEdit.lng ?? ""} onChange={(e) => setSEdit({ ...sEdit, lng: e.target.value })} placeholder="127.0276" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
+              </div>
+            </div>
+
+            <div className="mb-3">
+              <div className="mb-1.5"><Eyebrow>허용 반경</Eyebrow></div>
+              <div className="grid grid-cols-3 gap-0.5" style={{ background: C.line }}>
+                {[50, 100, 150, 200, 300, 500].map((r) => (
+                  <button key={r} onClick={() => setSEdit({ ...sEdit, radius: r })} className="py-2.5"
+                    style={{ background: Number(sEdit.radius) === r ? C.aquaDeep : C.tileSoft, color: Number(sEdit.radius) === r ? "#fff" : C.sub, fontSize: 13, fontWeight: 800, fontFamily: MONO }}>
+                    {r}m
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 7, lineHeight: 1.5 }}>
+                건물 한 동이면 100~150m, 넓은 단지나 지하 작업이 많으면 200~300m를 권합니다.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              {sEdit.id
+                ? <Btn kind="danger" full onClick={() => { update((d) => ({ ...d, sites: d.sites.filter((x) => x.id !== sEdit.id) })); setSEdit(null); setToast("현장을 삭제했습니다"); }}>
+                    <span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span>
+                  </Btn>
+                : <Btn kind="ghost" full onClick={() => setSEdit(null)}>취소</Btn>}
+              <Btn full onClick={saveSite}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 근무자 편집 */}
+      <Modal open={!!wEdit} onClose={() => setWEdit(null)} title={wEdit?.id ? "근무자 수정" : "근무자 추가"}>
+        {wEdit && (
+          <>
+            <Field label="이름"><input value={wEdit.name} onChange={(e) => setWEdit({ ...wEdit, name: e.target.value })} placeholder="예: 김순자" style={inputStyle} /></Field>
+            <Field label="주 근무 현장">
+              <select value={wEdit.siteId} onChange={(e) => setWEdit({ ...wEdit, siteId: e.target.value })} style={inputStyle}>
+                <option value="">현장 미지정</option>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+            {settings.payMode === "shift" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="1타임 시간 · 비우면 기본값">
+                  <input type="number" step="0.5" value={wEdit.shiftHours ?? ""} placeholder={String(settings.shiftHours)}
+                    onChange={(e) => setWEdit({ ...wEdit, shiftHours: e.target.value })} style={inputStyle} />
+                </Field>
+                <Field label="1타임 지급액 · 비우면 기본값">
+                  <input type="number" value={wEdit.shiftPay ?? ""} placeholder={String(settings.shiftPay)}
+                    onChange={(e) => setWEdit({ ...wEdit, shiftPay: e.target.value })} style={inputStyle} />
+                </Field>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="시급 (원)"><input type="number" value={wEdit.wage ?? ""} placeholder={String(settings.wage)} onChange={(e) => setWEdit({ ...wEdit, wage: e.target.value })} style={inputStyle} /></Field>
+                <Field label="1일 소정근로 (시간)"><input type="number" step="0.5" value={wEdit.stdHours ?? ""} placeholder={String(settings.stdHours)} onChange={(e) => setWEdit({ ...wEdit, stdHours: e.target.value })} style={inputStyle} /></Field>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              {wEdit.id ? <Btn kind="danger" full onClick={delWorker}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
+                : <Btn kind="ghost" full onClick={() => setWEdit(null)}>취소</Btn>}
+              <Btn full onClick={saveWorker}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal open={!!pinEdit} onClose={() => setPinEdit(null)} title="관리자 PIN 변경">
+        {pinEdit && (
+          <>
+            <Field label="새 PIN (숫자 4자리)">
+              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.a} onChange={(e) => setPinEdit({ ...pinEdit, a: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, letterSpacing: "0.4em" }} />
+            </Field>
+            <Field label="확인">
+              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.b} onChange={(e) => setPinEdit({ ...pinEdit, b: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, letterSpacing: "0.4em" }} />
+            </Field>
+            <Btn full disabled={pinEdit.a.length !== 4 || pinEdit.a !== pinEdit.b}
+              onClick={() => { update((d) => ({ ...d, settings: { ...d.settings, adminPin: pinEdit.a } })); setPinEdit(null); setToast("PIN을 변경했습니다"); }}>
+              변경하기
+            </Btn>
+          </>
+        )}
+      </Modal>
+
+      <Modal open={reset} onClose={() => setReset(false)} title="전체 초기화">
+        <div style={{ fontSize: 14.5, color: C.text, lineHeight: 1.6 }}>
+          근무자, 현장, 모든 출퇴근 기록과 관리자 PIN이 지워집니다. 되돌릴 수 없습니다.
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setReset(false)}>취소</Btn>
+          <Btn kind="danger" full onClick={() => { update(DEFAULTS); updateDev({ ...dev, workerId: null, boundAt: null }); setReset(false); setToast("초기화했습니다"); }}>모두 지우기</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+const Sec = ({ title, children, right }) => (
+  <div className="mb-5">
+    <div className="flex items-center justify-between mb-2"><Eyebrow dark>{title}</Eyebrow>{right}</div>
+    <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>{children}</div>
+  </div>
+);
+
+const Toggle = ({ label, desc, on, onChange, first }) => (
+  <button onClick={() => onChange(!on)} className="flex items-center justify-between w-full gap-3 py-2.5 text-left"
+    style={{ borderTop: first ? "none" : `1px solid ${C.line}` }}>
+    <div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{label}</div>
+      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{desc}</div>
+    </div>
+    <div style={{ width: 44, height: 26, background: on ? C.aquaDeep : C.line, flexShrink: 0, padding: 3 }}>
+      <div style={{ width: 20, height: 20, background: "#fff", marginLeft: on ? 18 : 0, transition: "margin-left .15s" }} />
+    </div>
+  </button>
+);
