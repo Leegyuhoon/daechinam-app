@@ -58,6 +58,7 @@ const DEFAULTS = {
     shortThreshold: 15,      // 이 분 이상 모자라면 부족으로 표시
     wage: 15000, stdHours: 8, otPremium: false, autoBreak: true,
     adminPin: null, geofence: true, defaultRadius: 200, companyName: "대신치워주는남자",
+    holidays: [], holidayMultiplier: 1.5,
   },
 };
 const DEV_DEFAULT = { deviceId: null, workerId: null, boundAt: null };
@@ -95,6 +96,10 @@ const minStr = (m) => {
   return r < 60 ? `${r}분` : r % 60 === 0 ? `${r / 60}시간` : `${Math.floor(r / 60)}시간 ${r % 60}분`;
 };
 
+function isHoliday(date, settings) {
+  return !!(settings.holidays && settings.holidays.includes(date));
+}
+
 function calcRec(rec, settings) {
   if (!rec.clockOut) return { open: true, gross: 0, brk: 0, net: 0 };
   const i = new Date(rec.clockIn).getTime();
@@ -111,19 +116,22 @@ function calcRec(rec, settings) {
 function calcPay(rec, worker, settings) {
   const c = calcRec(rec, settings);
   if (c.open) return { ...c, open: true, pay: 0 };
+  const holiday = isHoliday(rec.date, settings);
+  const hMult = holiday ? (settings.holidayMultiplier || 1.5) : 1;
   if (settings.payMode !== "shift") {
     const wage = worker?.wage ?? settings.wage;
-    return { ...c, open: false, pay: c.net * wage, base: c.net * wage, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0 };
+    const pay = c.net * wage * hMult;
+    return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, holiday };
   }
   const sh = worker?.shiftHours ?? settings.shiftHours;
-  const sp = worker?.shiftPay ?? settings.shiftPay;
+  const sp = (worker?.shiftPay ?? settings.shiftPay) * hMult;
   const th = Math.max(1, settings.otThreshold);
   const diffMin = Math.round((c.net - sh) * 60);
   let blocks = 0;
   if (diffMin >= th) blocks = settings.otRepeat ? Math.floor(diffMin / th) : 1;
-  const otPay = blocks * settings.otPay;
+  const otPay = blocks * settings.otPay * hMult;
   return {
-    ...c, open: false, base: sp, otPay, pay: sp + otPay, blocks, diffMin,
+    ...c, open: false, base: sp, otPay, pay: sp + otPay, blocks, diffMin, holiday,
     otMin: blocks * th, shortMin: Math.max(0, -diffMin), overMin: Math.max(0, diffMin), target: sh,
   };
 }
@@ -135,14 +143,16 @@ function aggregate(records, worker, settings) {
   const byDate = {};
   let net = 0, pay = 0, times = 0, base = 0, otPay = 0, blocks = 0;
   let otMin = 0, shortMin = 0, overMin = 0, flags = 0;
+  let holidayNet = 0, holidayPay = 0, holidayDays = 0;
 
   records.forEach((r) => {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
     if (p.open) return;
     times++; net += p.net; pay += p.pay;
-    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0 });
+    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday });
     b.net += p.net; b.times++; b.target += shift ? sh : 0;
+    if (p.holiday) holidayNet += p.net;
     if (shift) {
       base += p.base; otPay += p.otPay; blocks += p.blocks;
       otMin += p.otMin; shortMin += p.shortMin; overMin += p.overMin;
@@ -150,23 +160,30 @@ function aggregate(records, worker, settings) {
   });
 
   if (!shift) {
-    Object.values(byDate).forEach((b) => {
+    const wage = worker?.wage ?? settings.wage;
+    const hMult = settings.holidayMultiplier || 1.5;
+    let normalNet = 0;
+    Object.entries(byDate).forEach(([date, b]) => {
       b.target = std;
+      if (b.holiday) { holidayDays++; return; } // 공휴일은 초과/부족 계산에서 제외, 전체 1.5배로 별도 지급
+      normalNet += b.net;
       if (b.net > std) otMin += (b.net - std) * 60; else shortMin += (std - b.net) * 60;
     });
-    const wage = worker?.wage ?? settings.wage;
-    base = (net - otMin / 60) * wage;
+    base = (normalNet - otMin / 60) * wage;
     otPay = settings.otPremium ? (otMin / 60) * wage * 1.5 : (otMin / 60) * wage;
-    pay = base + otPay;
+    holidayPay = holidayNet * wage * hMult;
+    pay = base + otPay + holidayPay;
     overMin = otMin;
   }
 
   return {
     net, days: Object.keys(byDate).length, times, pay, base, otPay, blocks,
     otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
+    holidayNet, holidayPay, holidayDays, holidayMultiplier: settings.holidayMultiplier || 1.5,
     byDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
   };
 }
+
 
 function rangeOf(mode, anchor) {
   const a = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
@@ -1012,6 +1029,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <Num size={14.5}>{r.date.slice(5).replace("-", ".")}</Num>
                       <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
+                      {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontSize: 13, color: C.text, fontWeight: 700 }}>
@@ -1244,7 +1262,13 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             {agg.blocks > 0 && <LineItem k="추가근무" sub={`${agg.blocks}회 × ${money(data.settings.otPay)}원`} v={`${money(agg.otPay)}원`} />}
           </>
         ) : (
-          <LineItem k="기본급" sub={`${agg.net.toFixed(1)}시간 × ${money(agg.wage)}원`} v={`${money(p.base)}원`} />
+          <>
+            <LineItem k="기본급" sub={`${agg.net.toFixed(1)}시간 × ${money(agg.wage)}원`} v={`${money(agg.base)}원`} />
+            {agg.otPay > 0 && <LineItem k="연장근무" sub={`${(agg.otMin / 60).toFixed(1)}시간 × ${money(agg.wage)}원 × 1.5`} v={`${money(agg.otPay)}원`} />}
+          </>
+        )}
+        {agg.holidayPay > 0 && (
+          <LineItem k="공휴일 근무" sub={`${agg.holidayNet.toFixed(1)}시간 × ${money(agg.wage)}원 × ${agg.holidayMultiplier}`} v={`${money(agg.holidayPay)}원`} />
         )}
         {p.extra > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(p.extra)}원`} />}
         <div style={{ borderTop: `1px solid ${C.line}` }} />
@@ -1717,6 +1741,54 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Toggle label="연장근로 1.5배 적용" desc="1일 소정시간을 넘긴 시간에 가산 수당을 계산합니다"
                 on={settings.otPremium} onChange={(v) => update((d) => ({ ...d, settings: { ...d.settings, otPremium: v } }))} />
             </>
+          )}
+        </Tile>
+      </Sec>
+
+      {/* 공휴일 관리 */}
+      <Sec title="공휴일 · 휴일수당">
+        <Tile>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="공휴일 배율 (배)">
+              <input type="number" step="0.1" min="1" value={settings.holidayMultiplier ?? 1.5}
+                onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, holidayMultiplier: Number(e.target.value) || 1 } }))}
+                style={inputStyle} />
+            </Field>
+            <Field label="공휴일 날짜 추가">
+              <input type="date" style={inputStyle}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  update((d) => ({
+                    ...d,
+                    settings: {
+                      ...d.settings,
+                      holidays: d.settings.holidays.includes(v) ? d.settings.holidays : [...d.settings.holidays, v].sort(),
+                    },
+                  }));
+                  setToast(`${v}를 공휴일로 추가했습니다`);
+                  e.target.value = "";
+                }} />
+            </Field>
+          </div>
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: -6, lineHeight: 1.6 }}>
+            등록된 날짜에 근무한 시간은 시급(또는 타임 지급액)의 {settings.holidayMultiplier ?? 1.5}배로 자동 계산됩니다.
+          </div>
+
+          {settings.holidays && settings.holidays.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5" style={{ marginTop: 10 }}>
+              {settings.holidays.map((h) => (
+                <button key={h} onClick={() => update((d) => ({ ...d, settings: { ...d.settings, holidays: d.settings.holidays.filter((x) => x !== h) } }))}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5, padding: "6px 10px",
+                    background: C.tileSoft, border: `1px solid ${C.line}`, fontSize: 12, fontFamily: MONO, color: C.text,
+                  }}>
+                  {h} <X size={12} color={C.sub} />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 10 }}>등록된 공휴일이 없습니다.</div>
           )}
         </Tile>
       </Sec>
