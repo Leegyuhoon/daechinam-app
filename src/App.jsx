@@ -1080,7 +1080,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <>
                         <div style={{ marginTop: 3 }}>
                           {p.blocks > 0 ? (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 +{minStr(p.otMin)}</span>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 +{p.blocks}회</span>
                           ) : shortish ? (
                             <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
                           ) : (
@@ -1366,7 +1366,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
               <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
               <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
               <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.aquaDeep : shortish ? C.amber : C.sub }}>
-                {!agg.shift ? "—" : q.blocks > 0 ? `추가 +${minStr(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
+                {!agg.shift ? "—" : q.blocks > 0 ? `추가 +${q.blocks}회` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
               </span>
               <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{money(q.pay)}</span>
             </div>
