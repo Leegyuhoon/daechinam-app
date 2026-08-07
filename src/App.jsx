@@ -1199,7 +1199,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       {/* 표지 */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          {company && <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, letterSpacing: "0.06em" }}>{company}</div>}
+          {company && <div style={{ fontSize: 15, fontWeight: 900, color: C.text, letterSpacing: "0.02em" }}>{company}</div>}
           <div style={{ fontSize: 23, fontWeight: 900, color: C.text, marginTop: 4, letterSpacing: "-0.02em" }}>
             {ymLabel(ym)} 근무 정산서
           </div>
@@ -1411,7 +1411,7 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
     }>
       <div className="flex items-start justify-between gap-3">
         <div>
-          {data.settings.companyName && <div style={{ fontSize: 11.5, fontWeight: 800, color: C.sub, letterSpacing: "0.06em" }}>{data.settings.companyName}</div>}
+          {data.settings.companyName && <div style={{ fontSize: 15, fontWeight: 900, color: C.text, letterSpacing: "0.02em" }}>{data.settings.companyName}</div>}
           <div style={{ fontSize: 23, fontWeight: 900, color: C.text, marginTop: 4, letterSpacing: "-0.02em" }}>{ymLabel(ym)} 급여대장</div>
         </div>
         <div className="text-right" style={{ flexShrink: 0 }}>
