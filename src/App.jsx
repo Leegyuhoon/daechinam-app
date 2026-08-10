@@ -18,6 +18,16 @@ const C = {
 };
 const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
 const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
+
+/* 입체감 토큰 */
+const RADIUS = 12;
+const RADIUS_SM = 8;
+const RADIUS_LG = 22;
+const SHADOW_SM = "0 1px 2px rgba(10,14,18,0.06), 0 1px 1px rgba(10,14,18,0.04)";
+const SHADOW_MD = "0 4px 14px rgba(10,14,18,0.10), 0 1px 3px rgba(10,14,18,0.06)";
+const SHADOW_LG = "0 -8px 30px rgba(0,0,0,0.35)";
+const SHADOW_DARK = "0 6px 18px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.25)";
+
 const KEY = "cleanwork:v1";        // 공유 — 근무자·현장·기록
 const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
 
@@ -350,7 +360,12 @@ const Num = ({ children, size = 20, color = C.text, weight = 800 }) => (
 );
 function Tile({ children, style, onClick, soft }) {
   return (
-    <div onClick={onClick} style={{ background: soft ? C.tileSoft : C.tile, padding: 14, cursor: onClick ? "pointer" : "default", ...style }}>
+    <div onClick={onClick} style={{
+      background: soft ? C.tileSoft : C.tile, padding: 14, cursor: onClick ? "pointer" : "default",
+      borderRadius: RADIUS_SM, boxShadow: soft ? "none" : SHADOW_SM,
+      transition: "transform 0.12s ease, box-shadow 0.12s ease",
+      ...style,
+    }}>
       {children}
     </div>
   );
@@ -358,8 +373,12 @@ function Tile({ children, style, onClick, soft }) {
 function Modal({ open, onClose, children, title }) {
   if (!open) return null;
   return (
-    <div className="absolute inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(4,12,16,0.72)" }} onClick={onClose}>
-      <div className="w-full" style={{ background: C.tile, maxHeight: "92%", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+    <div className="absolute inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(4,12,18,0.55)", backdropFilter: "blur(2px)" }} onClick={onClose}>
+      <div className="w-full" style={{
+        background: C.tile, maxHeight: "92%", overflowY: "auto",
+        borderRadius: `${RADIUS_LG}px ${RADIUS_LG}px 0 0`, boxShadow: SHADOW_LG,
+      }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ width: 40, height: 4, borderRadius: 4, background: C.line, margin: "10px auto 2px" }} />
         {title && (
           <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{title}</div>
@@ -373,13 +392,17 @@ function Modal({ open, onClose, children, title }) {
 }
 const Btn = ({ children, onClick, kind = "primary", full, small, disabled }) => {
   const st = {
-    primary: { background: C.aquaDeep, color: "#fff", border: "none" },
-    ghost: { background: "transparent", color: C.sub, border: `1px solid ${C.line}` },
+    primary: { background: C.aquaDeep, color: "#fff", border: "none", boxShadow: disabled ? "none" : `0 3px 10px ${C.aquaDeep}55, 0 1px 2px rgba(0,0,0,0.15)` },
+    ghost: { background: C.tile, color: C.sub, border: `1px solid ${C.line}`, boxShadow: SHADOW_SM },
     danger: { background: "transparent", color: C.coral, border: `1px solid ${C.coral}` },
   }[kind];
   return (
     <button onClick={onClick} disabled={disabled} className={full ? "w-full" : ""}
-      style={{ ...st, opacity: disabled ? 0.35 : 1, padding: small ? "8px 12px" : "13px 16px", fontSize: small ? 13 : 14.5, fontWeight: 700, fontFamily: SANS }}>
+      style={{
+        ...st, opacity: disabled ? 0.35 : 1, padding: small ? "8px 12px" : "13px 16px",
+        fontSize: small ? 13 : 14.5, fontWeight: 700, fontFamily: SANS,
+        borderRadius: RADIUS_SM, transition: "transform 0.1s ease, box-shadow 0.1s ease",
+      }}>
       {children}
     </button>
   );
@@ -390,7 +413,7 @@ const Field = ({ label, children }) => (
     {children}
   </label>
 );
-const inputStyle = { width: "100%", padding: "11px 12px", border: `1px solid ${C.line}`, background: C.tileSoft, fontSize: 15, fontFamily: SANS, color: C.text, outline: "none" };
+const inputStyle = { width: "100%", padding: "11px 12px", border: `1px solid ${C.line}`, background: C.tileSoft, fontSize: 15, fontFamily: SANS, color: C.text, outline: "none", borderRadius: RADIUS_SM };
 const Row = ({ k, v, mono }) => (
   <div className="flex items-center justify-between gap-3">
     <span style={{ fontSize: 13, color: C.sub, fontWeight: 700, flexShrink: 0 }}>{k}</span>
@@ -501,7 +524,7 @@ export default function App() {
           )}
         </div>
 
-        <div className="sticky bottom-0 grid gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}`, gridTemplateColumns: (dev.workerId && !revealAdmin) ? "1fr" : "1fr 1fr" }}>
+        <div className="sticky bottom-0 grid gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}`, boxShadow: "0 -6px 16px rgba(0,0,0,0.25)", gridTemplateColumns: (dev.workerId && !revealAdmin) ? "1fr" : "1fr 1fr" }}>
           {[["clock", "출퇴근", Clock3], ["admin", "관리자", Lock]]
             .filter(([k]) => k === "clock" || !dev.workerId || revealAdmin)
             .map(([k, l, I]) => (
@@ -748,13 +771,23 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
       <button onClick={() => openConfirm(open ? "out" : "in")} className="relative" style={{ width: 264, height: 264, marginTop: 34 }}>
         <svg width="264" height="264" viewBox="0 0 264 264" style={{ position: "absolute", inset: 0 }}>
+          <defs>
+            <filter id="circShadow" x="-40%" y="-40%" width="180%" height="180%">
+              <feDropShadow dx="0" dy="6" stdDeviation="10" floodColor="#000" floodOpacity="0.35" />
+            </filter>
+            <radialGradient id="circGloss" cx="35%" cy="28%" r="75%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.22" />
+              <stop offset="55%" stopColor="#ffffff" stopOpacity="0" />
+            </radialGradient>
+          </defs>
           <circle cx="132" cy="132" r={R} fill="none" stroke={C.lineDark} strokeWidth="11" />
           {open && (
             <circle cx="132" cy="132" r={R} fill="none" stroke={C.aqua} strokeWidth="11"
               strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - prog)} strokeLinecap="butt"
               transform="rotate(-90 132 132)" style={{ transition: "stroke-dashoffset 0.6s linear" }} />
           )}
-          <circle cx="132" cy="132" r={R - 13} fill={open ? C.bgSoft : C.aquaDeep} />
+          <circle cx="132" cy="132" r={R - 13} fill={open ? C.bgSoft : C.aquaDeep} filter="url(#circShadow)" />
+          <circle cx="132" cy="132" r={R - 13} fill="url(#circGloss)" />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           {open ? (
@@ -1622,7 +1655,10 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           </Tile>
         </div>
 
-        <div className="mt-0.5" style={{ background: C.coral, padding: 16 }}>
+        <div className="mt-2" style={{
+          background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
+          padding: 18, borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
+        }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
           <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(agg.pay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, marginTop: 5, fontFamily: MONO }}>
@@ -1781,7 +1817,7 @@ const PaperShell = ({ title, onClose, actions, children }) => (
       {actions}
     </div>
     <div className="p-3">
-      <div id="paper" style={{ background: C.tile, padding: 22 }}>{children}</div>
+      <div id="paper" style={{ background: C.tile, padding: 22, borderRadius: RADIUS, boxShadow: SHADOW_MD }}>{children}</div>
       <div style={{ height: 20 }} />
     </div>
   </div>
@@ -1953,7 +1989,10 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         </>
       )}
 
-      <div className="mt-4" style={{ background: C.coral, padding: "15px 16px" }}>
+      <div className="mt-4" style={{
+        background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
+        padding: "17px 18px", borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
+      }}>
         <div className="flex items-baseline justify-between">
           <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</span>
           <Num size={34} color="#fff" weight={900}>{money(p.net)}<span style={{ fontSize: 17 }}> 원</span></Num>
