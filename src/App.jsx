@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   MapPin, ChevronLeft, ChevronRight, X, Plus, Trash2, Check, AlertTriangle,
-  Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, Copy, Lock,
+  Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
-  Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal,
+  Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -47,7 +47,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {},
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -68,6 +68,7 @@ function migrate(p) {
   d.sites = (d.sites || []).map((s) =>
     typeof s === "string" ? { id: uid(), name: s, lat: null, lng: null, radius: d.settings.defaultRadius } : s);
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
+  d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -449,8 +450,62 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
   const [manualSite, setManualSite] = useState("");
+  const [xferOpen, setXferOpen] = useState(false);
+  const [xferForm, setXferForm] = useState({ date: "", siteId: "", toMode: "worker", toWorkerId: "", toName: "", message: "" });
   const worker = workers.find((w) => w.id === dev.workerId) || null;
   const today = dKey(now);
+  const transfers = data.transfers || [];
+
+  const myIncoming = worker ? transfers.filter((t) => t.toWorkerId === worker.id) : [];
+  const myOutgoing = worker ? transfers.filter((t) => t.fromWorkerId === worker.id) : [];
+  const pendingIncoming = myIncoming.filter((t) => t.status === "pending");
+  const recentOutgoing = [...myOutgoing].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5);
+
+  const openXfer = () => {
+    setXferForm({ date: today, siteId: worker?.siteId || sites[0]?.id || "", toMode: "worker", toWorkerId: "", toName: "", message: "" });
+    setXferOpen(true);
+  };
+  const submitXfer = () => {
+    const s = sites.find((x) => x.id === xferForm.siteId);
+    let toWorkerId = null, toWorkerName = "";
+    if (xferForm.toMode === "worker") {
+      const to = workers.find((w) => w.id === xferForm.toWorkerId);
+      if (!to) { setToast("대신 근무할 사람을 선택해 주세요"); return; }
+      toWorkerId = to.id; toWorkerName = to.name;
+    } else {
+      const name = xferForm.toName.trim();
+      if (!name) { setToast("대신 근무할 사람의 이름을 입력해 주세요"); return; }
+      toWorkerName = name;
+    }
+    if (!xferForm.date) { setToast("날짜를 선택해 주세요"); return; }
+    update((d) => ({
+      ...d,
+      transfers: [...(d.transfers || []), {
+        id: uid(), date: xferForm.date, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+        fromWorkerId: worker.id, fromWorkerName: worker.name,
+        toWorkerId, toWorkerName, toRegistered: xferForm.toMode === "worker",
+        message: xferForm.message.trim(), status: "pending",
+        createdAt: new Date().toISOString(), respondedAt: null, fulfilledRecordId: null,
+      }],
+    }));
+    setToast(`${toWorkerName}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`);
+    setXferOpen(false);
+  };
+  const respondXfer = (id, status) => {
+    const t = transfers.find((x) => x.id === id);
+    update((d) => ({
+      ...d,
+      transfers: (d.transfers || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString() } : x)),
+    }));
+    setToast(status === "approved" ? `${t.date.slice(5)} ${t.siteName} 근무를 대신 맡기로 승인했습니다` : "요청을 거절했습니다");
+  };
+  const cancelXfer = (id) => {
+    update((d) => ({
+      ...d,
+      transfers: (d.transfers || []).map((x) => (x.id === id ? { ...x, status: "cancelled", respondedAt: new Date().toISOString() } : x)),
+    }));
+    setToast("요청을 취소했습니다");
+  };
 
   const open = useMemo(
     () => records.find((r) => worker && r.workerId === worker.id && r.date === today && !r.clockOut),
@@ -488,17 +543,24 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
   const doClockIn = () => {
     const ts = new Date();
     const s = chk.state === "inside" ? chk.site : sites.find((x) => x.name === manualSite);
+    const dateKey = dKey(ts);
+    const cover = transfers.find((t) => t.status === "approved" && t.toWorkerId === worker.id && t.date === dateKey && t.siteId === s?.id && !t.fulfilledRecordId);
+    const recId = uid();
     update((d) => ({
-      ...d, records: [...d.records, {
-        id: uid(), workerId: worker.id, date: dKey(ts),
+      ...d,
+      records: [...d.records, {
+        id: recId, workerId: worker.id, date: dateKey,
         site: s?.name || "현장 미지정", siteId: s?.id || null,
         clockIn: ts.toISOString(), clockOut: null, breakMinutes: null,
         inLoc: chk.loc, inDist: chk.state === "inside" ? Math.round(chk.d) : null,
         outLoc: null, outDist: null, outFlag: false,
         deviceId: dev.deviceId, note: "",
+        coverForId: cover?.fromWorkerId || null, coverForName: cover?.fromWorkerName || null, transferId: cover?.id || null,
       }],
+      transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
     }));
-    setConfirm(null); setToast(`출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
+    setConfirm(null);
+    setToast(cover ? `출근 처리됐습니다 · ${cover.fromWorkerName}님 대신 근무` : `출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
   const doClockOut = () => {
     const ts = new Date();
@@ -581,6 +643,125 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
           <div style={{ color: C.onDarkSub, fontSize: 13 }}>오늘 출근 기록이 아직 없습니다.</div>
         )}
       </div>
+
+      {/* 받은 양도 요청 (승인 대기) */}
+      {pendingIncoming.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
+          {pendingIncoming.map((t) => (
+            <div key={t.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.blue}` }}>
+              <div className="flex items-center gap-1.5" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
+                <Send size={12} /> {t.fromWorkerName}님이 근무 양도를 요청했어요
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
+                {t.date.slice(5).replace("-", "/")} · {t.siteName}
+              </div>
+              {t.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>“{t.message}”</div>}
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <Btn kind="ghost" full small onClick={() => respondXfer(t.id, "declined")}>거절</Btn>
+                <Btn full small onClick={() => respondXfer(t.id, "approved")}>승인하고 대신 근무</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 근무 양도 요청하기 */}
+      <div className="w-full" style={{ maxWidth: 320, marginTop: pendingIncoming.length ? 4 : 22 }}>
+        <button onClick={openXfer} className="w-full flex items-center justify-center gap-2"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
+          <Repeat size={15} /> 오늘/앞으로 근무 양도 요청하기
+        </button>
+
+        {recentOutgoing.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            {recentOutgoing.map((t) => (
+              <div key={t.id} className="flex items-center justify-between" style={{ padding: "8px 2px", borderBottom: `1px solid ${C.lineDark}` }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: C.onDark }}>
+                    {t.date.slice(5).replace("-", "/")} · {t.toWorkerName}님에게 요청
+                  </div>
+                  <div style={{ fontSize: 11, color: C.onDarkSub, marginTop: 1 }}>{t.siteName}</div>
+                </div>
+                <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 800, padding: "2px 7px",
+                    color: t.status === "approved" ? "#fff" : t.status === "declined" || t.status === "cancelled" ? C.onDarkSub : C.bg,
+                    background: t.status === "approved" ? C.blue : t.status === "pending" ? C.aqua : "transparent",
+                    border: t.status === "declined" || t.status === "cancelled" ? `1px solid ${C.lineDark}` : "none",
+                  }}>
+                    {t.status === "pending" ? "대기 중" : t.status === "approved" ? "승인됨" : t.status === "declined" ? "거절됨" : "취소됨"}
+                  </span>
+                  {t.status === "pending" && (
+                    <button onClick={() => cancelXfer(t.id)} title="요청 취소"><X size={14} color={C.onDarkSub} /></button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 양도 요청 작성 */}
+      <Modal open={xferOpen} onClose={() => setXferOpen(false)}>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>근무 양도 요청</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+          선택한 날짜의 근무를 다른 근무자에게 대신 부탁해요. 상대가 승인하면 자동으로 반영돼요.
+        </div>
+        <div className="mt-4 flex flex-col gap-2.5">
+          <Field label="날짜">
+            <input type="date" value={xferForm.date} onChange={(e) => setXferForm((f) => ({ ...f, date: e.target.value }))} style={inputStyle} />
+          </Field>
+          {sites.length > 1 && (
+            <Field label="현장">
+              <select value={xferForm.siteId} onChange={(e) => setXferForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+          )}
+          <Field label="대신 근무할 사람">
+            <div className="grid grid-cols-2 gap-1.5 mb-2">
+              {[["worker", "등록된 근무자"], ["custom", "직접 입력"]].map(([k, l]) => (
+                <button key={k} onClick={() => setXferForm((f) => ({ ...f, toMode: k }))}
+                  style={{
+                    padding: "8px 0", fontSize: 12.5, fontWeight: 800,
+                    background: xferForm.toMode === k ? C.aquaDeep : C.tileSoft,
+                    color: xferForm.toMode === k ? "#fff" : C.sub,
+                  }}>{l}</button>
+              ))}
+            </div>
+            {xferForm.toMode === "worker" ? (
+              <select value={xferForm.toWorkerId} onChange={(e) => setXferForm((f) => ({ ...f, toWorkerId: e.target.value }))} style={inputStyle}>
+                <option value="">선택해 주세요</option>
+                {workers.filter((w) => w.id !== worker.id).map((w) => {
+                  const wSite = sites.find((s) => s.id === w.siteId);
+                  const sameSite = w.siteId && w.siteId === worker.siteId;
+                  return (
+                    <option key={w.id} value={w.id}>
+                      {w.name} · {wSite ? wSite.name : "현장 미지정"}{sameSite ? " (같은 현장)" : w.siteId ? " (다른 현장)" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <>
+                <input type="text" value={xferForm.toName} onChange={(e) => setXferForm((f) => ({ ...f, toName: e.target.value }))}
+                  placeholder="예: 김관리자, 최사장님" style={inputStyle} />
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
+                  근무자로 등록되어 있지 않은 사람이에요 (예: 관리자). 이 경우 출근 시 자동 연결은 안 되고, 관리자가 "양도" 탭에서 직접 승인 처리해요.
+                </div>
+              </>
+            )}
+          </Field>
+          <Field label="메시지 (선택)">
+            <textarea value={xferForm.message} onChange={(e) => setXferForm((f) => ({ ...f, message: e.target.value }))}
+              placeholder="예: 그날 병원 예약이 있어서 부탁드려요" rows={2} style={{ ...inputStyle, resize: "none" }} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setXferOpen(false)}>취소</Btn>
+          <Btn full onClick={submitXfer}>요청 보내기</Btn>
+        </div>
+      </Modal>
 
       {/* 재확인 팝업 */}
       <Modal open={!!confirm} onClose={() => setConfirm(null)}>
@@ -754,8 +935,8 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       <div className="flex items-center px-4 pt-4">
-        <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout, flex: 1 }}>
-          {[["records", "근무 기록", ClipboardList], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
+        <div className="grid grid-cols-3 gap-0.5" style={{ background: C.grout, flex: 1 }}>
+          {[["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
             <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5"
               style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 13, fontWeight: 800 }}>
               <I size={14} />{l}
@@ -767,9 +948,91 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
           <Lock size={16} color={C.onDarkSub} />
         </button>
       </div>
-      {view === "records"
-        ? <RecordsView data={data} update={update} setToast={setToast} />
-        : <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
+      {view === "records" && <RecordsView data={data} update={update} setToast={setToast} />}
+      {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
+      {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
+    </div>
+  );
+}
+
+/* ─────────────────────────  근무 양도 관리(관리자)  ───────────────────────── */
+function TransferAdminView({ data, update, setToast }) {
+  const [filter, setFilter] = useState("all");
+  const transfers = [...(data.transfers || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const shown = filter === "all" ? transfers : transfers.filter((t) => t.status === filter);
+
+  const setStatus = (id, status) => {
+    update((d) => ({ ...d, transfers: (d.transfers || []).map((t) => (t.id === id ? { ...t, status, respondedAt: new Date().toISOString() } : t)) }));
+    setToast(status === "approved" ? "관리자가 승인 처리했습니다" : status === "declined" ? "관리자가 거절 처리했습니다" : "삭제했습니다");
+  };
+  const remove = (id) => update((d) => ({ ...d, transfers: (d.transfers || []).filter((t) => t.id !== id) }));
+
+  const badge = (status) => {
+    const map = {
+      pending: [C.aqua, C.bg, "대기 중"],
+      approved: [C.blue, "#fff", "승인됨"],
+      declined: [C.lineDark, C.onDarkSub, "거절됨"],
+      cancelled: [C.lineDark, C.onDarkSub, "취소됨"],
+    };
+    const [bg, col, label] = map[status] || map.pending;
+    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px" }}>{label}</span>;
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex gap-1.5 mb-3">
+        {[["all", "전체"], ["pending", "대기"], ["approved", "승인"], ["declined", "거절"], ["cancelled", "취소"]].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)}
+            style={{
+              fontSize: 12, fontWeight: 800, padding: "6px 11px",
+              background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub,
+            }}>{l}</button>
+        ))}
+      </div>
+
+      {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>양도 요청 내역이 없습니다.</div>}
+
+      <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+        {shown.map((t) => (
+          <Tile key={t.id} style={{ padding: "13px 14px" }}>
+            <div className="flex items-start justify-between gap-2">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
+                  {t.date.slice(5).replace("-", "/")} · {t.siteName}
+                </div>
+                <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
+                  {t.fromWorkerName} <ArrowRight size={12} /> {t.toWorkerName}
+                  {t.toRegistered === false && (
+                    <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>미등록</span>
+                  )}
+                </div>
+                {t.message && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>“{t.message}”</div>}
+                {t.status === "approved" && (
+                  <div style={{ fontSize: 11.5, color: t.fulfilledRecordId ? C.blue : C.amber, marginTop: 4, fontWeight: 700 }}>
+                    {t.fulfilledRecordId
+                      ? "출근 완료 · 근무 기록에 반영됨"
+                      : t.toRegistered === false
+                        ? "승인됨 · 미등록 인원이라 출근 기록은 수기로 등록해 주세요"
+                        : "승인됨 · 아직 출근 전"}
+                  </div>
+                )}
+              </div>
+              {badge(t.status)}
+            </div>
+            <div className="flex gap-2 mt-3">
+              {t.status === "pending" && (
+                <>
+                  <Btn kind="ghost" small onClick={() => setStatus(t.id, "declined")}>거절 처리</Btn>
+                  <Btn small onClick={() => setStatus(t.id, "approved")}>승인 처리</Btn>
+                </>
+              )}
+              <button onClick={() => remove(t.id)} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
+                <Trash2 size={13} /> 삭제
+              </button>
+            </div>
+          </Tile>
+        ))}
+      </div>
     </div>
   );
 }
@@ -952,6 +1215,9 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
   const agg = aggregate(recs, worker, settings);
   const dayList = Object.entries(agg.byDate).sort((a, b) => a[0].localeCompare(b[0]));
   const maxDay = Math.max(agg.sh, ...dayList.map((d) => d[1].net), 1);
+  const offDays = (data.transfers || [])
+    .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date >= sk && t.date <= ek)
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   const addManual = () => setEdit({
     id: null, workerId, date: dKey(new Date()),
@@ -1057,6 +1323,30 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           </div>
         )}
 
+        {offDays.length > 0 && (
+          <div className="mt-4">
+            <Eyebrow dark>이 기간 중 양도한 휴무 ({offDays.length}일)</Eyebrow>
+            <div className="flex flex-col gap-0.5 mt-1.5" style={{ background: C.grout }}>
+              {offDays.map((t) => {
+                const d = parseKey(t.date);
+                return (
+                  <Tile key={t.id} soft style={{ padding: "10px 14px" }}>
+                    <div className="flex items-center justify-between">
+                      <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                        {t.date.slice(5).replace("-", "/")} ({WD[d.getDay()]}) · {t.siteName}
+                      </div>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>휴무 · 양도</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
+                      {t.toWorkerName}님이 대신 근무{t.fulfilledRecordId ? " (완료)" : " (예정)"}
+                    </div>
+                  </Tile>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 mb-1"><Eyebrow dark>일별 상세 · 눌러서 수정</Eyebrow></div>
         <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
           {recs.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 기간에 기록이 없습니다.</div></Tile>}
@@ -1073,6 +1363,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
+                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontSize: 13, color: C.text, fontWeight: 700 }}>
