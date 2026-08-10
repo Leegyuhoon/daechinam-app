@@ -2,7 +2,7 @@ export default async (request, context) => {
   const response = await context.next();
   const html = await response.text();
   const url = new URL(request.url);
-  const exactUrl = `${url.origin}${url.pathname}`;
+  const exactUrl = `${url.origin}${url.pathname}${url.search}`;
   const shareImageUrl = `${url.origin}/icons/og-share.jpg`;
 
   const tags = `
