@@ -4,6 +4,7 @@ import {
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
+  Camera, Package, Image as ImageIcon, Folder,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -58,6 +59,37 @@ function saveDevice(obj) {
   try { localStorage.setItem(DKEY, JSON.stringify(obj)); } catch (e) {}
 }
 
+/* 사진: 캔버스로 리사이즈·압축 후 서버(Netlify Blobs)에 업로드 */
+function compressImage(file, maxSize = 1400, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width > maxSize || height > maxSize) {
+        const scale = maxSize / Math.max(width, height);
+        width = Math.round(width * scale); height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("compress failed"))), "image/jpeg", quality);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+async function uploadPhoto(file) {
+  const blob = await compressImage(file);
+  const res = await fetch("/api/photo", { method: "POST", body: blob });
+  if (!res.ok) throw new Error("upload failed");
+  const data = await res.json();
+  return data.id;
+}
+const photoUrl = (id) => `/api/photo?id=${id}`;
+
 /* ─────────────────────────  유틸  ───────────────────────── */
 const pad = (n) => String(n).padStart(2, "0");
 const dKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -84,7 +116,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -109,6 +141,8 @@ function migrate(p) {
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
   d.notices = Array.isArray(d.notices) ? d.notices : [];
+  d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
+  d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -569,6 +603,63 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "" });
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const openPhoto = () => {
+    setPhotoForm({ siteId: worker?.siteId || sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "" });
+    setPhotoOpen(true);
+  };
+  const pickPhotoFile = (f) => {
+    if (!f) return;
+    setPhotoForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
+  };
+  const submitPhoto = async () => {
+    if (!photoForm.file) { setToast("사진을 먼저 촬영해 주세요"); return; }
+    const s = sites.find((x) => x.id === photoForm.siteId);
+    setPhotoBusy(true);
+    try {
+      const photoId = await uploadPhoto(photoForm.file);
+      update((d) => ({
+        ...d,
+        siteReports: [...(d.siteReports || []), {
+          id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+          workerId: worker.id, workerName: worker.name,
+          category: photoForm.category, note: photoForm.note.trim(), photoId,
+          createdAt: new Date().toISOString(),
+        }],
+      }));
+      setToast("사진이 등록됐습니다");
+      setPhotoOpen(false);
+    } catch (e) {
+      setToast("업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const [supplyOpen, setSupplyOpen] = useState(false);
+  const [supplyForm, setSupplyForm] = useState({ siteId: "", itemName: "", qty: "1", note: "" });
+  const openSupply = () => {
+    setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", itemName: "", qty: "1", note: "" });
+    setSupplyOpen(true);
+  };
+  const submitSupply = () => {
+    if (!supplyForm.itemName.trim()) { setToast("품목을 입력해 주세요"); return; }
+    const s = sites.find((x) => x.id === supplyForm.siteId);
+    update((d) => ({
+      ...d,
+      supplyRequests: [...(d.supplyRequests || []), {
+        id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+        workerId: worker.id, workerName: worker.name,
+        itemName: supplyForm.itemName.trim(), qty: Number(supplyForm.qty) || 1, note: supplyForm.note.trim(),
+        status: "requested", createdAt: new Date().toISOString(), respondedAt: null,
+      }],
+    }));
+    setToast("용품을 요청했습니다");
+    setSupplyOpen(false);
+  };
+
   const [noticeQueue, setNoticeQueue] = useState([]);
   const [noticeShown, setNoticeShown] = useState(null);
   useEffect(() => {
@@ -887,6 +978,101 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         )}
       </div>
 
+      {/* 현장 사진 등록 · 용품 요청 */}
+      <div className="w-full grid grid-cols-2 gap-2" style={{ maxWidth: 320, marginTop: 8 }}>
+        <button onClick={openPhoto} className="flex items-center justify-center gap-1.5"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+          <Camera size={14} /> 현장 사진 등록
+        </button>
+        <button onClick={openSupply} className="flex items-center justify-center gap-1.5"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+          <Package size={14} /> 용품 요청
+        </button>
+      </div>
+
+      {/* 현장 사진 등록 작성 */}
+      <Modal open={photoOpen} onClose={() => !photoBusy && setPhotoOpen(false)}>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 사진 등록</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+          시설 훼손, 작업 전후 등을 사진으로 남기면 관리자가 현장·날짜별로 확인할 수 있어요.
+        </div>
+        <div className="mt-4 flex flex-col gap-2.5">
+          {sites.length > 1 && (
+            <Field label="현장">
+              <select value={photoForm.siteId} onChange={(e) => setPhotoForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+          )}
+          <Field label="구분">
+            <div className="grid grid-cols-2 gap-1.5">
+              {["작업 전", "작업 후", "시설 훼손", "기타"].map((c) => (
+                <button key={c} onClick={() => setPhotoForm((f) => ({ ...f, category: c }))}
+                  style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: photoForm.category === c ? C.aquaDeep : C.tileSoft, color: photoForm.category === c ? "#fff" : C.sub }}>{c}</button>
+              ))}
+            </div>
+          </Field>
+          <Field label="사진">
+            {photoForm.preview ? (
+              <div className="relative">
+                <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
+                  style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
+                  <X size={14} color="#fff" />
+                </button>
+              </div>
+            ) : (
+              <label style={{
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
+              }}>
+                <Camera size={22} color={C.sub} />
+                <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 사진 촬영</div>
+                <input type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                  onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
+              </label>
+            )}
+          </Field>
+          <Field label="메모 (선택)">
+            <textarea value={photoForm.note} onChange={(e) => setPhotoForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="예: 3층 창틀 파손 확인" rows={2} style={{ ...inputStyle, resize: "none" }} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full disabled={photoBusy} onClick={() => setPhotoOpen(false)}>취소</Btn>
+          <Btn full disabled={photoBusy} onClick={submitPhoto}>{photoBusy ? "업로드 중…" : "등록하기"}</Btn>
+        </div>
+      </Modal>
+
+      {/* 용품 요청 작성 */}
+      <Modal open={supplyOpen} onClose={() => setSupplyOpen(false)}>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>근무 용품 요청</div>
+        <div className="mt-4 flex flex-col gap-2.5">
+          {sites.length > 1 && (
+            <Field label="현장">
+              <select value={supplyForm.siteId} onChange={(e) => setSupplyForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+          )}
+          <Field label="품목">
+            <input value={supplyForm.itemName} onChange={(e) => setSupplyForm((f) => ({ ...f, itemName: e.target.value }))}
+              placeholder="예: 고무장갑, 세제, 대걸레" style={inputStyle} />
+          </Field>
+          <Field label="수량">
+            <input type="number" min="1" value={supplyForm.qty} onChange={(e) => setSupplyForm((f) => ({ ...f, qty: e.target.value }))} style={inputStyle} />
+          </Field>
+          <Field label="메모 (선택)">
+            <textarea value={supplyForm.note} onChange={(e) => setSupplyForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="예: 빨리 필요해요" rows={2} style={{ ...inputStyle, resize: "none" }} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setSupplyOpen(false)}>취소</Btn>
+          <Btn full onClick={submitSupply}>요청 보내기</Btn>
+        </div>
+      </Modal>
+
       {/* 양도 요청 작성 */}
       <Modal open={xferOpen} onClose={() => setXferOpen(false)}>
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>근무 양도 요청</div>
@@ -1145,26 +1331,220 @@ function AdminGate({ data, update, setToast, onPass }) {
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
 function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   const [view, setView] = useState("records");
+  const tabs = [
+    ["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat],
+    ["photos", "사진", Camera], ["supplies", "용품", Package],
+    ["notices", "공지", Bell], ["settings", "설정", SettingsIcon],
+  ];
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <div className="flex items-center px-4 pt-4">
-        <div className="grid grid-cols-4 gap-0.5" style={{ background: C.grout, flex: 1 }}>
-          {[["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat], ["notices", "공지", Bell], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
-            <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5"
-              style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 13, fontWeight: 800 }}>
-              <I size={14} />{l}
+      <div className="flex items-center px-4 pt-4 gap-2">
+        <div className="flex gap-0.5" style={{ background: C.grout, flex: 1, overflowX: "auto" }}>
+          {tabs.map(([k, l, I]) => (
+            <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5 px-3"
+              style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 12.5, fontWeight: 800, flexShrink: 0, whiteSpace: "nowrap" }}>
+              <I size={13} />{l}
             </button>
           ))}
         </div>
         <button onClick={onLock} className="flex items-center justify-center" title="잠그기"
-          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, marginLeft: 6 }}>
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, flexShrink: 0 }}>
           <Lock size={16} color={C.onDarkSub} />
         </button>
       </div>
       {view === "records" && <RecordsView data={data} update={update} setToast={setToast} />}
       {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
+      {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
+      {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
       {view === "notices" && <NoticeAdminView data={data} update={update} setToast={setToast} />}
       {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
+    </div>
+  );
+}
+
+/* ─────────────────────────  현장 사진 관리(관리자, 폴더 구조)  ───────────────────────── */
+function PhotoAdminView({ data, update, setToast }) {
+  const reports = data.siteReports || [];
+  const [siteId, setSiteId] = useState(null);
+  const [workerId, setWorkerId] = useState(null);
+  const [viewer, setViewer] = useState(null);
+
+  const catColor = { "시설 훼손": C.red, "작업 전": C.blue, "작업 후": C.aquaDeep, "기타": C.sub };
+
+  if (reports.length === 0) {
+    return <div className="flex-1 p-4"><Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장 사진이 없습니다.</div></Tile></div>;
+  }
+
+  // 1단계: 현장 폴더 목록
+  if (!siteId) {
+    const bySite = {};
+    reports.forEach((r) => { (bySite[r.siteId || "none"] ||= { name: r.siteName, items: [] }).items.push(r); });
+    return (
+      <div className="flex-1 overflow-y-auto p-4">
+        <Eyebrow dark>현장별로 묶어서 보여드려요 · 눌러서 열기</Eyebrow>
+        <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
+          {Object.entries(bySite).map(([sid, g]) => (
+            <Tile key={sid} onClick={() => setSiteId(sid)} style={{ padding: "14px 16px" }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Folder size={18} color={C.aquaDeep} />
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{g.name}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}장</span>
+                  <ChevronRight size={16} color={C.sub} />
+                </div>
+              </div>
+            </Tile>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const siteItems = reports.filter((r) => (r.siteId || "none") === siteId);
+  const siteName = siteItems[0]?.siteName || "현장";
+
+  // 2단계: 근무자 폴더 목록
+  if (!workerId) {
+    const byWorker = {};
+    siteItems.forEach((r) => { (byWorker[r.workerId || "none"] ||= { name: r.workerName, items: [] }).items.push(r); });
+    return (
+      <div className="flex-1 overflow-y-auto p-4">
+        <button onClick={() => setSiteId(null)} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
+          <ArrowLeft size={14} /> 현장 목록
+        </button>
+        <div className="flex items-center gap-2 mb-3">
+          <Folder size={18} color={C.aquaDeep} />
+          <div style={{ fontSize: 17, fontWeight: 900, color: C.text }}>{siteName}</div>
+        </div>
+        <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+          {Object.entries(byWorker).map(([wid, g]) => (
+            <Tile key={wid} onClick={() => setWorkerId(wid)} style={{ padding: "14px 16px" }}>
+              <div className="flex items-center justify-between">
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{g.name}</div>
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}장</span>
+                  <ChevronRight size={16} color={C.sub} />
+                </div>
+              </div>
+            </Tile>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // 3단계: 실제 사진 목록
+  const items = siteItems.filter((r) => (r.workerId || "none") === workerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const workerName = items[0]?.workerName || "근무자";
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      <button onClick={() => setWorkerId(null)} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
+        <ArrowLeft size={14} /> {siteName}
+      </button>
+      <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 12 }}>{workerName}</div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {items.map((r) => (
+          <div key={r.id} onClick={() => setViewer(r)} className="pressable" style={{ cursor: "pointer" }}>
+            <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1" }}>
+              <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              <span style={{
+                position: "absolute", top: 6, left: 6, fontSize: 9.5, fontWeight: 800, color: "#fff",
+                background: catColor[r.category] || C.sub, padding: "2px 6px",
+              }}>{r.category}</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>{r.date.slice(5).replace("-", "/")}</div>
+          </div>
+        ))}
+      </div>
+
+      <Modal open={!!viewer} onClose={() => setViewer(null)}>
+        {viewer && (
+          <>
+            <img src={photoUrl(viewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+            <div className="flex items-center gap-2 mt-3">
+              <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: catColor[viewer.category] || C.sub, padding: "3px 8px" }}>{viewer.category}</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.date} · {viewer.workerName}</span>
+            </div>
+            {viewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{viewer.note}</div>}
+            <button onClick={() => {
+              update((d) => ({ ...d, siteReports: (d.siteReports || []).filter((x) => x.id !== viewer.id) }));
+              setViewer(null); setToast("사진을 삭제했습니다");
+            }} className="flex items-center gap-1 mt-4" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700 }}>
+              <Trash2 size={14} /> 이 사진 삭제
+            </button>
+          </>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  용품 요청 관리(관리자)  ───────────────────────── */
+function SupplyAdminView({ data, update, setToast }) {
+  const [filter, setFilter] = useState("all");
+  const list = [...(data.supplyRequests || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const shown = filter === "all" ? list : list.filter((x) => x.status === filter);
+
+  const setStatus = (id, status) => {
+    update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString() } : x)) }));
+    setToast("상태를 변경했습니다");
+  };
+  const remove = (id) => update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).filter((x) => x.id !== id) }));
+
+  const badge = (status) => {
+    const map = {
+      requested: [C.aqua, C.bg, "요청됨"],
+      approved: [C.blue, "#fff", "승인됨"],
+      delivered: [C.aquaDeep, "#fff", "전달완료"],
+      declined: [C.lineDark, C.onDarkSub, "거절됨"],
+    };
+    const [bg, col, label] = map[status] || map.requested;
+    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px" }}>{label}</span>;
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+        {[["all", "전체"], ["requested", "요청"], ["approved", "승인"], ["delivered", "전달완료"], ["declined", "거절"]].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)}
+            style={{ fontSize: 12, fontWeight: 800, padding: "6px 11px", flexShrink: 0, background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub }}>{l}</button>
+        ))}
+      </div>
+
+      {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>용품 요청 내역이 없습니다.</div>}
+
+      <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+        {shown.map((r) => (
+          <Tile key={r.id} style={{ padding: "13px 14px" }}>
+            <div className="flex items-start justify-between gap-2">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, fontWeight: 700 }}>
+                  {r.date.slice(5).replace("-", "/")} · {r.siteName} · {r.workerName}
+                </div>
+                {r.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{r.note}</div>}
+              </div>
+              {badge(r.status)}
+            </div>
+            <div className="flex gap-2 mt-3" style={{ overflowX: "auto" }}>
+              {r.status === "requested" && (
+                <>
+                  <Btn kind="ghost" small onClick={() => setStatus(r.id, "declined")}>거절</Btn>
+                  <Btn small onClick={() => setStatus(r.id, "approved")}>승인</Btn>
+                </>
+              )}
+              {r.status === "approved" && <Btn small onClick={() => setStatus(r.id, "delivered")}>전달 완료 처리</Btn>}
+              <button onClick={() => remove(r.id)} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
+                <Trash2 size={13} /> 삭제
+              </button>
+            </div>
+          </Tile>
+        ))}
+      </div>
     </div>
   );
 }
