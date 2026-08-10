@@ -13,7 +13,7 @@ const C = {
   text: "#1D232A", sub: "#71767D",
   onDark: "#F5F1EA", onDarkSub: "#9BA3AB",
   aqua: "#EB9E18", aquaDeep: "#B9720A",
-  amber: "#FFB020", coral: "#FF6B5E",
+  amber: "#FFB020", coral: "#FF6B5E", red: "#E5372B",
   line: "#E6E2DB", lineDark: "#343C45",
 };
 const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
@@ -848,7 +848,7 @@ function RecordsView({ data, update, setToast }) {
           <Eyebrow>{shift ? "총 근무시간" : "총 근무일수"}</Eyebrow>
           <div className="mt-1"><Num size={19}>{shift ? hmc(tot.net) : `${tot.days}일`}</Num></div>
         </Tile>
-        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.aquaDeep}>{money(tot.pay)}</Num></div></Tile>
+        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.coral}>{money(tot.pay)}</Num></div></Tile>
       </div>
       <div className="mx-4 mt-0.5 grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
         <Tile soft style={{ padding: 12 }}>
@@ -857,7 +857,7 @@ function RecordsView({ data, update, setToast }) {
         </Tile>
         <Tile soft style={{ padding: 12 }}>
           <Eyebrow>부족시간 누계</Eyebrow>
-          <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.amber : C.sub}>−{minStr(tot.shortMin)}</Num></div>
+          <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
         </Tile>
       </div>
       {tot.flags > 0 && (
@@ -900,7 +900,7 @@ function RecordsView({ data, update, setToast }) {
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
                   <Num size={17}>{hmc(net)}</Num>
-                  <div style={{ marginTop: 1 }}><Num size={12.5} color={C.aquaDeep} weight={700}>{money(pay)}원</Num></div>
+                  <div style={{ marginTop: 1 }}><Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num></div>
                 </div>
               </div>
               <div className="mt-2.5 flex items-center gap-2">
@@ -908,7 +908,7 @@ function RecordsView({ data, update, setToast }) {
                   <div style={{ width: `${(net / maxNet) * 100}%`, height: "100%", background: C.aquaDeep }} />
                 </div>
                 {blocks > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.aquaDeep, fontFamily: MONO }}>추가 {blocks}회</span>}
-                {shortMin > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.amber, fontFamily: MONO }}>−{minStr(shortMin)}</span>}
+                {shortMin > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.red, fontFamily: MONO }}>−{minStr(shortMin)}</span>}
               </div>
             </Tile>
           ))}
@@ -1026,12 +1026,12 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           </Tile>
           <Tile soft style={{ padding: 15 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1.5"><Num size={24} weight={800} color={agg.shortMin > 0 ? C.amber : C.sub}>−{minStr(agg.shortMin)}</Num></div>
+            <div className="mt-1.5"><Num size={24} weight={800} color={agg.shortMin > 0 ? C.red : C.sub}>−{minStr(agg.shortMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
           </Tile>
         </div>
 
-        <div className="mt-0.5" style={{ background: C.aquaDeep, padding: 16 }}>
+        <div className="mt-0.5" style={{ background: C.coral, padding: 16 }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
           <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(agg.pay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, marginTop: 5, fontFamily: MONO }}>
@@ -1047,7 +1047,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
             <div className="flex items-end gap-0.5 mt-3" style={{ height: 74 }}>
               {dayList.map(([d, v]) => (
                 <div key={d} style={{ flex: 1, height: "100%" }} className="flex flex-col justify-end" title={`${d} ${hmc(v.net)}`}>
-                  <div style={{ height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.amber, minHeight: 2 }} />
+                  <div style={{ height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2 }} />
                 </div>
               ))}
             </div>
@@ -1093,18 +1093,18 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                           {p.blocks > 0 ? (
                             <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.aquaDeep, padding: "2px 5px" }}>추가 {otLabel(p.otMin)}</span>
                           ) : shortish ? (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.red, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
                           ) : (
                             <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>
                               {p.diffMin === 0 ? "정확" : p.diffMin > 0 ? `+${minStr(p.diffMin)}` : `−${minStr(p.shortMin)}`}
                             </span>
                           )}
                         </div>
-                        <div style={{ marginTop: 4 }}><Num size={13.5} color={C.text} weight={800}>{money(p.pay)}원</Num></div>
+                        <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
                       </>
                     )}
                     {!p.open && !agg.shift && (
-                      <div style={{ marginTop: 4 }}><Num size={13.5} color={C.text} weight={800}>{money(p.pay)}원</Num></div>
+                      <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
                     )}
                     <Pencil size={12} color={C.line} style={{ marginLeft: "auto", marginTop: 6 }} />
                   </div>
@@ -1177,7 +1177,7 @@ const LineItem = ({ k, v, sub, bold, color }) => (
       <span style={{ fontSize: bold ? 14 : 13.5, fontWeight: bold ? 800 : 600, color: C.text }}>{k}</span>
       {sub && <span style={{ fontSize: 11.5, color: C.sub, marginLeft: 6 }}>{sub}</span>}
     </div>
-    <Num size={bold ? 16 : 14.5} color={color || C.text} weight={bold ? 800 : 700}>{v}</Num>
+    <Num size={bold ? 16 : 14.5} color={color || C.coral} weight={bold ? 800 : 700}>{v}</Num>
   </div>
 );
 
@@ -1285,9 +1285,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.line }}>
         {(agg.shift
           ? [["근무 타임", `${agg.times}회`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["추가 인정", `${agg.blocks}회`, C.aquaDeep], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.amber : C.sub]]
+             ["추가 인정", `${agg.blocks}회`, C.aquaDeep], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
           : [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["추가근무", `+${hmc(agg.ot)}`, C.aquaDeep], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? C.amber : C.sub]]
+             ["추가근무", `+${hmc(agg.ot)}`, C.aquaDeep], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? C.red : C.sub]]
         ).map(([k, v, col]) => (
           <div key={k} style={{ background: C.tileSoft, padding: "10px 8px" }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: C.sub, letterSpacing: "0.06em" }}>{k}</div>
@@ -1333,7 +1333,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         </>
       )}
 
-      <div className="mt-4" style={{ background: C.text, padding: "15px 16px" }}>
+      <div className="mt-4" style={{ background: C.coral, padding: "15px 16px" }}>
         <div className="flex items-baseline justify-between">
           <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</span>
           <Num size={34} color="#fff" weight={900}>{money(p.net)}<span style={{ fontSize: 17 }}> 원</span></Num>
@@ -1376,10 +1376,10 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
               </span>
               <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
               <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
-              <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.aquaDeep : shortish ? C.amber : C.sub }}>
+              <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.coral : shortish ? C.red : C.sub }}>
                 {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
               </span>
-              <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.text }}>{money(q.pay)}</span>
+              <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.coral }}>{money(q.pay)}</span>
             </div>
           );
         })}
@@ -1502,11 +1502,11 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
           <span style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
           <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.sub }}>{shift ? r.agg.times : r.agg.days}</span>
           <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.agg.blocks ? C.aquaDeep : C.sub }}>{r.agg.blocks || "—"}</span>
-          <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.text }}>{money(r.gross)}</span>
+          <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.coral }}>{money(r.gross)}</span>
           <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.tax + r.deduct > 0 ? C.coral : C.sub }}>
             {r.tax + r.deduct > 0 ? `−${money(r.tax + r.deduct)}` : "—"}
           </span>
-          <span style={{ width: 76, textAlign: "right" }}><Num size={14.5} weight={800} color={C.text}>{money(r.net)}</Num></span>
+          <span style={{ width: 76, textAlign: "right" }}><Num size={14.5} weight={800} color={C.coral}>{money(r.net)}</Num></span>
         </div>
       ))}
       {rows.length === 0 && <div style={{ padding: "16px 0", fontSize: 13, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
@@ -1515,11 +1515,11 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
         <span style={{ flex: 1, fontSize: 13, fontWeight: 900, color: C.text }}>합계</span>
         <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800 }}>{shift ? sum.times : sum.days}</span>
         <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>{sum.blocks || "—"}</span>
-        <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800 }}>{money(sum.gross)}</span>
+        <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>{money(sum.gross)}</span>
         <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>
           {sum.cut > 0 ? `−${money(sum.cut)}` : "—"}
         </span>
-        <span style={{ width: 76, textAlign: "right" }}><Num size={16} weight={900} color={C.aquaDeep}>{money(sum.pay)}</Num></span>
+        <span style={{ width: 76, textAlign: "right" }}><Num size={16} weight={900} color={C.coral}>{money(sum.pay)}</Num></span>
       </div>
 
       <div style={{ marginTop: 14, fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
@@ -1760,7 +1760,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     return (
                       <div key={i} className="flex items-center justify-between">
                         <span style={{ color: C.sub }}>{minStr(m)} 근무</span>
-                        <span style={{ fontWeight: 800, color: q.blocks ? C.aquaDeep : q.shortMin >= settings.shortThreshold ? C.amber : C.text }}>
+                        <span style={{ fontWeight: 800, color: q.blocks ? C.coral : q.shortMin >= settings.shortThreshold ? C.red : C.text }}>
                           {money(q.pay)}원{q.blocks ? ` (추가 ${q.blocks}회)` : q.shortMin >= settings.shortThreshold ? ` (부족 −${minStr(q.shortMin)})` : ""}
                         </span>
                       </div>
