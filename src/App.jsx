@@ -153,6 +153,7 @@ function migrate(p) {
     return { workDays: [], startTime: "", endTime: "", ...site };
   });
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
+  d.workers = (d.workers || []).map((w) => (w.code ? w : { ...w, code: String(Math.floor(100000 + Math.random() * 900000)) }));
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
   d.notices = Array.isArray(d.notices) ? d.notices : [];
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
@@ -855,6 +856,35 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     setToast(chk.outside ? "퇴근 처리됐습니다 · 현장 밖으로 기록됨" : `퇴근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
 
+  const [codeInput, setCodeInput] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeErr, setCodeErr] = useState("");
+  const submitCode = async () => {
+    const w = workers.find((x) => x.code === codeInput.trim());
+    if (!w) { setCodeErr("일치하는 코드가 없어요. 다시 확인해 주세요."); return; }
+    setCodeBusy(true); setCodeErr("");
+    const at = new Date().toISOString();
+    const nextDev = { ...dev, workerId: w.id, boundAt: at };
+    saveDevice(nextDev);
+    const prev = data.bindings[w.id];
+    const changed = prev && prev.deviceId !== dev.deviceId;
+    try {
+      await update((d) => ({
+        ...d,
+        bindings: { ...d.bindings, [w.id]: { deviceId: dev.deviceId, at } },
+        bindLog: changed
+          ? [{ workerId: w.id, at, from: prev.deviceId.slice(0, 6), to: dev.deviceId.slice(0, 6) }, ...d.bindLog].slice(0, 30)
+          : d.bindLog,
+      }));
+      setToast(`${w.name}님으로 연결됐습니다`);
+      window.location.reload();
+    } catch (e) {
+      setCodeErr("연결에 실패했어요. 인터넷 연결을 확인해 주세요.");
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
   if (!worker) {
     return (
       <div className="px-5 pt-20 pb-10" style={{ flex: 1 }}>
@@ -863,12 +893,28 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           이 휴대폰을 쓸 근무자가<br />아직 등록되지 않았습니다.
         </div>
         <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 12, lineHeight: 1.6 }}>
-          관리자에게 요청해서 본인 이름으로 된 연결 링크를 받아, 그 링크로 다시 접속해 주세요. 링크를 열면 자동으로 연결됩니다.
+          관리자에게 받은 <b style={{ color: C.onDark }}>6자리 연결 코드</b>를 아래에 입력해 주세요.
         </div>
+
+        <div className="mt-5">
+          <input value={codeInput} onChange={(e) => { setCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setCodeErr(""); }}
+            inputMode="numeric" placeholder="123456" maxLength={6}
+            style={{
+              width: "100%", padding: "16px 14px", fontSize: 26, fontWeight: 900, letterSpacing: "0.3em", textAlign: "center",
+              background: C.bgSoft, border: `1.5px solid ${C.lineDark}`, color: C.onDark, borderRadius: RADIUS_SM, fontFamily: MONO,
+            }} />
+          {codeErr && <div style={{ color: C.red, fontSize: 12.5, marginTop: 8, fontWeight: 700 }}>{codeErr}</div>}
+          <div style={{ marginTop: 12 }}>
+            <Btn full onClick={submitCode} disabled={codeInput.length !== 6 || codeBusy}>
+              {codeBusy ? "연결 중…" : "연결하기"}
+            </Btn>
+          </div>
+        </div>
+
         {inviteInfo && !inviteInfo.ok && (
-          <div style={{ marginTop: 12, background: "#3A1414", border: `1px solid ${C.red}`, padding: 12, fontSize: 12.5, color: "#FFC9C4", lineHeight: 1.6 }}>
+          <div style={{ marginTop: 16, background: "#3A1414", border: `1px solid ${C.red}`, padding: 12, fontSize: 12.5, color: "#FFC9C4", lineHeight: 1.6 }}>
             {inviteInfo.reason === "notfound" && (
-              <>연결 링크는 열렸지만, 그 근무자를 찾지 못했어요 (등록된 근무자 {inviteInfo.count}명 중 일치하는 사람 없음). 그 사람이 삭제됐거나, 링크가 오래된 것일 수 있어요. 관리자에게 링크를 새로 받아보세요.</>
+              <>연결 링크는 열렸지만, 그 근무자를 찾지 못했어요. 위 6자리 코드로 연결해 주세요.</>
             )}
             {inviteInfo.reason === "savefail" && <>연결 정보를 저장하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.</>}
             {inviteInfo.reason === "error" && <>오류가 발생했어요: {inviteInfo.msg}</>}
@@ -2719,6 +2765,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       id: wEdit.id || uid(), name: wEdit.name.trim(), siteId: wEdit.siteId || null,
       wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
+      code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
     setWEdit(null); setToast("근무자를 저장했습니다");
@@ -2882,16 +2929,29 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
                 </div>
               </div>
+              <Pencil size={14} color={C.sub} />
+            </div>
+            <div className="flex items-center justify-between mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
               <div className="flex items-center gap-2">
+                <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>연결 코드</span>
+                <span style={{ fontSize: 18, fontWeight: 900, color: C.coral, fontFamily: MONO, letterSpacing: "0.12em" }}>{w.code || "——————"}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard?.writeText(w.code || "");
+                  setToast(`${w.name}님 연결 코드를 복사했습니다`);
+                }} className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.coral, padding: "5px 8px", flexShrink: 0 }}>
+                  <Copy size={11} /> 코드
+                </button>
                 <button onClick={(e) => {
                   e.stopPropagation();
                   const url = `${window.location.origin}/invite/${w.id}`;
                   navigator.clipboard?.writeText(url);
                   setToast(`${w.name}님 연결 링크를 복사했습니다`);
-                }} className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.blue, padding: "5px 8px", flexShrink: 0 }}>
+                }} className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "5px 8px", flexShrink: 0 }}>
                   <Copy size={11} /> 링크
                 </button>
-                <Pencil size={14} color={C.sub} />
               </div>
             </div>
           </Tile>
