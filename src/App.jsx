@@ -21,6 +21,33 @@ const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
 const KEY = "cleanwork:v1";        // 공유 — 근무자·현장·기록
 const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
 
+/* 공유 데이터: 서버(Netlify Function + Blobs)에 저장 — 모든 기기가 같은 걸 봄 */
+async function loadShared() {
+  const res = await fetch("/api/data");
+  if (!res.ok) throw new Error("shared load failed");
+  const text = await res.text();
+  return text && text !== "null" ? JSON.parse(text) : null;
+}
+async function saveShared(obj) {
+  const res = await fetch("/api/data", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(obj),
+  });
+  if (!res.ok) throw new Error("shared save failed");
+}
+
+/* 개인(기기) 데이터: 이 브라우저에만 저장 — localStorage 사용 */
+function loadDevice() {
+  try {
+    const raw = localStorage.getItem(DKEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function saveDevice(obj) {
+  try { localStorage.setItem(DKEY, JSON.stringify(obj)); } catch (e) {}
+}
+
 /* ─────────────────────────  유틸  ───────────────────────── */
 const pad = (n) => String(n).padStart(2, "0");
 const dKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -389,11 +416,11 @@ export default function App() {
   useEffect(() => {
     (async () => {
       let d = DEFAULTS, v = { ...DEV_DEFAULT };
-      try { const r = await window.storage.get(KEY, true); if (r && r.value) d = migrate(JSON.parse(r.value)); } catch (e) {}
-      try { const r = await window.storage.get(DKEY, false); if (r && r.value) v = { ...DEV_DEFAULT, ...JSON.parse(r.value) }; } catch (e) {}
+      try { const r = await loadShared(); if (r) d = migrate(r); } catch (e) {}
+      const dv = loadDevice(); if (dv) v = { ...DEV_DEFAULT, ...dv };
       if (!v.deviceId) {
         v.deviceId = uid() + uid();
-        try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
+        saveDevice(v);
       }
 
       // 초대 링크로 들어온 경우 자동으로 이 기기를 그 근무자와 연결
@@ -413,7 +440,7 @@ export default function App() {
           } else {
             const at = new Date().toISOString();
             v = { ...v, workerId: w.id, boundAt: at };
-            try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
+            saveDevice(v);
             const prev = d.bindings[w.id];
             const changed = prev && prev.deviceId !== v.deviceId;
             d = {
@@ -423,7 +450,7 @@ export default function App() {
                 ? [{ workerId: w.id, at, from: prev.deviceId.slice(0, 6), to: v.deviceId.slice(0, 6) }, ...d.bindLog].slice(0, 30)
                 : d.bindLog,
             };
-            try { await window.storage.set(KEY, JSON.stringify(d), true); inviteResult = { ok: true, name: w.name }; }
+            try { await saveShared(d); inviteResult = { ok: true, name: w.name }; }
             catch (e) { inviteResult = { ok: false, reason: "savefail" }; }
           }
           const url = new URL(window.location.href);
@@ -441,14 +468,14 @@ export default function App() {
   const update = useCallback(async (mut) => {
     const next = typeof mut === "function" ? mut(dataRef.current) : mut;
     dataRef.current = next; setData(next);
-    try { await window.storage.set(KEY, JSON.stringify(next), true); }
-    catch (e) { setToast("저장 실패 — 기록이 이 화면에만 남아 있습니다"); }
+    try { await saveShared(next); }
+    catch (e) { setToast("저장 실패 — 인터넷 연결을 확인해 주세요"); }
   }, []);
 
   const updateDev = useCallback(async (mut) => {
     const next = typeof mut === "function" ? mut(devRef.current) : mut;
     devRef.current = next; setDev(next);
-    try { await window.storage.set(DKEY, JSON.stringify(next), false); } catch (e) {}
+    saveDevice(next);
   }, []);
 
   const goTab = (k) => { if (k === "clock") { setUnlocked(false); setRevealAdmin(false); } setTab(k); };
