@@ -1,13 +1,13 @@
 {
-  "name": "대신치워주는남자 근태관리",
-  "short_name": "대치남 근태",
+  "name": "대신치워주는남자 · 출퇴근 관리",
+  "short_name": "출퇴근 관리",
   "description": "대신치워주는남자(DAECHINAM) 근무자 출퇴근 체크 및 관리자 근태관리 앱",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#08171D",
-  "theme_color": "#08171D",
+  "background_color": "#1D232A",
+  "theme_color": "#1D232A",
   "lang": "ko",
   "icons": [
     {
