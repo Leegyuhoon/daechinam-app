@@ -196,9 +196,13 @@ function aggregate(records, worker, settings) {
     times++; net += p.net; pay += p.pay;
     const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday });
     b.net += p.net; b.times++; b.target += shift ? sh : 0;
-    if (p.holiday) holidayNet += p.net;
+    if (p.holiday) {
+      holidayNet += p.net;
+      holidayPay += p.pay;
+    }
     if (shift) {
-      base += p.base; otPay += p.otPay; blocks += p.blocks;
+      if (!p.holiday) { base += p.base; otPay += p.otPay; }
+      blocks += p.blocks;
       otMin += p.otMin; shortMin += p.shortMin; overMin += p.overMin;
     }
   });
@@ -207,6 +211,7 @@ function aggregate(records, worker, settings) {
     const wage = worker?.wage ?? settings.wage;
     const hMult = settings.holidayMultiplier || 1.5;
     let normalNet = 0;
+    holidayPay = 0;
     Object.entries(byDate).forEach(([date, b]) => {
       b.target = std;
       if (b.holiday) { holidayDays++; return; } // 공휴일은 초과/부족 계산에서 제외, 전체 1.5배로 별도 지급
@@ -218,6 +223,8 @@ function aggregate(records, worker, settings) {
     holidayPay = holidayNet * wage * hMult;
     pay = base + otPay + holidayPay;
     overMin = otMin;
+  } else {
+    Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
   }
 
   return {
@@ -1518,6 +1525,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       L.push("", `기본급    ${money(p.base)}원`);
     }
     if (p.extra) L.push(`${adj.extraLabel || "기타 수당"}  ${money(p.extra)}원`);
+    if (agg.holidayPay > 0) L.push(`공휴일 근무 ${agg.holidayNet.toFixed(1)}시간 × ${agg.holidayMultiplier}배 = ${money(agg.holidayPay)}원`);
     L.push(`지급 합계  ${money(p.gross)}원`);
     if (p.tax) L.push(`원천징수  -${money(p.tax)}원 (3.3%)`);
     if (p.deduct) L.push(`${adj.deductLabel || "기타 공제"}  -${money(p.deduct)}원`);
@@ -1528,7 +1536,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         const q = calcPay(r, worker, data.settings);
         const d = parseKey(r.date);
         const mark = q.blocks > 0 ? ` 추가+${minStr(q.otMin)}` : q.shortMin >= data.settings.shortThreshold ? ` 부족-${minStr(q.shortMin)}` : "";
-        L.push(`${r.date.slice(5)}(${WD[d.getDay()]}) ${tstr(r.clockIn)}-${tstr(r.clockOut)} ${minStr(q.net * 60)}${mark} ${money(q.pay)}원`);
+        const hol = q.holiday ? ` 공휴일×${agg.holidayMultiplier}` : "";
+        const cov = r.coverForName ? ` (${r.coverForName}님 대신)` : "";
+        L.push(`${r.date.slice(5)}(${WD[d.getDay()]}) ${tstr(r.clockIn)}-${tstr(r.clockOut)} ${minStr(q.net * 60)}${mark}${hol}${cov} ${money(q.pay)}원`);
       });
     }
     if (adj.memo) L.push("", `※ ${adj.memo}`);
@@ -1657,6 +1667,26 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         </div>
       )}
 
+      {(() => {
+        const offDays = (data.transfers || [])
+          .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date.slice(0, 7) === ym)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        if (offDays.length === 0) return null;
+        return (
+          <div className="mt-4">
+            <Eyebrow>이 달 중 양도한 휴무 ({offDays.length}건)</Eyebrow>
+            <div style={{ marginTop: 6 }}>
+              {offDays.map((t) => (
+                <div key={t.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                  <span>{t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ""}</span>
+                  <span style={{ fontWeight: 700, color: C.blue }}>{t.toWorkerName}님이 대신 근무</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 일자별 */}
       <div className="flex items-center justify-between mt-6 mb-2">
         <Eyebrow>{agg.shift ? "타임별 근무 내역" : "일자별 근무 내역"}</Eyebrow>
@@ -1684,6 +1714,8 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
               </span>
               <span style={{ flex: 1, fontSize: 11.5, color: C.sub, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", paddingRight: 6 }}>
                 {r.site}{r.note ? ` · ${r.note}` : ""}
+                {q.holiday && <span style={{ color: C.coral, fontWeight: 800 }}> · 공휴일×{agg.holidayMultiplier}</span>}
+                {r.coverForName && <span style={{ color: C.blue, fontWeight: 800 }}> · {r.coverForName}님 대신</span>}
               </span>
               <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
               <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
