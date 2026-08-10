@@ -6,15 +6,15 @@ import {
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal,
 } from "lucide-react";
 
-/* ─────────────────────────  토큰  ───────────────────────── */
+/* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
 const C = {
-  bg: "#08171D", bgSoft: "#0E2029", grout: "#0A1A21",
-  tile: "#FFFFFF", tileSoft: "#F2F6F7",
-  text: "#0A1A20", sub: "#5E7986",
-  onDark: "#E6F2F4", onDarkSub: "#7FA0AB",
-  aqua: "#25C4D8", aquaDeep: "#0A8497",
+  bg: "#1D232A", bgSoft: "#262E37", grout: "#20262D",
+  tile: "#FFFFFF", tileSoft: "#F5F2ED",
+  text: "#1D232A", sub: "#71767D",
+  onDark: "#F5F1EA", onDarkSub: "#9BA3AB",
+  aqua: "#EB9E18", aquaDeep: "#B9720A",
   amber: "#FFB020", coral: "#FF6B5E",
-  line: "#DFE8EA", lineDark: "#1B3540",
+  line: "#E6E2DB", lineDark: "#343C45",
 };
 const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
 const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
@@ -307,8 +307,8 @@ function sampleData() {
 const Eyebrow = ({ children, dark }) => (
   <div style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: dark ? C.onDarkSub : C.sub }}>{children}</div>
 );
-const Num = ({ children, size = 20, color = C.text, weight = 700 }) => (
-  <span style={{ fontFamily: MONO, fontSize: size, fontWeight: weight, color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{children}</span>
+const Num = ({ children, size = 20, color = C.text, weight = 800 }) => (
+  <span style={{ fontFamily: MONO, fontSize: size, fontWeight: weight, color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>{children}</span>
 );
 function Tile({ children, style, onClick, soft }) {
   return (
@@ -591,7 +591,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
         {/* 현장 확인 배너 */}
         <div className="mt-4 flex items-start gap-2.5" style={{
           padding: "12px 13px",
-          background: chk.state === "inside" ? "#E8F7F9" : chk.state === "loading" ? C.tileSoft : chk.state === "nogeo" ? C.tileSoft : "#FFF4E0",
+          background: chk.state === "inside" ? "#FBF0DC" : chk.state === "loading" ? C.tileSoft : chk.state === "nogeo" ? C.tileSoft : "#FFF4E0",
           border: `1px solid ${chk.state === "inside" ? C.aquaDeep : chk.state === "outside" || chk.state === "fail" ? C.amber : C.line}`,
         }}>
           {chk.state === "loading" && <Loader2 size={17} className="animate-spin" color={C.sub} style={{ flexShrink: 0, marginTop: 1 }} />}
@@ -848,7 +848,7 @@ function RecordsView({ data, update, setToast }) {
           <Eyebrow>{shift ? "총 근무시간" : "총 근무일수"}</Eyebrow>
           <div className="mt-1"><Num size={19}>{shift ? hmc(tot.net) : `${tot.days}일`}</Num></div>
         </Tile>
-        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={19} color={C.aquaDeep}>{money(tot.pay)}</Num></div></Tile>
+        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.aquaDeep}>{money(tot.pay)}</Num></div></Tile>
       </div>
       <div className="mx-4 mt-0.5 grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
         <Tile soft style={{ padding: 12 }}>
@@ -1009,31 +1009,31 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
         <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
           <Tile style={{ padding: 15 }}>
             <Eyebrow>{agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1.5"><Num size={30}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 16 }}>회</span>}</Num></div>
+            <div className="mt-1.5"><Num size={32}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 17 }}>회</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
           </Tile>
           <Tile style={{ padding: 15 }}>
             <Eyebrow>{agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1.5"><Num size={30}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 16 }}>일</span>}</Num></div>
+            <div className="mt-1.5"><Num size={32}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 17 }}>일</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
               {agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
             </div>
           </Tile>
           <Tile soft style={{ padding: 15 }}>
             <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
-            <div className="mt-1.5"><Num size={22} color={C.aquaDeep}>+{minStr(agg.otMin)}</Num></div>
+            <div className="mt-1.5"><Num size={24} weight={800} color={C.aquaDeep}>+{minStr(agg.otMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>{money(agg.otPay)}원</div>}
           </Tile>
           <Tile soft style={{ padding: 15 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1.5"><Num size={22} color={agg.shortMin > 0 ? C.amber : C.sub}>−{minStr(agg.shortMin)}</Num></div>
+            <div className="mt-1.5"><Num size={24} weight={800} color={agg.shortMin > 0 ? C.amber : C.sub}>−{minStr(agg.shortMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
           </Tile>
         </div>
 
         <div className="mt-0.5" style={{ background: C.aquaDeep, padding: 16 }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
-          <div className="mt-1.5"><Num size={34} color="#fff" weight={800}>{money(agg.pay)}<span style={{ fontSize: 18 }}> 원</span></Num></div>
+          <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(agg.pay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, marginTop: 5, fontFamily: MONO }}>
             {agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
@@ -1086,7 +1086,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                     {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
                   </div>
                   <div className="text-right" style={{ flexShrink: 0 }}>
-                    <Num size={17}>{p.open ? "—" : hmc(p.net)}</Num>
+                    <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
                     {!p.open && agg.shift && (
                       <>
                         <div style={{ marginTop: 3 }}>
@@ -1100,11 +1100,11 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                             </span>
                           )}
                         </div>
-                        <div style={{ marginTop: 4 }}><Num size={11.5} color={C.sub} weight={700}>{money(p.pay)}원</Num></div>
+                        <div style={{ marginTop: 4 }}><Num size={13.5} color={C.text} weight={800}>{money(p.pay)}원</Num></div>
                       </>
                     )}
                     {!p.open && !agg.shift && (
-                      <div style={{ marginTop: 4 }}><Num size={11.5} color={C.sub} weight={700}>{money(p.pay)}원</Num></div>
+                      <div style={{ marginTop: 4 }}><Num size={13.5} color={C.text} weight={800}>{money(p.pay)}원</Num></div>
                     )}
                     <Pencil size={12} color={C.line} style={{ marginLeft: "auto", marginTop: 6 }} />
                   </div>
@@ -1336,7 +1336,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       <div className="mt-4" style={{ background: C.text, padding: "15px 16px" }}>
         <div className="flex items-baseline justify-between">
           <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</span>
-          <Num size={28} color="#fff" weight={800}>{money(p.net)}<span style={{ fontSize: 15 }}> 원</span></Num>
+          <Num size={34} color="#fff" weight={900}>{money(p.net)}<span style={{ fontSize: 17 }}> 원</span></Num>
         </div>
       </div>
 
@@ -1494,7 +1494,7 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
         <span style={{ width: 44, textAlign: "right" }}>추가</span>
         <span style={{ width: 66, textAlign: "right" }}>지급</span>
         <span style={{ width: 56, textAlign: "right" }}>공제</span>
-        <span style={{ width: 72, textAlign: "right" }}>실지급</span>
+        <span style={{ width: 76, textAlign: "right" }}>실지급</span>
       </div>
       {rows.map((r) => (
         <div key={r.w.id} onClick={() => onOpenSlip(r.w.id)} className="flex items-center"
@@ -1506,7 +1506,7 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
           <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.tax + r.deduct > 0 ? C.coral : C.sub }}>
             {r.tax + r.deduct > 0 ? `−${money(r.tax + r.deduct)}` : "—"}
           </span>
-          <span style={{ width: 72, textAlign: "right" }}><Num size={13}>{money(r.net)}</Num></span>
+          <span style={{ width: 76, textAlign: "right" }}><Num size={14.5} weight={800} color={C.text}>{money(r.net)}</Num></span>
         </div>
       ))}
       {rows.length === 0 && <div style={{ padding: "16px 0", fontSize: 13, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
@@ -1519,7 +1519,7 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
         <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>
           {sum.cut > 0 ? `−${money(sum.cut)}` : "—"}
         </span>
-        <span style={{ width: 72, textAlign: "right" }}><Num size={14} weight={800}>{money(sum.pay)}</Num></span>
+        <span style={{ width: 76, textAlign: "right" }}><Num size={16} weight={900} color={C.aquaDeep}>{money(sum.pay)}</Num></span>
       </div>
 
       <div style={{ marginTop: 14, fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
