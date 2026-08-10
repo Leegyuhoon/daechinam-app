@@ -1959,13 +1959,14 @@ function NoticeAdminView({ data, update, setToast }) {
 
 /* ─────────────────────────  근무 기록  ───────────────────────── */
 function RecordsView({ data, update, setToast }) {
-  const { workers, records, settings } = data;
+  const { workers, sites, records, settings } = data;
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
   const [detail, setDetail] = useState(null);
   const [slip, setSlip] = useState(null);   // { workerId, ym }
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
+  const [siteBrowse, setSiteBrowse] = useState(false);
 
   const [s, e] = rangeOf(mode, anchor);
   const sk = dKey(s), ek = dKey(e);
@@ -2126,28 +2127,63 @@ function RecordsView({ data, update, setToast }) {
       <div className="px-4 mt-5">
         <div className="flex items-center gap-2 mb-3">
           <Search size={15} color={C.onDarkSub} style={{ flexShrink: 0 }} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 또는 현장 검색"
+          <input value={q} onChange={(e) => { setQ(e.target.value); setSiteBrowse(false); }} placeholder="이름 또는 현장 검색"
             style={{ flex: 1, background: C.bgSoft, border: `1px solid ${C.lineDark}`, color: C.onDark, padding: "9px 11px", fontSize: 13.5, borderRadius: RADIUS_SM }} />
           {q && <button onClick={() => setQ("")}><X size={16} color={C.onDarkSub} /></button>}
+          {!q && (
+            <button onClick={() => setSiteBrowse((v) => !v)} className="flex items-center gap-1" title="현장별로 보기"
+              style={{
+                flexShrink: 0, padding: "9px 10px", fontSize: 12, fontWeight: 800, borderRadius: RADIUS_SM,
+                background: siteBrowse ? C.aquaDeep : C.bgSoft, color: siteBrowse ? "#fff" : C.onDarkSub, border: `1px solid ${C.lineDark}`,
+              }}>
+              <Folder size={13} /> 현장별
+            </button>
+          )}
         </div>
 
-        <div className="flex items-center justify-between mb-2">
-          <Eyebrow dark>{q ? `"${q}" 검색 결과 · ${rows.length}명` : "이름별 · 눌러서 상세 보기"}</Eyebrow>
-          <div className="flex items-center gap-3">
-            <button onClick={downloadPayrollPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700, opacity: pdfBusy ? 0.5 : 1 }}>
-              <Receipt size={12} /> {pdfBusy ? "생성 중…" : "급여대장(PDF)"}
-            </button>
-            <button onClick={downloadCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
-              <FileText size={12} /> 엑셀 다운로드
-            </button>
-          </div>
-        </div>
-        {rows.length === 0 && (
-          <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>{q ? "검색 결과가 없습니다." : "등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요."}</div></Tile>
-        )}
-        <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-          {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags }) => (
-            <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
+        {siteBrowse && !q ? (
+          <>
+            <Eyebrow dark>현장별로 묶어서 보여드려요 · 눌러서 열기</Eyebrow>
+            <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
+              {sites.map((site) => {
+                const cnt = inRangeAll.filter((r) => r.siteId === site.id).length;
+                return (
+                  <Tile key={site.id} onClick={() => { setQ(site.name); setSiteBrowse(false); }} style={{ padding: "14px 16px" }}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <Folder size={18} color={C.aquaDeep} />
+                        <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{site.name}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{cnt}건</span>
+                        <ChevronRight size={16} color={C.sub} />
+                      </div>
+                    </div>
+                  </Tile>
+                );
+              })}
+              {sites.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장이 없습니다.</div></Tile>}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-2">
+              <Eyebrow dark>{q ? `"${q}" 검색 결과 · ${rows.length}명` : "이름별 · 눌러서 상세 보기"}</Eyebrow>
+              <div className="flex items-center gap-3">
+                <button onClick={downloadPayrollPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700, opacity: pdfBusy ? 0.5 : 1 }}>
+                  <Receipt size={12} /> {pdfBusy ? "생성 중…" : "급여대장(PDF)"}
+                </button>
+                <button onClick={downloadCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
+                  <FileText size={12} /> 엑셀 다운로드
+                </button>
+              </div>
+            </div>
+            {rows.length === 0 && (
+              <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>{q ? "검색 결과가 없습니다." : "등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요."}</div></Tile>
+            )}
+            <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+              {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags }) => (
+                <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
                   <div style={{ width: 34, height: 34, borderRadius: 999, background: C.bgSoft, color: C.onDark, fontSize: 13, fontWeight: 800, flexShrink: 0 }} className="flex items-center justify-center">{w.name.slice(0, 1)}</div>
@@ -2175,7 +2211,9 @@ function RecordsView({ data, update, setToast }) {
               </div>
             </Tile>
           ))}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       {detail && (
