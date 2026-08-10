@@ -454,7 +454,7 @@ function Tile({ children, style, onClick, soft }) {
 function Modal({ open, onClose, children, title }) {
   if (!open) return null;
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center px-4"
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
       style={{ background: "rgba(4,12,18,0.6)", backdropFilter: "blur(3px)", animation: "backdropIn 0.2s ease" }}
       onClick={onClose}>
       <div className="w-full" style={{
