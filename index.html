@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-    <title>대신치워주는남자 근태관리</title>
+    <title>대신치워주는남자 · 출퇴근 관리</title>
 
     <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#08171D" />
+    <meta name="theme-color" content="#1D232A" />
 
     <!-- 아이콘 -->
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
@@ -17,7 +17,7 @@
     <!-- iOS 홈화면(PWA) 대응 -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="대치남 근태" />
+    <meta name="apple-mobile-web-app-title" content="출퇴근 관리" />
 
     <!-- Android/Chrome PWA -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -25,5 +25,107 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+
+    <!-- 커스텀 스플래시 화면: 홈화면 아이콘 눌렀을 때 가장 먼저 보이는 화면 -->
+    <div id="app-splash" style="
+      position:fixed; inset:0; z-index:99997; overflow:hidden;
+      background:#1D232A;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      transition:opacity 0.5s ease, visibility 0.5s ease;
+    ">
+      <div style="
+        position:absolute; left:50%; top:44%; width:560px; height:560px;
+        transform:translate(-50%,-50%);
+        background:radial-gradient(circle, rgba(235,158,24,0.20) 0%, rgba(235,158,24,0.05) 42%, rgba(29,35,42,0) 70%);
+      "></div>
+
+      <div style="position:relative; transform:rotate(-7deg); display:flex; flex-direction:column; align-items:center;">
+        <img src="/icons/wordmark-white.png" alt="DAECHINAM" style="
+          width:66vw; max-width:360px;
+          filter:
+            drop-shadow(0 3px 0 rgba(0,0,0,0.55))
+            drop-shadow(0 6px 0 rgba(0,0,0,0.4))
+            drop-shadow(0 20px 32px rgba(0,0,0,0.5));
+        " />
+        <div style="margin-top:22px; display:flex; align-items:center; gap:10px;">
+          <div style="width:22px; height:1px; background:rgba(235,158,24,0.6);"></div>
+          <div style="
+            color:#EB9E18;
+            font-family:'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif;
+            font-size:13px; font-weight:800; letter-spacing:0.3em;
+          ">출퇴근 관리</div>
+          <div style="width:22px; height:1px; background:rgba(235,158,24,0.6);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 카카오톡 인앱브라우저 감지 → 안내 오버레이 -->
+    <div id="kakao-guide" style="display:none; position:fixed; inset:0; z-index:99999; background:#1D232A; color:#F5F1EA; font-family:'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif; padding:32px 24px; box-sizing:border-box; overflow-y:auto;">
+      <div style="max-width:420px; margin:40px auto 0; text-align:center;">
+        <img src="/icons/logo-full-trimmed.png" alt="대신치워주는남자 DAECHINAM" style="width:100%; max-width:260px; margin:0 auto 32px; display:block;" />
+
+        <div style="font-size:17px; font-weight:800; line-height:1.6; margin-bottom:8px;">
+          카카오톡 안에서는 이 앱을<br/>제대로 설치할 수 없어요
+        </div>
+        <div style="font-size:13.5px; color:#9BA3AB; line-height:1.7; margin-bottom:28px;">
+          아래 버튼을 눌러 외부 브라우저로 연 다음, "홈 화면에 추가"를 해주세요.
+        </div>
+
+        <button id="kakao-open-external" style="width:100%; background:#EB9E18; color:#1D232A; border:none; padding:16px; font-size:15px; font-weight:800; margin-bottom:24px; cursor:pointer;">
+          외부 브라우저로 열기
+        </button>
+
+        <div style="text-align:left; background:#262E37; padding:18px; font-size:13px; line-height:1.8; color:#F5F1EA;">
+          <div style="font-weight:800; margin-bottom:6px; color:#EB9E18;">버튼이 안 눌리시면 직접 해주세요</div>
+          <div style="margin-bottom:10px;">
+            <b>① 오른쪽 위(또는 아래) '•••' 더보기</b> 버튼 클릭<br/>
+            <b>② "다른 브라우저로 열기"</b> 선택
+          </div>
+          <div style="color:#9BA3AB;">
+            그 다음 열리는 화면에서 (안드로이드) 메뉴 → "홈 화면에 추가" / (아이폰) 공유 버튼 → "홈 화면에 추가" 를 눌러주세요.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var ua = navigator.userAgent || "";
+        var isKakao = /kakaotalk/i.test(ua);
+        if (isKakao) {
+          document.getElementById("kakao-guide").style.display = "block";
+          document.getElementById("kakao-open-external").addEventListener("click", function () {
+            var target = window.location.href;
+            var isAndroid = /android/i.test(ua);
+            if (isAndroid) {
+              window.location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(target);
+            } else {
+              try {
+                navigator.clipboard && navigator.clipboard.writeText(target);
+              } catch (e) {}
+              alert("주소가 복사되었습니다.\n오른쪽 아래 공유 아이콘(내보내기) → Safari로 열기를 눌러주세요.");
+            }
+          });
+        }
+      })();
+
+      // 스플래시 화면 숨기기 (앱이 뜬 뒤 잠시 보여주고 자연스럽게 사라짐)
+      (function () {
+        var MIN_MS = 900;
+        var start = Date.now();
+        function hide() {
+          var el = document.getElementById("app-splash");
+          if (!el) return;
+          var wait = Math.max(0, MIN_MS - (Date.now() - start));
+          setTimeout(function () {
+            el.style.opacity = "0";
+            el.style.visibility = "hidden";
+            setTimeout(function () { el.remove(); }, 550);
+          }, wait);
+        }
+        if (document.readyState === "complete") hide();
+        else window.addEventListener("load", hide);
+      })();
+    </script>
   </body>
 </html>
