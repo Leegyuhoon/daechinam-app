@@ -811,7 +811,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       <div className="w-full" style={{ maxWidth: 320, marginTop: pendingIncoming.length ? 4 : 22 }}>
         <button onClick={openXfer} className="w-full flex items-center justify-center gap-2"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
-          <Repeat size={15} /> 오늘/앞으로 근무 양도 요청하기
+          <Repeat size={15} /> 근무 양도 요청하기
         </button>
 
         {recentOutgoing.length > 0 && (
