@@ -3,7 +3,7 @@ import {
   MapPin, ChevronLeft, ChevronRight, X, Plus, Trash2, Check, AlertTriangle,
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
-  Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send,
+  Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -74,7 +74,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -98,6 +98,7 @@ function migrate(p) {
   });
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
+  d.notices = Array.isArray(d.notices) ? d.notices : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -534,6 +535,42 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  const [noticeQueue, setNoticeQueue] = useState([]);
+  const [noticeShown, setNoticeShown] = useState(null);
+  useEffect(() => {
+    if (!worker) return;
+    const seenKey = "cleanwork:noticeSeen";
+    let seen = {};
+    try { seen = JSON.parse(localStorage.getItem(seenKey) || "{}"); } catch (e) {}
+    const due = (data.notices || []).filter((n) => {
+      if (!n.active) return false;
+      if (today < n.startDate || today > n.endDate) return false;
+      if (n.audience === "custom" && !(n.workerIds || []).includes(worker.id)) return false;
+      return seen[`${n.id}:${today}`] !== true;
+    });
+    if (due.length > 0) {
+      setNoticeQueue(due.slice(1));
+      setNoticeShown(due[0]);
+    }
+    // eslint-disable-next-line
+  }, [worker?.id, today]);
+  const dismissNotice = () => {
+    if (noticeShown) {
+      try {
+        const seenKey = "cleanwork:noticeSeen";
+        const seen = JSON.parse(localStorage.getItem(seenKey) || "{}");
+        seen[`${noticeShown.id}:${today}`] = true;
+        localStorage.setItem(seenKey, JSON.stringify(seen));
+      } catch (e) {}
+    }
+    if (noticeQueue.length > 0) {
+      setNoticeShown(noticeQueue[0]);
+      setNoticeQueue(noticeQueue.slice(1));
+    } else {
+      setNoticeShown(null);
+    }
+  };
+
   const myIncoming = worker ? transfers.filter((t) => t.toWorkerId === worker.id) : [];
   const myOutgoing = worker ? transfers.filter((t) => t.fromWorkerId === worker.id) : [];
   const pendingIncoming = myIncoming.filter((t) => t.status === "pending");
@@ -877,6 +914,24 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         </div>
       </Modal>
 
+      {/* 공지사항 */}
+      <Modal open={!!noticeShown} onClose={dismissNotice}>
+        {noticeShown && (
+          <>
+            <div className="flex items-center gap-2" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
+              <Bell size={13} /> 공지사항
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 8, lineHeight: 1.35 }}>{noticeShown.title}</div>
+            {noticeShown.message && (
+              <div style={{ fontSize: 14, color: C.sub, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{noticeShown.message}</div>
+            )}
+            <div className="mt-5">
+              <Btn full onClick={dismissNotice}>확인했어요{noticeQueue.length > 0 ? ` (다음 공지 ${noticeQueue.length}건)` : ""}</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
       {/* 재확인 팝업 */}
       <Modal open={!!confirm} onClose={() => setConfirm(null)}>
         <div style={{ fontSize: 22, fontWeight: 900, color: C.text, lineHeight: 1.35 }}>
@@ -1049,8 +1104,8 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       <div className="flex items-center px-4 pt-4">
-        <div className="grid grid-cols-3 gap-0.5" style={{ background: C.grout, flex: 1 }}>
-          {[["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
+        <div className="grid grid-cols-4 gap-0.5" style={{ background: C.grout, flex: 1 }}>
+          {[["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat], ["notices", "공지", Bell], ["settings", "설정", SettingsIcon]].map(([k, l, I]) => (
             <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5"
               style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 13, fontWeight: 800 }}>
               <I size={14} />{l}
@@ -1064,6 +1119,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
       </div>
       {view === "records" && <RecordsView data={data} update={update} setToast={setToast} />}
       {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
+      {view === "notices" && <NoticeAdminView data={data} update={update} setToast={setToast} />}
       {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
     </div>
   );
@@ -1150,6 +1206,161 @@ function TransferAdminView({ data, update, setToast }) {
     </div>
   );
 }
+
+/* ─────────────────────────  공지사항 관리(관리자)  ───────────────────────── */
+function NoticeAdminView({ data, update, setToast }) {
+  const { workers } = data;
+  const [edit, setEdit] = useState(null);
+  const notices = [...(data.notices || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const today = dKey(new Date());
+
+  const openNew = () => setEdit({
+    id: null, title: "", message: "", audience: "all", workerIds: [],
+    mode: "range", targetDate: today, leadDays: 7, includeTarget: true,
+    startDate: today, endDate: today, active: true,
+  });
+
+  const saveNotice = () => {
+    if (!edit.title.trim()) { setToast("제목을 입력해 주세요"); return; }
+    let startDate = edit.startDate, endDate = edit.endDate;
+    if (edit.mode === "target") {
+      const t = parseKey(edit.targetDate);
+      const s = new Date(t); s.setDate(s.getDate() - Number(edit.leadDays || 0));
+      const e = new Date(t); if (!edit.includeTarget) e.setDate(e.getDate() - 1);
+      startDate = dKey(s); endDate = dKey(e);
+    }
+    if (startDate > endDate) { setToast("종료일이 시작일보다 빨라요"); return; }
+    const n = {
+      id: edit.id || uid(), title: edit.title.trim(), message: edit.message.trim(),
+      audience: edit.audience, workerIds: edit.audience === "custom" ? edit.workerIds : [],
+      startDate, endDate, active: edit.active,
+      createdAt: edit.id ? edit.createdAt : new Date().toISOString(),
+    };
+    update((d) => ({ ...d, notices: edit.id ? (d.notices || []).map((x) => (x.id === n.id ? n : x)) : [...(d.notices || []), n] }));
+    setEdit(null); setToast("공지를 저장했습니다");
+  };
+  const removeNotice = (id) => { update((d) => ({ ...d, notices: (d.notices || []).filter((x) => x.id !== id) })); setEdit(null); setToast("삭제했습니다"); };
+  const toggleActive = (id) => update((d) => ({ ...d, notices: (d.notices || []).map((x) => (x.id === id ? { ...x, active: !x.active } : x)) }));
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      <Btn full onClick={openNew}>
+        <span className="flex items-center justify-center gap-2"><Plus size={15} /> 새 공지 작성</span>
+      </Btn>
+
+      <div className="flex flex-col gap-0.5 mt-3" style={{ background: C.grout }}>
+        {notices.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 공지가 없습니다.</div></Tile>}
+        {notices.map((n) => {
+          const live = n.active && today >= n.startDate && today <= n.endDate;
+          return (
+            <Tile key={n.id} onClick={() => setEdit({
+              ...n, mode: "range", leadDays: 7, targetDate: n.endDate, includeTarget: true,
+              workerIds: n.workerIds || [],
+            })} style={{ padding: "13px 14px" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div style={{ minWidth: 0 }}>
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ fontWeight: 800, fontSize: 14.5, color: C.text }}>{n.title}</span>
+                    {live && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 5px" }}>노출 중</span>}
+                    {!n.active && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>꺼짐</span>}
+                  </div>
+                  {n.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>{n.message}</div>}
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, fontFamily: MONO }}>
+                    {n.startDate.slice(5)} ~ {n.endDate.slice(5)} · {n.audience === "all" ? "전체 근무자" : `${(n.workerIds || []).length}명 지정`}
+                  </div>
+                </div>
+                <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
+              </div>
+            </Tile>
+          );
+        })}
+      </div>
+
+      <Modal open={!!edit} onClose={() => setEdit(null)}>
+        {edit && (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{edit.id ? "공지 수정" : "새 공지 작성"}</div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="제목"><input value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="예: 이번 주 급여일 안내" style={inputStyle} /></Field>
+              <Field label="내용 (선택)">
+                <textarea value={edit.message} onChange={(e) => setEdit({ ...edit, message: e.target.value })} rows={3} style={{ ...inputStyle, resize: "none" }} />
+              </Field>
+
+              <Field label="받는 사람">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[["all", "전체 근무자"], ["custom", "선택한 사람만"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setEdit({ ...edit, audience: k })}
+                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: edit.audience === k ? C.aquaDeep : C.tileSoft, color: edit.audience === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+                {edit.audience === "custom" && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {workers.map((w) => {
+                      const on = (edit.workerIds || []).includes(w.id);
+                      return (
+                        <button key={w.id} onClick={() => {
+                          const cur = edit.workerIds || [];
+                          setEdit({ ...edit, workerIds: on ? cur.filter((x) => x !== w.id) : [...cur, w.id] });
+                        }} style={{ padding: "6px 10px", fontSize: 12, fontWeight: 800, background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub }}>
+                          {w.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </Field>
+
+              <Field label="노출 기간">
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {[["target", "기준일로부터 며칠 전"], ["range", "직접 기간 지정"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setEdit({ ...edit, mode: k })}
+                      style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: edit.mode === k ? C.aquaDeep : C.tileSoft, color: edit.mode === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+                {edit.mode === "target" ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="기준일"><input type="date" value={edit.targetDate} onChange={(e) => setEdit({ ...edit, targetDate: e.target.value })} style={inputStyle} /></Field>
+                      <Field label="며칠 전부터"><input type="number" min="0" value={edit.leadDays} onChange={(e) => setEdit({ ...edit, leadDays: e.target.value })} style={inputStyle} /></Field>
+                    </div>
+                    <label className="flex items-center gap-2 mt-2" style={{ fontSize: 12.5, color: C.sub }}>
+                      <input type="checkbox" checked={edit.includeTarget} onChange={(e) => setEdit({ ...edit, includeTarget: e.target.checked })} />
+                      기준일 당일도 포함 (끄면 "전날까지"만)
+                    </label>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="시작일"><input type="date" value={edit.startDate} onChange={(e) => setEdit({ ...edit, startDate: e.target.value })} style={inputStyle} /></Field>
+                    <Field label="종료일"><input type="date" value={edit.endDate} onChange={(e) => setEdit({ ...edit, endDate: e.target.value })} style={inputStyle} /></Field>
+                  </div>
+                )}
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+                  이 기간 동안 근무자가 앱을 열 때마다 하루 한 번씩 공지가 화면에 떠요.
+                </div>
+              </Field>
+
+              <label className="flex items-center gap-2" style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>
+                <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />
+                활성화 (끄면 기간 안이어도 안 보임)
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setEdit(null)}>취소</Btn>
+              <Btn full onClick={saveNotice}>저장</Btn>
+            </div>
+            {edit.id && (
+              <button onClick={() => removeNotice(edit.id)} className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
+                이 공지 삭제
+              </button>
+            )}
+          </>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 
 /* ─────────────────────────  근무 기록  ───────────────────────── */
 function RecordsView({ data, update, setToast }) {
