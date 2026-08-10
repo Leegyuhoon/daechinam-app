@@ -23,10 +23,10 @@ const MONO = SANS; // 숫자 전용 폰트 — 모노스페이스 대신 한글�
 const RADIUS = 12;
 const RADIUS_SM = 8;
 const RADIUS_LG = 22;
-const SHADOW_SM = "0 1px 2px rgba(10,14,18,0.06), 0 1px 1px rgba(10,14,18,0.04)";
-const SHADOW_MD = "0 4px 14px rgba(10,14,18,0.10), 0 1px 3px rgba(10,14,18,0.06)";
+const SHADOW_SM = "0 2px 6px rgba(10,14,18,0.10), 0 1px 2px rgba(10,14,18,0.08)";
+const SHADOW_MD = "0 8px 24px rgba(10,14,18,0.16), 0 2px 6px rgba(10,14,18,0.10)";
 const SHADOW_LG = "0 -8px 30px rgba(0,0,0,0.35)";
-const SHADOW_DARK = "0 6px 18px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.25)";
+const SHADOW_DARK = "0 10px 28px rgba(0,0,0,0.45), 0 3px 8px rgba(0,0,0,0.3)";
 
 const KEY = "cleanwork:v1";        // 공유 — 근무자·현장·기록
 const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
@@ -360,10 +360,9 @@ const Num = ({ children, size = 22, color = C.text, weight = 900 }) => (
 );
 function Tile({ children, style, onClick, soft }) {
   return (
-    <div onClick={onClick} style={{
+    <div onClick={onClick} className={onClick ? "pressable" : ""} style={{
       background: soft ? C.tileSoft : C.tile, padding: 14, cursor: onClick ? "pointer" : "default",
       borderRadius: RADIUS_SM, boxShadow: soft ? "none" : SHADOW_SM,
-      transition: "transform 0.12s ease, box-shadow 0.12s ease",
       ...style,
     }}>
       {children}
@@ -373,12 +372,14 @@ function Tile({ children, style, onClick, soft }) {
 function Modal({ open, onClose, children, title }) {
   if (!open) return null;
   return (
-    <div className="absolute inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(4,12,18,0.55)", backdropFilter: "blur(2px)" }} onClick={onClose}>
+    <div className="absolute inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(4,12,18,0.6)", backdropFilter: "blur(3px)", animation: "backdropIn 0.2s ease" }}
+      onClick={onClose}>
       <div className="w-full" style={{
-        background: C.tile, maxHeight: "92%", overflowY: "auto",
-        borderRadius: `${RADIUS_LG}px ${RADIUS_LG}px 0 0`, boxShadow: SHADOW_LG,
+        background: C.tile, maxHeight: "85%", maxWidth: 420, overflowY: "auto",
+        borderRadius: RADIUS_LG, boxShadow: "0 24px 60px rgba(0,0,0,0.5), 0 8px 20px rgba(0,0,0,0.3)",
+        animation: "modalIn 0.22s cubic-bezier(0.2,0.8,0.3,1)",
       }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ width: 40, height: 4, borderRadius: 4, background: C.line, margin: "10px auto 2px" }} />
         {title && (
           <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{title}</div>
@@ -397,11 +398,11 @@ const Btn = ({ children, onClick, kind = "primary", full, small, disabled }) => 
     danger: { background: "transparent", color: C.coral, border: `1px solid ${C.coral}` },
   }[kind];
   return (
-    <button onClick={onClick} disabled={disabled} className={full ? "w-full" : ""}
+    <button onClick={onClick} disabled={disabled} className={`btn-press ${full ? "w-full" : ""}`}
       style={{
         ...st, opacity: disabled ? 0.35 : 1, padding: small ? "8px 12px" : "13px 16px",
         fontSize: small ? 13 : 14.5, fontWeight: 700, fontFamily: SANS,
-        borderRadius: RADIUS_SM, transition: "transform 0.1s ease, box-shadow 0.1s ease",
+        borderRadius: RADIUS_SM, transition: "transform 0.1s ease, box-shadow 0.1s ease, filter 0.1s ease",
       }}>
       {children}
     </button>
@@ -514,7 +515,17 @@ export default function App() {
 
   return (
     <div style={{ background: C.bg, fontFamily: SANS, minHeight: 720 }}>
-      <div className="relative mx-auto flex flex-col" style={{ maxWidth: 560, minHeight: 720, background: C.bg, overflow: "hidden" }}>
+      <style>{`
+        @keyframes modalIn { from { opacity:0; transform:translateY(14px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+        @keyframes backdropIn { from { opacity:0; } to { opacity:1; } }
+        .pressable { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+        .pressable:active { transform: scale(0.97); }
+        .btn-press:active { transform: scale(0.96); filter: brightness(0.94); }
+      `}</style>
+      <div className="relative mx-auto flex flex-col" style={{
+        maxWidth: 560, minHeight: 720, overflow: "hidden",
+        background: `radial-gradient(120% 60% at 50% 0%, ${C.bgSoft} 0%, ${C.bg} 55%)`,
+      }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
           {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
           {tab === "admin" && (
