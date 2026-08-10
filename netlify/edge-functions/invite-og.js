@@ -4,7 +4,7 @@ export default async (request, context) => {
     const html = await response.text();
     const url = new URL(request.url);
     const exactUrl = `${url.origin}${url.pathname}${url.search}`;
-    const shareImageUrl = `${url.origin}/icons/logo-full-trimmed.png`;
+    const shareImageUrl = `${url.origin}/icons/splash-bg.jpg`;
 
     const tags = `
     <meta property="og:url" content="${exactUrl}" />
