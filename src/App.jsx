@@ -378,6 +378,7 @@ export default function App() {
   const [tab, setTab] = useState("clock");
   const [unlocked, setUnlocked] = useState(false);
   const [revealAdmin, setRevealAdmin] = useState(false);
+  const [inviteInfo, setInviteInfo] = useState(null);
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const dataRef = useRef(null), devRef = useRef(null);
@@ -395,13 +396,21 @@ export default function App() {
         try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
       }
 
-      // 초대 링크(?w=근무자ID)로 들어온 경우 자동으로 이 기기를 그 근무자와 연결
+      // 초대 링크로 들어온 경우 자동으로 이 기기를 그 근무자와 연결
+      // 지원 형식 1) /invite/근무자ID  (권장 — 메신저 앱에서 안 잘림)
+      // 지원 형식 2) ?w=근무자ID       (구버전 호환용)
+      let inviteResult = null;
       try {
         const params = new URLSearchParams(window.location.search);
-        const inviteId = params.get("w");
+        const pathMatch = window.location.pathname.match(/\/invite\/([a-zA-Z0-9]+)/);
+        const inviteId = (pathMatch && pathMatch[1]) || params.get("w");
         if (inviteId) {
           const w = (d.workers || []).find((x) => x.id === inviteId);
-          if (w && v.workerId !== w.id) {
+          if (!w) {
+            inviteResult = { ok: false, reason: "notfound", id: inviteId, count: (d.workers || []).length };
+          } else if (v.workerId === w.id) {
+            inviteResult = { ok: true, name: w.name, already: true };
+          } else {
             const at = new Date().toISOString();
             v = { ...v, workerId: w.id, boundAt: at };
             try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
@@ -414,13 +423,15 @@ export default function App() {
                 ? [{ workerId: w.id, at, from: prev.deviceId.slice(0, 6), to: v.deviceId.slice(0, 6) }, ...d.bindLog].slice(0, 30)
                 : d.bindLog,
             };
-            try { await window.storage.set(KEY, JSON.stringify(d), true); } catch (e) {}
+            try { await window.storage.set(KEY, JSON.stringify(d), true); inviteResult = { ok: true, name: w.name }; }
+            catch (e) { inviteResult = { ok: false, reason: "savefail" }; }
           }
           const url = new URL(window.location.href);
           url.searchParams.delete("w");
-          window.history.replaceState({}, "", url.pathname + url.search);
+          window.history.replaceState({}, "", "/" + url.search);
         }
-      } catch (e) {}
+      } catch (e) { inviteResult = { ok: false, reason: "error", msg: String(e && e.message || e) }; }
+      if (inviteResult) setInviteInfo(inviteResult);
 
       dataRef.current = d; devRef.current = v;
       setData(d); setDev(v); setLoading(false);
@@ -454,7 +465,7 @@ export default function App() {
     <div style={{ background: C.bg, fontFamily: SANS, minHeight: 720 }}>
       <div className="relative mx-auto flex flex-col" style={{ maxWidth: 560, minHeight: 720, background: C.bg, overflow: "hidden" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} />}
+          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
           {tab === "admin" && (
             unlocked
               ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} />
@@ -485,7 +496,7 @@ export default function App() {
 }
 
 /* ─────────────────────────  근무자 화면  ───────────────────────── */
-function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin }) {
+function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, inviteInfo }) {
   const { workers, sites, records, settings } = data;
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
@@ -634,6 +645,15 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin }) {
         <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 12, lineHeight: 1.6 }}>
           관리자에게 요청해서 본인 이름으로 된 연결 링크를 받아, 그 링크로 다시 접속해 주세요. 링크를 열면 자동으로 연결됩니다.
         </div>
+        {inviteInfo && !inviteInfo.ok && (
+          <div style={{ marginTop: 12, background: "#3A1414", border: `1px solid ${C.red}`, padding: 12, fontSize: 12.5, color: "#FFC9C4", lineHeight: 1.6 }}>
+            {inviteInfo.reason === "notfound" && (
+              <>연결 링크는 열렸지만, 그 근무자를 찾지 못했어요 (등록된 근무자 {inviteInfo.count}명 중 일치하는 사람 없음). 그 사람이 삭제됐거나, 링크가 오래된 것일 수 있어요. 관리자에게 링크를 새로 받아보세요.</>
+            )}
+            {inviteInfo.reason === "savefail" && <>연결 정보를 저장하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.</>}
+            {inviteInfo.reason === "error" && <>오류가 발생했어요: {inviteInfo.msg}</>}
+          </div>
+        )}
         <div className="mt-6 flex flex-col gap-2">
           {workers.length === 0 && <Btn full kind="ghost" onClick={() => update(sampleData())}>샘플 데이터로 먼저 둘러보기</Btn>}
           <button onClick={() => goTab("admin")} style={{ marginTop: 8, fontSize: 12, color: C.onDarkSub, fontWeight: 700, textAlign: "center" }}>
@@ -2105,7 +2125,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div className="flex items-center gap-2">
                 <button onClick={(e) => {
                   e.stopPropagation();
-                  const url = `${window.location.origin}${window.location.pathname}?w=${w.id}`;
+                  const url = `${window.location.origin}/invite/${w.id}`;
                   navigator.clipboard?.writeText(url);
                   setToast(`${w.name}님 연결 링크를 복사했습니다`);
                 }} className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.blue, padding: "5px 8px", flexShrink: 0 }}>
