@@ -451,7 +451,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
   const [chk, setChk] = useState({ state: "idle" });
   const [manualSite, setManualSite] = useState("");
   const [xferOpen, setXferOpen] = useState(false);
-  const [xferForm, setXferForm] = useState({ date: "", siteId: "", toMode: "worker", toWorkerId: "", toName: "", message: "" });
+  const [xferForm, setXferForm] = useState({ date: "", siteId: "", toMode: "worker", toWorkerId: "", toName: "", startTime: "", endTime: "", message: "" });
   const worker = workers.find((w) => w.id === dev.workerId) || null;
   const today = dKey(now);
   const transfers = data.transfers || [];
@@ -460,9 +460,10 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
   const myOutgoing = worker ? transfers.filter((t) => t.fromWorkerId === worker.id) : [];
   const pendingIncoming = myIncoming.filter((t) => t.status === "pending");
   const recentOutgoing = [...myOutgoing].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5);
+  const timeLabel = (t) => (t.startTime && t.endTime ? `${t.startTime}–${t.endTime}` : "하루 전체");
 
   const openXfer = () => {
-    setXferForm({ date: today, siteId: worker?.siteId || sites[0]?.id || "", toMode: "worker", toWorkerId: "", toName: "", message: "" });
+    setXferForm({ date: today, siteId: worker?.siteId || sites[0]?.id || "", toMode: "worker", toWorkerId: "", toName: "", startTime: "", endTime: "", message: "" });
     setXferOpen(true);
   };
   const submitXfer = () => {
@@ -478,17 +479,25 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
       toWorkerName = name;
     }
     if (!xferForm.date) { setToast("날짜를 선택해 주세요"); return; }
+    if ((xferForm.startTime && !xferForm.endTime) || (!xferForm.startTime && xferForm.endTime)) {
+      setToast("시작·종료 시간을 둘 다 입력하거나, 둘 다 비워주세요"); return;
+    }
+    if (xferForm.startTime && xferForm.endTime && xferForm.startTime >= xferForm.endTime) {
+      setToast("종료 시간이 시작 시간보다 늦어야 해요"); return;
+    }
     update((d) => ({
       ...d,
       transfers: [...(d.transfers || []), {
         id: uid(), date: xferForm.date, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
         fromWorkerId: worker.id, fromWorkerName: worker.name,
         toWorkerId, toWorkerName, toRegistered: xferForm.toMode === "worker",
+        startTime: xferForm.startTime || null, endTime: xferForm.endTime || null,
         message: xferForm.message.trim(), status: "pending",
         createdAt: new Date().toISOString(), respondedAt: null, fulfilledRecordId: null,
       }],
     }));
-    setToast(`${toWorkerName}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`);
+    const tRange = xferForm.startTime && xferForm.endTime ? ` (${xferForm.startTime}–${xferForm.endTime})` : "";
+    setToast(`${toWorkerName}님에게 ${xferForm.date.slice(5)}${tRange} 근무 양도를 요청했습니다`);
     setXferOpen(false);
   };
   const respondXfer = (id, status) => {
@@ -556,6 +565,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
         outLoc: null, outDist: null, outFlag: false,
         deviceId: dev.deviceId, note: "",
         coverForId: cover?.fromWorkerId || null, coverForName: cover?.fromWorkerName || null, transferId: cover?.id || null,
+        coverStart: cover?.startTime || null, coverEnd: cover?.endTime || null,
       }],
       transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
     }));
@@ -653,7 +663,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
                 <Send size={12} /> {t.fromWorkerName}님이 근무 양도를 요청했어요
               </div>
               <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
-                {t.date.slice(5).replace("-", "/")} · {t.siteName}
+                {t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : " · 하루 전체"}
               </div>
               {t.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>“{t.message}”</div>}
               <div className="grid grid-cols-2 gap-2 mt-3">
@@ -680,7 +690,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: C.onDark }}>
                     {t.date.slice(5).replace("-", "/")} · {t.toWorkerName}님에게 요청
                   </div>
-                  <div style={{ fontSize: 11, color: C.onDarkSub, marginTop: 1 }}>{t.siteName}</div>
+                  <div style={{ fontSize: 11, color: C.onDarkSub, marginTop: 1 }}>{t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : " · 하루 전체"}</div>
                 </div>
                 <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
                   <span style={{
@@ -751,6 +761,15 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
                 </div>
               </>
             )}
+          </Field>
+          <Field label="시간대 (선택)">
+            <div className="grid grid-cols-2 gap-2">
+              <input type="time" value={xferForm.startTime} onChange={(e) => setXferForm((f) => ({ ...f, startTime: e.target.value }))} style={inputStyle} />
+              <input type="time" value={xferForm.endTime} onChange={(e) => setXferForm((f) => ({ ...f, endTime: e.target.value }))} style={inputStyle} />
+            </div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
+              비워두면 "하루 전체"로 요청돼요. 예를 들어 2시간 근무를 두 사람에게 1시간씩 나눠 부탁하고 싶으면, 이 요청은 09:00–10:00으로 보내고, 나머지 10:00–11:00은 다른 사람에게 따로 요청하면 돼요.
+            </div>
           </Field>
           <Field label="메시지 (선택)">
             <textarea value={xferForm.message} onChange={(e) => setXferForm((f) => ({ ...f, message: e.target.value }))}
@@ -998,7 +1017,7 @@ function TransferAdminView({ data, update, setToast }) {
             <div className="flex items-start justify-between gap-2">
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
-                  {t.date.slice(5).replace("-", "/")} · {t.siteName}
+                  {t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : " · 하루 전체"}
                 </div>
                 <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
                   {t.fromWorkerName} <ArrowRight size={12} /> {t.toWorkerName}
@@ -1329,16 +1348,17 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
             <div className="flex flex-col gap-0.5 mt-1.5" style={{ background: C.grout }}>
               {offDays.map((t) => {
                 const d = parseKey(t.date);
+                const partial = !!t.startTime;
                 return (
                   <Tile key={t.id} soft style={{ padding: "10px 14px" }}>
                     <div className="flex items-center justify-between">
                       <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
-                        {t.date.slice(5).replace("-", "/")} ({WD[d.getDay()]}) · {t.siteName}
+                        {t.date.slice(5).replace("-", "/")} ({WD[d.getDay()]}) · {t.siteName}{partial ? ` · ${t.startTime}–${t.endTime}` : ""}
                       </div>
-                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>휴무 · 양도</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>{partial ? "부분 양도" : "휴무 · 양도"}</span>
                     </div>
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
-                      {t.toWorkerName}님이 대신 근무{t.fulfilledRecordId ? " (완료)" : " (예정)"}
+                      {t.toWorkerName}님이 {partial ? "그 시간대만 " : ""}대신 근무{t.fulfilledRecordId ? " (완료)" : " (예정)"}
                     </div>
                   </Tile>
                 );
@@ -1363,7 +1383,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
-                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무</span>}
+                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontSize: 13, color: C.text, fontWeight: 700 }}>
