@@ -375,6 +375,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("clock");
   const [unlocked, setUnlocked] = useState(false);
+  const [revealAdmin, setRevealAdmin] = useState(false);
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const dataRef = useRef(null), devRef = useRef(null);
@@ -409,7 +410,7 @@ export default function App() {
     try { await window.storage.set(DKEY, JSON.stringify(next), false); } catch (e) {}
   }, []);
 
-  const goTab = (k) => { if (k === "clock") setUnlocked(false); setTab(k); };
+  const goTab = (k) => { if (k === "clock") { setUnlocked(false); setRevealAdmin(false); } setTab(k); };
 
   if (loading || !data || !dev) {
     return (
@@ -423,7 +424,7 @@ export default function App() {
     <div style={{ background: C.bg, fontFamily: SANS, minHeight: 720 }}>
       <div className="relative mx-auto flex flex-col" style={{ maxWidth: 560, minHeight: 720, background: C.bg, overflow: "hidden" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} />}
+          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} />}
           {tab === "admin" && (
             unlocked
               ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} />
@@ -431,8 +432,10 @@ export default function App() {
           )}
         </div>
 
-        <div className="sticky bottom-0 grid grid-cols-2 gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}` }}>
-          {[["clock", "출퇴근", Clock3], ["admin", "관리자", Lock]].map(([k, l, I]) => (
+        <div className="sticky bottom-0 grid gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}`, gridTemplateColumns: (dev.workerId && !revealAdmin) ? "1fr" : "1fr 1fr" }}>
+          {[["clock", "출퇴근", Clock3], ["admin", "관리자", Lock]]
+            .filter(([k]) => k === "clock" || !dev.workerId || revealAdmin)
+            .map(([k, l, I]) => (
             <button key={k} onClick={() => goTab(k)} className="flex flex-col items-center justify-center gap-1 py-3"
               style={{ background: tab === k ? C.bgSoft : C.bg, color: tab === k ? C.aqua : C.onDarkSub }}>
               <I size={19} />
@@ -452,7 +455,7 @@ export default function App() {
 }
 
 /* ─────────────────────────  근무자 화면  ───────────────────────── */
-function ClockTab({ data, update, dev, now, setToast, goTab }) {
+function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin }) {
   const { workers, sites, records, settings } = data;
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
@@ -619,7 +622,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab }) {
     <div className="flex flex-col items-center px-5" style={{ flex: 1, paddingTop: 40, paddingBottom: 32 }}>
       <Eyebrow dark>{now.getFullYear()}년 {now.getMonth() + 1}월 {now.getDate()}일 {WD[now.getDay()]}요일</Eyebrow>
       <div className="mt-1.5"><Num size={40} color={C.onDark} weight={800}>{pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}</Num></div>
-      <div style={{ color: C.onDark, fontSize: 17, fontWeight: 800, marginTop: 14 }}>{worker.name} 님</div>
+      <div onClick={() => {
+        const now2 = Date.now();
+        const last = window.__tapLog || [];
+        const recent = [...last.filter((t) => now2 - t < 3000), now2];
+        window.__tapLog = recent;
+        if (recent.length >= 5) { window.__tapLog = []; onRevealAdmin(); setToast("관리자 탭이 임시로 열렸습니다"); }
+      }} style={{ color: C.onDark, fontSize: 17, fontWeight: 800, marginTop: 14, cursor: "default" }}>{worker.name} 님</div>
 
       <button onClick={() => openConfirm(open ? "out" : "in")} className="relative" style={{ width: 264, height: 264, marginTop: 34 }}>
         <svg width="264" height="264" viewBox="0 0 264 264" style={{ position: "absolute", inset: 0 }}>
