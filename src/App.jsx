@@ -4,7 +4,7 @@ import {
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
-  Camera, Package, Image as ImageIcon, Folder,
+  Camera, Package, Image as ImageIcon, Folder, Search,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -1930,18 +1930,33 @@ function RecordsView({ data, update, setToast }) {
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
   const [detail, setDetail] = useState(null);
-  const [csv, setCsv] = useState(null);
   const [slip, setSlip] = useState(null);   // { workerId, ym }
   const [book, setBook] = useState(null);   // ym
+  const [q, setQ] = useState("");
 
   const [s, e] = rangeOf(mode, anchor);
   const sk = dKey(s), ek = dKey(e);
-  const inRange = useMemo(() => records.filter((r) => r.date >= sk && r.date <= ek), [records, sk, ek]);
+  const inRangeAll = useMemo(() => records.filter((r) => r.date >= sk && r.date <= ek), [records, sk, ek]);
 
-  const rows = useMemo(() => workers.map((w) => {
-    const rs = inRange.filter((r) => r.workerId === w.id);
-    return { w, ...aggregate(rs, w, settings) };
-  }).sort((a, b) => b.net - a.net), [workers, inRange, settings]);
+  const qNorm = q.trim().toLowerCase();
+  const inRange = useMemo(() => {
+    if (!qNorm) return inRangeAll;
+    return inRangeAll.filter((r) => {
+      const w = workers.find((x) => x.id === r.workerId);
+      const name = (w?.name || "").toLowerCase();
+      const site = (r.site || "").toLowerCase();
+      return name.includes(qNorm) || site.includes(qNorm);
+    });
+  }, [inRangeAll, qNorm, workers]);
+
+  const rows = useMemo(() => workers
+    .filter((w) => !qNorm || w.name.toLowerCase().includes(qNorm) || inRange.some((r) => r.workerId === w.id))
+    .map((w) => {
+      const rs = inRange.filter((r) => r.workerId === w.id);
+      return { w, ...aggregate(rs, w, settings) };
+    })
+    .filter((r) => !qNorm || r.times > 0 || r.days > 0 || workers.find((w) => w.id === r.w.id)?.name.toLowerCase().includes(qNorm))
+    .sort((a, b) => b.net - a.net), [workers, inRange, settings, qNorm]);
 
   const shift = settings.payMode === "shift";
   const tot = rows.reduce((a, r) => ({
@@ -1950,7 +1965,7 @@ function RecordsView({ data, update, setToast }) {
   }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0 });
   const maxNet = Math.max(1, ...rows.map((r) => r.net));
 
-  const makeCsv = () => {
+  const downloadCsv = () => {
     const head = shift
       ? "이름,날짜,요일,현장,출근,퇴근,근무(분),기준(분),증감(분),추가인정,기본급,추가수당,금액,현장밖퇴근,비고"
       : "이름,날짜,요일,현장,출근,퇴근,휴게(분),근무시간,시급,금액,현장밖퇴근,비고";
@@ -1966,7 +1981,15 @@ function RecordsView({ data, update, setToast }) {
         : [...common, Math.round((p.brk || 0) * 60), (p.net || 0).toFixed(2), w?.wage ?? settings.wage,
            Math.round(p.pay || 0), ...tail].join(",");
     });
-    setCsv([head, ...lines].join("\n"));
+    const csvText = "\uFEFF" + [head, ...lines].join("\n"); // BOM 포함 — 엑셀에서 한글 안 깨지게
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const fname = `근무기록_${labelOf(mode, anchor).replace(/\s/g, "")}${q.trim() ? `_${q.trim()}` : ""}.csv`;
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("엑셀 파일을 다운로드했습니다");
   };
 
   return (
@@ -2018,19 +2041,26 @@ function RecordsView({ data, update, setToast }) {
       )}
 
       <div className="px-4 mt-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Search size={15} color={C.onDarkSub} style={{ flexShrink: 0 }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 또는 현장 검색"
+            style={{ flex: 1, background: C.bgSoft, border: `1px solid ${C.lineDark}`, color: C.onDark, padding: "9px 11px", fontSize: 13.5, borderRadius: RADIUS_SM }} />
+          {q && <button onClick={() => setQ("")}><X size={16} color={C.onDarkSub} /></button>}
+        </div>
+
         <div className="flex items-center justify-between mb-2">
-          <Eyebrow dark>이름별 · 눌러서 상세 보기</Eyebrow>
+          <Eyebrow dark>{q ? `"${q}" 검색 결과 · ${rows.length}명` : "이름별 · 눌러서 상세 보기"}</Eyebrow>
           <div className="flex items-center gap-3">
-            <button onClick={() => setBook(dKey(s).slice(0, 7))} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700 }}>
-              <Receipt size={12} /> 급여대장
+            <button onClick={() => setBook(dKey(s).slice(0, 7))} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700 }} title="급여대장 화면에서 인쇄 버튼으로 PDF 저장 가능">
+              <Receipt size={12} /> 급여대장(PDF)
             </button>
-            <button onClick={makeCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
-              <FileText size={12} /> 엑셀
+            <button onClick={downloadCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
+              <FileText size={12} /> 엑셀 다운로드
             </button>
           </div>
         </div>
         {rows.length === 0 && (
-          <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요.</div></Tile>
+          <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>{q ? "검색 결과가 없습니다." : "등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요."}</div></Tile>
         )}
         <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
           {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags }) => (
@@ -2073,15 +2103,6 @@ function RecordsView({ data, update, setToast }) {
       {slip && <PayslipView data={data} update={update} {...slip} onClose={() => setSlip(null)} setToast={setToast} />}
       {book && <PayrollBook data={data} ym={book} onClose={() => setBook(null)} setToast={setToast}
         onOpenSlip={(wid) => { setBook(null); setSlip({ workerId: wid, ym: book }); }} />}
-
-      <Modal open={!!csv} onClose={() => setCsv(null)} title="엑셀용 데이터 (CSV)">
-        <textarea readOnly value={csv || ""} style={{ ...inputStyle, height: 200, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 11.5 }} />
-        <div className="mt-3">
-          <Btn full onClick={() => { navigator.clipboard?.writeText(csv || ""); setToast("복사했습니다 — 엑셀에 붙여넣으세요"); setCsv(null); }}>
-            <span className="flex items-center justify-center gap-2"><Copy size={15} /> 전체 복사</span>
-          </Btn>
-        </div>
-      </Modal>
     </div>
   );
 }
