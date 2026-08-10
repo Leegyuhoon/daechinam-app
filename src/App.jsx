@@ -586,13 +586,30 @@ export default function App() {
         <div className="sticky bottom-0 grid gap-0.5" style={{ background: C.grout, borderTop: `1px solid ${C.lineDark}`, boxShadow: "0 -6px 16px rgba(0,0,0,0.25)", gridTemplateColumns: (dev.workerId && !revealAdmin) ? "1fr" : "1fr 1fr" }}>
           {[["clock", "출퇴근", Clock3], ["admin", "관리자", Lock]]
             .filter(([k]) => k === "clock" || !dev.workerId || revealAdmin)
-            .map(([k, l, I]) => (
-            <button key={k} onClick={() => goTab(k)} className="flex flex-col items-center justify-center gap-1 py-3"
-              style={{ background: tab === k ? C.bgSoft : C.bg, color: tab === k ? C.aqua : C.onDarkSub }}>
-              <I size={19} />
-              <span style={{ fontSize: 11, fontWeight: 700 }}>{l}</span>
-            </button>
-          ))}
+            .map(([k, l, I]) => {
+              let badge = 0;
+              if (k === "admin") {
+                const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
+                badge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length
+                  + (data.supplyRequests || []).filter((r) => r.status === "requested").length;
+              }
+              return (
+                <button key={k} onClick={() => goTab(k)} className="relative flex flex-col items-center justify-center gap-1 py-3"
+                  style={{ background: tab === k ? C.bgSoft : C.bg, color: tab === k ? C.aqua : C.onDarkSub }}>
+                  <div className="relative">
+                    <I size={19} />
+                    {badge > 0 && (
+                      <span style={{
+                        position: "absolute", top: -4, right: -8, minWidth: 15, height: 15, borderRadius: 999,
+                        background: C.red, color: "#fff", fontSize: 9, fontWeight: 900,
+                        display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px",
+                      }}>{badge > 9 ? "9+" : badge}</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700 }}>{l}</span>
+                </button>
+              );
+            })}
         </div>
 
         {toast && (
@@ -1367,19 +1384,40 @@ function AdminGate({ data, update, setToast, onPass }) {
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
 function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   const [view, setView] = useState("records");
+  const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
+
+  const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
+  const photoBadge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length;
+  const supplyBadge = (data.supplyRequests || []).filter((r) => r.status === "requested").length;
+
+  const goView = (k) => {
+    setView(k);
+    if (k === "photos") { localStorage.setItem("cleanwork:lastSeenPhotos", new Date().toISOString()); setSeenTick((t) => t + 1); }
+  };
+
   const tabs = [
-    ["records", "근무 기록", ClipboardList], ["transfers", "양도", Repeat],
-    ["photos", "사진", Camera], ["supplies", "용품", Package],
-    ["notices", "공지", Bell], ["settings", "설정", SettingsIcon],
+    ["records", "근무 기록", ClipboardList, 0],
+    ["transfers", "양도", Repeat, 0],
+    ["photos", "사진", Camera, photoBadge],
+    ["supplies", "용품", Package, supplyBadge],
+    ["notices", "공지", Bell, 0],
+    ["settings", "설정", SettingsIcon, 0],
   ];
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       <div className="flex items-center px-4 pt-4 gap-2">
         <div className="flex gap-0.5" style={{ background: C.grout, flex: 1, overflowX: "auto" }}>
-          {tabs.map(([k, l, I]) => (
-            <button key={k} onClick={() => setView(k)} className="flex items-center justify-center gap-1.5 py-2.5 px-3"
+          {tabs.map(([k, l, I, badge]) => (
+            <button key={k} onClick={() => goView(k)} className="relative flex items-center justify-center gap-1.5 py-2.5 px-3"
               style={{ background: view === k ? C.aqua : C.bgSoft, color: view === k ? C.bg : C.onDarkSub, fontSize: 12.5, fontWeight: 800, flexShrink: 0, whiteSpace: "nowrap" }}>
               <I size={13} />{l}
+              {badge > 0 && (
+                <span style={{
+                  position: "absolute", top: 3, right: 3, minWidth: 15, height: 15, borderRadius: 999,
+                  background: C.red, color: "#fff", fontSize: 9, fontWeight: 900,
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px",
+                }}>{badge > 9 ? "9+" : badge}</span>
+              )}
             </button>
           ))}
         </div>
