@@ -1884,6 +1884,9 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [bind, setBind] = useState(null);
   const [reset, setReset] = useState(false);
   const [pinEdit, setPinEdit] = useState(null);
+  const [addrQ, setAddrQ] = useState("");
+  const [addrState, setAddrState] = useState("idle"); // idle | loading | done | fail
+  const [addrResults, setAddrResults] = useState([]);
 
   const bound = workers.find((w) => w.id === dev.workerId);
   const noCoord = sites.filter((s) => s.lat == null).length;
@@ -1924,6 +1927,25 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     const v = await getLoc();
     if (v) { setSEdit((p) => ({ ...p, lat: v.lat, lng: v.lng, acc: v.acc })); setCap("ok"); }
     else setCap("fail");
+  };
+  const searchAddr = async () => {
+    if (!addrQ.trim()) return;
+    setAddrState("loading"); setAddrResults([]);
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=kr&accept-language=ko&limit=5&q=${encodeURIComponent(addrQ.trim())}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const list = await res.json();
+      if (!list || list.length === 0) { setAddrState("fail"); return; }
+      setAddrResults(list);
+      setAddrState("done");
+    } catch (e) {
+      setAddrState("fail");
+    }
+  };
+  const pickAddr = (item) => {
+    setSEdit((p) => ({ ...p, lat: Number(item.lat).toFixed(6), lng: Number(item.lon).toFixed(6), acc: null }));
+    setCap("ok");
+    setAddrResults([]); setAddrQ(item.display_name); setAddrState("idle");
   };
 
   const doBind = (workerId) => {
@@ -1978,11 +2000,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
       {/* 현장 */}
       <Sec title="현장 · 좌표와 반경" right={
-        <button onClick={() => { setCap("idle"); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius }); }}
+        <button onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius }); }}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {sites.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>현장을 추가하고, 현장에 도착해서 좌표를 등록하세요.</div></Tile>}
         {sites.map((s) => (
-          <Tile key={s.id} onClick={() => { setCap("idle"); setSEdit({ ...s }); }} style={{ padding: "12px 14px" }}>
+          <Tile key={s.id} onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ ...s }); }} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between gap-3">
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{s.name}</div>
@@ -2270,7 +2292,38 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
             <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
               <Eyebrow>현장 좌표</Eyebrow>
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 6, marginBottom: 8, lineHeight: 1.6 }}>
+                주소로 검색하거나, 현장에 도착해서 GPS로 등록하세요.
+              </div>
+              <div className="flex gap-1.5">
+                <input value={addrQ} onChange={(e) => setAddrQ(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchAddr(); }}
+                  placeholder="예: 서울 강남구 테헤란로 123" style={{ ...inputStyle, background: C.tile, flex: 1 }} />
+                <button onClick={searchAddr} disabled={addrState === "loading"}
+                  style={{ background: C.aquaDeep, color: "#fff", padding: "0 16px", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>
+                  {addrState === "loading" ? <Loader2 size={15} className="animate-spin" /> : "검색"}
+                </button>
+              </div>
+              {addrState === "fail" && (
+                <div style={{ color: C.amber, fontSize: 11.5, marginTop: 6, fontWeight: 700 }}>
+                  주소를 찾지 못했습니다. 조금 더 정확하게(도로명+건물번호) 입력하거나 아래 GPS 방식을 이용하세요.
+                </div>
+              )}
+              {addrResults.length > 0 && (
+                <div className="mt-2 flex flex-col gap-0.5">
+                  {addrResults.map((item, i) => (
+                    <button key={i} onClick={() => pickAddr(item)} className="text-left"
+                      style={{ background: C.tile, border: `1px solid ${C.line}`, padding: "9px 10px", fontSize: 12.5, color: C.text, lineHeight: 1.4 }}>
+                      {item.display_name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ height: 1, background: C.line, margin: "12px 0" }} />
+
+              <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
                 현장에 도착해서 아래 버튼을 누르면 지금 서 있는 자리가 현장 중심으로 등록됩니다. 건물 정문 앞이 가장 정확합니다.
               </div>
               <div className="mt-3">
@@ -2282,7 +2335,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 </Btn>
               </div>
               {cap === "fail" && <div style={{ color: C.amber, fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>위치를 가져오지 못했습니다. 실외에서 다시 시도하거나 아래에 직접 입력하세요.</div>}
-              {cap === "ok" && <div style={{ color: C.aquaDeep, fontSize: 11.5, marginTop: 8, fontWeight: 700, fontFamily: MONO }}>등록됨 · 오차 ±{sEdit.acc}m</div>}
+              {cap === "ok" && <div style={{ color: C.aquaDeep, fontSize: 11.5, marginTop: 8, fontWeight: 700, fontFamily: MONO }}>등록됨{sEdit.acc ? ` · 오차 ±${sEdit.acc}m` : ""}</div>}
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <Field label="위도"><input value={sEdit.lat ?? ""} onChange={(e) => setSEdit({ ...sEdit, lat: e.target.value })} placeholder="37.4979" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
                 <Field label="경도"><input value={sEdit.lng ?? ""} onChange={(e) => setSEdit({ ...sEdit, lng: e.target.value })} placeholder="127.0276" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
