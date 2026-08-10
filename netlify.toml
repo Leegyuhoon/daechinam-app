@@ -3,6 +3,10 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[[edge_functions]]
+  function = "invite-og"
+  path = "/invite/*"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
