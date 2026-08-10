@@ -30,33 +30,11 @@
     <div id="app-splash" style="
       position:fixed; inset:0; z-index:99997; overflow:hidden;
       background:#1D232A;
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
       transition:opacity 0.5s ease, visibility 0.5s ease;
     ">
-      <div style="
-        position:absolute; left:50%; top:44%; width:560px; height:560px;
-        transform:translate(-50%,-50%);
-        background:radial-gradient(circle, rgba(235,158,24,0.20) 0%, rgba(235,158,24,0.05) 42%, rgba(29,35,42,0) 70%);
-      "></div>
-
-      <div style="position:relative; transform:rotate(-7deg); display:flex; flex-direction:column; align-items:center;">
-        <img src="/icons/wordmark-white.png" alt="DAECHINAM" style="
-          width:66vw; max-width:360px;
-          filter:
-            drop-shadow(0 3px 0 rgba(0,0,0,0.55))
-            drop-shadow(0 6px 0 rgba(0,0,0,0.4))
-            drop-shadow(0 20px 32px rgba(0,0,0,0.5));
-        " />
-        <div style="margin-top:22px; display:flex; align-items:center; gap:10px;">
-          <div style="width:22px; height:1px; background:rgba(235,158,24,0.6);"></div>
-          <div style="
-            color:#EB9E18;
-            font-family:'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif;
-            font-size:13px; font-weight:800; letter-spacing:0.3em;
-          ">출퇴근 관리</div>
-          <div style="width:22px; height:1px; background:rgba(235,158,24,0.6);"></div>
-        </div>
-      </div>
+      <img src="/icons/splash-bg.jpg" alt="대신치워주는남자" style="
+        position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+      " />
     </div>
 
     <!-- 카카오톡 인앱브라우저 감지 → 안내 오버레이 -->
