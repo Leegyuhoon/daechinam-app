@@ -392,6 +392,34 @@ export default function App() {
         v.deviceId = uid() + uid();
         try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
       }
+
+      // 초대 링크(?w=근무자ID)로 들어온 경우 자동으로 이 기기를 그 근무자와 연결
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const inviteId = params.get("w");
+        if (inviteId) {
+          const w = (d.workers || []).find((x) => x.id === inviteId);
+          if (w && v.workerId !== w.id) {
+            const at = new Date().toISOString();
+            v = { ...v, workerId: w.id, boundAt: at };
+            try { await window.storage.set(DKEY, JSON.stringify(v), false); } catch (e) {}
+            const prev = d.bindings[w.id];
+            const changed = prev && prev.deviceId !== v.deviceId;
+            d = {
+              ...d,
+              bindings: { ...d.bindings, [w.id]: { deviceId: v.deviceId, at } },
+              bindLog: changed
+                ? [{ workerId: w.id, at, from: prev.deviceId.slice(0, 6), to: v.deviceId.slice(0, 6) }, ...d.bindLog].slice(0, 30)
+                : d.bindLog,
+            };
+            try { await window.storage.set(KEY, JSON.stringify(d), true); } catch (e) {}
+          }
+          const url = new URL(window.location.href);
+          url.searchParams.delete("w");
+          window.history.replaceState({}, "", url.pathname + url.search);
+        }
+      } catch (e) {}
+
       dataRef.current = d; devRef.current = v;
       setData(d); setDev(v); setLoading(false);
     })();
@@ -602,11 +630,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin }) {
           이 휴대폰을 쓸 근무자가<br />아직 등록되지 않았습니다.
         </div>
         <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 12, lineHeight: 1.6 }}>
-          관리자가 PIN을 입력하고 이 기기에 이름을 한 번 연결하면 출근 버튼이 열립니다. 연결된 뒤에는 그 이름으로만 기록됩니다.
+          관리자에게 요청해서 본인 이름으로 된 연결 링크를 받아, 그 링크로 다시 접속해 주세요. 링크를 열면 자동으로 연결됩니다.
         </div>
         <div className="mt-6 flex flex-col gap-2">
-          <Btn full onClick={() => goTab("admin")}>관리자 탭 열기</Btn>
           {workers.length === 0 && <Btn full kind="ghost" onClick={() => update(sampleData())}>샘플 데이터로 먼저 둘러보기</Btn>}
+          <button onClick={() => goTab("admin")} style={{ marginTop: 8, fontSize: 12, color: C.onDarkSub, fontWeight: 700, textAlign: "center" }}>
+            관리자이신가요? 관리자 탭 열기
+          </button>
         </div>
       </div>
     );
@@ -2061,7 +2091,17 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
                 </div>
               </div>
-              <Pencil size={14} color={C.sub} />
+              <div className="flex items-center gap-2">
+                <button onClick={(e) => {
+                  e.stopPropagation();
+                  const url = `${window.location.origin}${window.location.pathname}?w=${w.id}`;
+                  navigator.clipboard?.writeText(url);
+                  setToast(`${w.name}님 연결 링크를 복사했습니다`);
+                }} className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.blue, padding: "5px 8px", flexShrink: 0 }}>
+                  <Copy size={11} /> 링크
+                </button>
+                <Pencil size={14} color={C.sub} />
+              </div>
             </div>
           </Tile>
         ))}
