@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import {
   MapPin, ChevronLeft, ChevronRight, X, Plus, Trash2, Check, AlertTriangle,
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
@@ -103,6 +105,37 @@ async function uploadVideo(file) {
   return data.id;
 }
 const photoUrl = (id) => `/api/photo?id=${id}`;
+
+/* 화면에 보이지 않는 HTML 조각을 즉시 PDF 파일로 캡처·다운로드 */
+async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
+  const holder = document.createElement("div");
+  holder.style.cssText = `position:fixed; left:-9999px; top:0; width:${widthPx}px; background:#fff;`;
+  holder.innerHTML = html;
+  document.body.appendChild(holder);
+  try {
+    await new Promise((r) => setTimeout(r, 60)); // 레이아웃 안정화 대기
+    const canvas = await html2canvas(holder, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    let heightLeft = imgH;
+    let y = 0;
+    pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH);
+    heightLeft -= pageH;
+    while (heightLeft > 0) {
+      y = heightLeft - imgH;
+      pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH);
+      heightLeft -= pageH;
+    }
+    pdf.save(filename);
+  } finally {
+    document.body.removeChild(holder);
+  }
+}
 
 /* ─────────────────────────  유틸  ───────────────────────── */
 const pad = (n) => String(n).padStart(2, "0");
@@ -1992,6 +2025,56 @@ function RecordsView({ data, update, setToast }) {
     setToast("엑셀 파일을 다운로드했습니다");
   };
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const downloadPayrollPdf = async () => {
+    setPdfBusy(true);
+    try {
+      const company = settings.companyName || "";
+      const rowsHtml = rows.map(({ w, net, days, times, pay, blocks }) => `
+        <tr>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${shift ? `${times}타임` : `${days}일`}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net)}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${blocks || "—"}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${money(pay)}원</td>
+        </tr>`).join("");
+      const html = `
+        <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
+          ${company ? `<div style="font-size:15px; font-weight:800;">${company}</div>` : ""}
+          <div style="font-size:24px; font-weight:900; margin-top:6px;">${labelOf(mode, anchor)} 급여대장${q.trim() ? ` · "${q.trim()}" 검색결과` : ""}</div>
+          <div style="font-size:12px; color:#71767D; margin-top:4px;">발행일 ${dKey(new Date())}</div>
+          <table style="width:100%; border-collapse:collapse; margin-top:20px; font-size:13px;">
+            <thead>
+              <tr style="border-bottom:2px solid #1D232A;">
+                <th style="padding:8px 6px; text-align:left;">이름</th>
+                <th style="padding:8px 6px; text-align:right;">${shift ? "타임" : "일수"}</th>
+                <th style="padding:8px 6px; text-align:right;">근무시간</th>
+                <th style="padding:8px 6px; text-align:right;">추가</th>
+                <th style="padding:8px 6px; text-align:right;">지급액</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+            <tfoot>
+              <tr style="border-top:2px solid #1D232A;">
+                <td style="padding:10px 6px; font-weight:900;">합계 (${rows.length}명)</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${shift ? `${tot.times}타임` : `${tot.days}일`}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${hmc(tot.net)}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${tot.blocks || "—"}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900; color:#D8503F;">${money(tot.pay)}원</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>`;
+      const fname = `급여대장_${labelOf(mode, anchor).replace(/\s/g, "")}${q.trim() ? `_${q.trim()}` : ""}.pdf`;
+      await downloadHtmlAsPdf(html, fname);
+      setToast("PDF를 다운로드했습니다");
+    } catch (e) {
+      setToast("PDF 생성에 실패했어요");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <div className="pb-6">
       <div className="px-4 pt-5 pb-4">
@@ -2051,8 +2134,8 @@ function RecordsView({ data, update, setToast }) {
         <div className="flex items-center justify-between mb-2">
           <Eyebrow dark>{q ? `"${q}" 검색 결과 · ${rows.length}명` : "이름별 · 눌러서 상세 보기"}</Eyebrow>
           <div className="flex items-center gap-3">
-            <button onClick={() => setBook(dKey(s).slice(0, 7))} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700 }} title="급여대장 화면에서 인쇄 버튼으로 PDF 저장 가능">
-              <Receipt size={12} /> 급여대장(PDF)
+            <button onClick={downloadPayrollPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 11.5, fontWeight: 700, opacity: pdfBusy ? 0.5 : 1 }}>
+              <Receipt size={12} /> {pdfBusy ? "생성 중…" : "급여대장(PDF)"}
             </button>
             <button onClick={downloadCsv} className="flex items-center gap-1" style={{ color: C.onDarkSub, fontSize: 11.5, fontWeight: 700 }}>
               <FileText size={12} /> 엑셀 다운로드
@@ -2127,6 +2210,70 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
     .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date >= sk && t.date <= ek)
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  const [exportBusy, setExportBusy] = useState(false);
+  const downloadWorkerCsv = () => {
+    const head = agg.shift
+      ? "이름,날짜,요일,현장,출근,퇴근,근무(분),추가,금액"
+      : "이름,날짜,요일,현장,출근,퇴근,근무시간,금액";
+    const lines = recs.map((r) => {
+      const p = calcPay(r, worker, settings);
+      const d = parseKey(r.date);
+      const common = [worker.name, r.date, WD[d.getDay()], r.site || "", tstr(r.clockIn), r.clockOut ? tstr(r.clockOut) : ""];
+      return agg.shift
+        ? [...common, Math.round(p.net * 60), p.blocks || 0, Math.round(p.pay || 0)].join(",")
+        : [...common, (p.net || 0).toFixed(2), Math.round(p.pay || 0)].join(",");
+    });
+    const csvText = "\uFEFF" + [head, ...lines].join("\n");
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${worker.name}_${labelOf(mode, anchor).replace(/\s/g, "")}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("엑셀 파일을 다운로드했습니다");
+  };
+  const downloadWorkerPdf = async () => {
+    setExportBusy(true);
+    try {
+      const rowsHtml = recs.map((r) => {
+        const p = calcPay(r, worker, settings);
+        const d = parseKey(r.date);
+        return `<tr>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA;">${r.date.slice(5)}(${WD[d.getDay()]})</td>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA;">${r.site || ""}</td>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${tstr(r.clockIn)}–${r.clockOut ? tstr(r.clockOut) : "—"}</td>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${p.open ? "—" : hmc(p.net)}</td>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${p.open ? "—" : `${money(p.pay)}원`}</td>
+        </tr>`;
+      }).join("");
+      const html = `
+        <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
+          <div style="font-size:22px; font-weight:900;">${worker.name} · ${labelOf(mode, anchor)} 근무 기록</div>
+          <div style="font-size:12px; color:#71767D; margin-top:4px;">발행일 ${dKey(new Date())}</div>
+          <div style="display:flex; gap:24px; margin-top:16px; font-size:13px;">
+            <div>총 근무시간 <b>${hmc(agg.net)}</b></div>
+            <div>지급 합계 <b style="color:#D8503F;">${money(agg.pay)}원</b></div>
+          </div>
+          <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:12.5px;">
+            <thead><tr style="border-bottom:2px solid #1D232A;">
+              <th style="padding:7px 6px; text-align:left;">날짜</th>
+              <th style="padding:7px 6px; text-align:left;">현장</th>
+              <th style="padding:7px 6px; text-align:right;">출퇴근</th>
+              <th style="padding:7px 6px; text-align:right;">근무</th>
+              <th style="padding:7px 6px; text-align:right;">금액</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>`;
+      await downloadHtmlAsPdf(html, `${worker.name}_${labelOf(mode, anchor).replace(/\s/g, "")}.pdf`);
+      setToast("PDF를 다운로드했습니다");
+    } catch (e) {
+      setToast("PDF 생성에 실패했어요");
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
   const addManual = () => setEdit({
     id: null, workerId, date: dKey(new Date()),
     siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
@@ -2172,6 +2319,14 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
         <button onClick={addManual} className="flex items-center justify-center" title="기록 직접 추가"
           style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36 }}>
           <Plus size={16} />
+        </button>
+        <button onClick={downloadWorkerCsv} className="flex items-center justify-center" title="엑셀 다운로드"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0 }}>
+          <FileText size={15} />
+        </button>
+        <button onClick={downloadWorkerPdf} disabled={exportBusy} className="flex items-center justify-center" title="PDF 다운로드"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0, opacity: exportBusy ? 0.5 : 1 }}>
+          <Printer size={15} />
         </button>
         <button onClick={onPayslip} className="flex items-center gap-1 px-2.5 py-2"
           style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 36 }}>
