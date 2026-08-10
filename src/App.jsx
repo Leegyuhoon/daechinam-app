@@ -88,6 +88,20 @@ async function uploadPhoto(file) {
   const data = await res.json();
   return data.id;
 }
+async function uploadVideo(file) {
+  const res = await fetch("/api/photo", {
+    method: "POST",
+    headers: { "Content-Type": file.type || "video/mp4" },
+    body: file,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    if (res.status === 413) throw new Error(`영상 용량이 너무 커요 (최대 ${err.limitMB || 25}MB). 더 짧게 촬영해 주세요.`);
+    throw new Error("upload failed");
+  }
+  const data = await res.json();
+  return data.id;
+}
 const photoUrl = (id) => `/api/photo?id=${id}`;
 
 /* ─────────────────────────  유틸  ───────────────────────── */
@@ -604,10 +618,10 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const transfers = data.transfers || [];
 
   const [photoOpen, setPhotoOpen] = useState(false);
-  const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "" });
+  const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
   const openPhoto = () => {
-    setPhotoForm({ siteId: worker?.siteId || sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "" });
+    setPhotoForm({ siteId: worker?.siteId || sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
     setPhotoOpen(true);
   };
   const pickPhotoFile = (f) => {
@@ -615,24 +629,24 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     setPhotoForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
   };
   const submitPhoto = async () => {
-    if (!photoForm.file) { setToast("사진을 먼저 촬영해 주세요"); return; }
+    if (!photoForm.file) { setToast(photoForm.kind === "video" ? "영상을 먼저 촬영해 주세요" : "사진을 먼저 촬영해 주세요"); return; }
     const s = sites.find((x) => x.id === photoForm.siteId);
     setPhotoBusy(true);
     try {
-      const photoId = await uploadPhoto(photoForm.file);
+      const mediaId = photoForm.kind === "video" ? await uploadVideo(photoForm.file) : await uploadPhoto(photoForm.file);
       update((d) => ({
         ...d,
         siteReports: [...(d.siteReports || []), {
           id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           workerId: worker.id, workerName: worker.name,
-          category: photoForm.category, note: photoForm.note.trim(), photoId,
+          category: photoForm.category, note: photoForm.note.trim(), photoId: mediaId, kind: photoForm.kind,
           createdAt: new Date().toISOString(),
         }],
       }));
-      setToast("사진이 등록됐습니다");
+      setToast(photoForm.kind === "video" ? "영상이 등록됐습니다" : "사진이 등록됐습니다");
       setPhotoOpen(false);
     } catch (e) {
-      setToast("업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
+      setToast(e.message || "업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
     } finally {
       setPhotoBusy(false);
     }
@@ -992,11 +1006,22 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
       {/* 현장 사진 등록 작성 */}
       <Modal open={photoOpen} onClose={() => !photoBusy && setPhotoOpen(false)}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 사진 등록</div>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 {photoForm.kind === "video" ? "영상" : "사진"} 등록</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-          시설 훼손, 작업 전후 등을 사진으로 남기면 관리자가 현장·날짜별로 확인할 수 있어요.
+          시설 훼손, 작업 전후 등을 기록으로 남기면 관리자가 현장·날짜별로 확인할 수 있어요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
+          <Field label="유형">
+            <div className="grid grid-cols-2 gap-1.5">
+              {[["photo", "사진", Camera], ["video", "동영상", ImageIcon]].map(([k, l, Icon]) => (
+                <button key={k} onClick={() => setPhotoForm((f) => ({ ...f, kind: k, file: null, preview: "" }))}
+                  className="flex items-center justify-center gap-1.5"
+                  style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: photoForm.kind === k ? C.aquaDeep : C.tileSoft, color: photoForm.kind === k ? "#fff" : C.sub }}>
+                  <Icon size={13} />{l}
+                </button>
+              ))}
+            </div>
+          </Field>
           {sites.length > 1 && (
             <Field label="현장">
               <select value={photoForm.siteId} onChange={(e) => setPhotoForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
@@ -1012,10 +1037,14 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               ))}
             </div>
           </Field>
-          <Field label="사진">
+          <Field label={photoForm.kind === "video" ? "동영상" : "사진"}>
             {photoForm.preview ? (
               <div className="relative">
-                <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                {photoForm.kind === "video" ? (
+                  <video src={photoForm.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+                ) : (
+                  <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                )}
                 <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
                   style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
                   <X size={14} color="#fff" />
@@ -1027,10 +1056,17 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                 border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
               }}>
                 <Camera size={22} color={C.sub} />
-                <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 사진 촬영</div>
-                <input type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>
+                  눌러서 {photoForm.kind === "video" ? "영상 촬영" : "사진 촬영"}
+                </div>
+                <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} capture="environment" style={{ display: "none" }}
                   onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
               </label>
+            )}
+            {photoForm.kind === "video" && (
+              <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
+                가능하면 15초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸리거나 실패할 수 있어요 (최대 25MB).
+              </div>
             )}
           </Field>
           <Field label="메모 (선택)">
@@ -1391,7 +1427,7 @@ function PhotoAdminView({ data, update, setToast }) {
                   <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{g.name}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}장</span>
+                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
                   <ChevronRight size={16} color={C.sub} />
                 </div>
               </div>
@@ -1424,7 +1460,7 @@ function PhotoAdminView({ data, update, setToast }) {
               <div className="flex items-center justify-between">
                 <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{g.name}</div>
                 <div className="flex items-center gap-2">
-                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}장</span>
+                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
                   <ChevronRight size={16} color={C.sub} />
                 </div>
               </div>
@@ -1449,8 +1485,22 @@ function PhotoAdminView({ data, update, setToast }) {
       <div className="grid grid-cols-2 gap-2">
         {items.map((r) => (
           <div key={r.id} onClick={() => setViewer(r)} className="pressable" style={{ cursor: "pointer" }}>
-            <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1" }}>
-              <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1", background: "#000" }}>
+              {r.kind === "video" ? (
+                <>
+                  <video src={photoUrl(r.photoId)} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <div style={{
+                    position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "rgba(0,0,0,0.25)",
+                  }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <div style={{ width: 0, height: 0, borderTop: "7px solid transparent", borderBottom: "7px solid transparent", borderLeft: "11px solid #fff", marginLeft: 3 }} />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              )}
               <span style={{
                 position: "absolute", top: 6, left: 6, fontSize: 9.5, fontWeight: 800, color: "#fff",
                 background: catColor[r.category] || C.sub, padding: "2px 6px",
@@ -1464,7 +1514,11 @@ function PhotoAdminView({ data, update, setToast }) {
       <Modal open={!!viewer} onClose={() => setViewer(null)}>
         {viewer && (
           <>
-            <img src={photoUrl(viewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+            {viewer.kind === "video" ? (
+              <video src={photoUrl(viewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+            ) : (
+              <img src={photoUrl(viewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+            )}
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: catColor[viewer.category] || C.sub, padding: "3px 8px" }}>{viewer.category}</span>
               <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.date} · {viewer.workerName}</span>
@@ -1472,7 +1526,7 @@ function PhotoAdminView({ data, update, setToast }) {
             {viewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{viewer.note}</div>}
             <button onClick={() => {
               update((d) => ({ ...d, siteReports: (d.siteReports || []).filter((x) => x.id !== viewer.id) }));
-              setViewer(null); setToast("사진을 삭제했습니다");
+              setViewer(null); setToast("삭제했습니다");
             }} className="flex items-center gap-1 mt-4" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700 }}>
               <Trash2 size={14} /> 이 사진 삭제
             </button>
