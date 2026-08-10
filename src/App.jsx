@@ -17,7 +17,7 @@ const C = {
   line: "#E6E2DB", lineDark: "#343C45",
 };
 const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
-const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
+const MONO = SANS; // 숫자 전용 폰트 — 모노스페이스 대신 한글과 어울리는 세련된 산세리프로 통일 (숫자 정렬은 tabular-nums로 처리)
 
 /* 입체감 토큰 */
 const RADIUS = 12;
@@ -355,8 +355,8 @@ function sampleData() {
 const Eyebrow = ({ children, dark }) => (
   <div style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: dark ? C.onDarkSub : C.sub }}>{children}</div>
 );
-const Num = ({ children, size = 20, color = C.text, weight = 800 }) => (
-  <span style={{ fontFamily: MONO, fontSize: size, fontWeight: weight, color, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>{children}</span>
+const Num = ({ children, size = 22, color = C.text, weight = 900 }) => (
+  <span style={{ fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: size, fontWeight: weight, color, letterSpacing: "-0.015em" }}>{children}</span>
 );
 function Tile({ children, style, onClick, soft }) {
   return (
@@ -809,9 +809,9 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
       <div style={{ marginTop: 26, minHeight: 22, textAlign: "center" }}>
         {open ? (
-          <div style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO }}>{tstr(open.clockIn)} 출근 완료</div>
+          <div style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{tstr(open.clockIn)} 출근 완료</div>
         ) : doneToday ? (
-          <div className="flex items-center gap-1.5" style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO }}>
+          <div className="flex items-center gap-1.5" style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
             <Check size={14} color={C.aqua} /> 오늘 {tstr(doneToday.clockIn)} – {tstr(doneToday.clockOut)} 완료
           </div>
         ) : (
@@ -986,7 +986,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             {chk.state === "inside" && (
               <>
                 <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{chk.site.name} 현장 안</div>
-                <div style={{ fontSize: 12, color: C.sub, marginTop: 2, fontFamily: MONO }}>중심에서 {dist(chk.d)} · 허용 반경 {chk.site.radius}m</div>
+                <div style={{ fontSize: 13.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>중심에서 {dist(chk.d)} · 허용 반경 {chk.site.radius}m</div>
               </>
             )}
             {chk.state === "outside" && (
@@ -1013,7 +1013,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               </div>
             )}
             {chk.state === "outdone" && (
-              <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.55, fontFamily: MONO }}>
+              <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.55, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                 {chk.d == null ? "현장 좌표 없음" : `${chk.site.name}에서 ${dist(chk.d)}`}
                 {chk.outside && <span style={{ color: C.amber, fontWeight: 800 }}> · 현장 밖 퇴근으로 표시됩니다</span>}
               </div>
@@ -1106,7 +1106,7 @@ function AdminGate({ data, update, setToast, onPass }) {
         {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((k, i) => (
           <button key={i} disabled={k === ""} onClick={() => (k === "del" ? setPin(pin.slice(0, -1)) : k && push(k))}
             className="flex items-center justify-center"
-            style={{ background: k === "" ? C.bg : C.bgSoft, height: 62, color: C.onDark, fontFamily: MONO, fontSize: 22, fontWeight: 700 }}>
+            style={{ background: k === "" ? C.bg : C.bgSoft, height: 62, color: C.onDark, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 700 }}>
             {k === "del" ? <Delete size={20} color={C.onDarkSub} /> : k}
           </button>
         ))}
@@ -1298,7 +1298,7 @@ function NoticeAdminView({ data, update, setToast }) {
                     {!n.active && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>꺼짐</span>}
                   </div>
                   {n.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>{n.message}</div>}
-                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, fontFamily: MONO }}>
+                  <div style={{ fontSize: 13, color: C.sub, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {n.startDate.slice(5)} ~ {n.endDate.slice(5)} · {n.audience === "all" ? "전체 근무자" : `${(n.workerIds || []).length}명 지정`}
                   </div>
                 </div>
@@ -1528,8 +1528,8 @@ function RecordsView({ data, update, setToast }) {
                 <div style={{ flex: 1, height: 5, background: C.line }}>
                   <div style={{ width: `${(net / maxNet) * 100}%`, height: "100%", background: C.aquaDeep }} />
                 </div>
-                {blocks > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.blue, fontFamily: MONO }}>추가 {blocks}회</span>}
-                {shortMin > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.red, fontFamily: MONO }}>−{minStr(shortMin)}</span>}
+                {blocks > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>추가 {blocks}회</span>}
+                {shortMin > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.red, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>−{minStr(shortMin)}</span>}
               </div>
             </Tile>
           ))}
@@ -1546,7 +1546,7 @@ function RecordsView({ data, update, setToast }) {
         onOpenSlip={(wid) => { setBook(null); setSlip({ workerId: wid, ym: book }); }} />}
 
       <Modal open={!!csv} onClose={() => setCsv(null)} title="엑셀용 데이터 (CSV)">
-        <textarea readOnly value={csv || ""} style={{ ...inputStyle, height: 200, fontFamily: MONO, fontSize: 11.5 }} />
+        <textarea readOnly value={csv || ""} style={{ ...inputStyle, height: 200, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 11.5 }} />
         <div className="mt-3">
           <Btn full onClick={() => { navigator.clipboard?.writeText(csv || ""); setToast("복사했습니다 — 엑셀에 붙여넣으세요"); setCsv(null); }}>
             <span className="flex items-center justify-center gap-2"><Copy size={15} /> 전체 복사</span>
@@ -1661,7 +1661,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
         }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
           <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(agg.pay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
-          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, marginTop: 5, fontFamily: MONO }}>
+          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
             {agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
               : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
@@ -1678,7 +1678,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                 </div>
               ))}
             </div>
-            <div className="flex justify-between mt-1.5" style={{ color: C.onDarkSub, fontSize: 10, fontFamily: MONO }}>
+            <div className="flex justify-between mt-1.5" style={{ color: C.onDarkSub, fontSize: 10, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
               <span>{dayList[0][0].slice(5)}</span><span>{dayList[dayList.length - 1][0].slice(5)}</span>
             </div>
           </div>
@@ -1728,11 +1728,11 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
-                    <div style={{ marginTop: 4, fontFamily: MONO, fontSize: 13, color: C.text, fontWeight: 700 }}>
+                    <div style={{ marginTop: 4, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.text, fontWeight: 700 }}>
                       {tstr(r.clockIn)} – {r.clockOut ? tstr(r.clockOut) : "근무 중"}
                       {p.brk > 0 && <span style={{ color: C.sub, fontWeight: 600 }}> · 휴게 {Math.round(p.brk * 60)}분</span>}
                     </div>
-                    <div className="flex items-center gap-1 mt-1" style={{ color: C.sub, fontSize: 11.5, fontFamily: MONO }}>
+                    <div className="flex items-center gap-1 mt-1" style={{ color: C.sub, fontSize: 13, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                       <Building2 size={11} />{r.site || "현장 미지정"}
                       {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4 }} />{dist(r.inDist)}</>}
                     </div>
@@ -1930,7 +1930,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
 
       <div className="flex items-baseline justify-between">
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></div>
-        <div style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>
+        <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
           {agg.shift
             ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
             : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
@@ -2047,7 +2047,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           const shortish = q.shortMin >= data.settings.shortThreshold;
           return (
             <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ width: 58, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: C.text }}>
+              <span style={{ width: 58, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 700, color: C.text }}>
                 {r.date.slice(5).replace("-", ".")}<span style={{ color: d.getDay() === 0 ? C.coral : C.sub }}>({WD[d.getDay()]})</span>
               </span>
               <span style={{ flex: 1, fontSize: 11.5, color: C.sub, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", paddingRight: 6 }}>
@@ -2055,12 +2055,12 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
                 {q.holiday && <span style={{ color: C.coral, fontWeight: 800 }}> · 공휴일×{agg.holidayMultiplier}</span>}
                 {r.coverForName && <span style={{ color: C.blue, fontWeight: 800 }}> · {r.coverForName}님 대신</span>}
               </span>
-              <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
-              <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
-              <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
+              <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
+              <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
+              <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
                 {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
               </span>
-              <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontSize: 11.5, color: C.coral }}>{money(q.pay)}</span>
+              <span style={{ width: 58, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }}>{money(q.pay)}</span>
             </div>
           );
         })}
@@ -2070,7 +2070,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             합계 {agg.shift ? `${agg.times}타임 (${agg.days}일)` : `${agg.days}일`}
           </span>
           <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net)}</Num></span>
-          <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontSize: 11, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
+          <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
           <span style={{ width: 58, textAlign: "right" }}><Num size={12}>{money(agg.pay)}</Num></span>
         </div>
       </div>
@@ -2095,13 +2095,13 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             <Field label="기타 수당">
               <div className="flex gap-2">
                 <input value={draft.extraLabel} onChange={(e) => setDraft({ ...draft, extraLabel: e.target.value })} placeholder="항목 (예: 교통비)" style={{ ...inputStyle, flex: 1 }} />
-                <input type="number" inputMode="numeric" value={draft.extra} onChange={(e) => setDraft({ ...draft, extra: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, textAlign: "right" }} />
+                <input type="number" inputMode="numeric" value={draft.extra} onChange={(e) => setDraft({ ...draft, extra: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, fontVariantNumeric: "tabular-nums", textAlign: "right" }} />
               </div>
             </Field>
             <Field label="기타 공제">
               <div className="flex gap-2">
                 <input value={draft.deductLabel} onChange={(e) => setDraft({ ...draft, deductLabel: e.target.value })} placeholder="항목 (예: 가불금)" style={{ ...inputStyle, flex: 1 }} />
-                <input type="number" inputMode="numeric" value={draft.deduct} onChange={(e) => setDraft({ ...draft, deduct: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, textAlign: "right" }} />
+                <input type="number" inputMode="numeric" value={draft.deduct} onChange={(e) => setDraft({ ...draft, deduct: e.target.value })} placeholder="0" style={{ ...inputStyle, width: 110, fontFamily: MONO, fontVariantNumeric: "tabular-nums", textAlign: "right" }} />
               </div>
             </Field>
             <div style={{ border: `1px solid ${C.line}`, padding: "4px 12px", marginBottom: 12 }}>
@@ -2181,10 +2181,10 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
         <div key={r.w.id} onClick={() => onOpenSlip(r.w.id)} className="flex items-center"
           style={{ padding: "9px 0", borderBottom: `1px solid ${C.line}`, cursor: "pointer" }}>
           <span style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
-          <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.sub }}>{shift ? r.agg.times : r.agg.days}</span>
-          <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.agg.blocks ? C.blue : C.sub }}>{r.agg.blocks || "—"}</span>
-          <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, color: C.coral }}>{money(r.gross)}</span>
-          <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, color: r.tax + r.deduct > 0 ? C.coral : C.sub }}>
+          <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, color: C.sub }}>{shift ? r.agg.times : r.agg.days}</span>
+          <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, color: r.agg.blocks ? C.blue : C.sub }}>{r.agg.blocks || "—"}</span>
+          <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, color: C.coral }}>{money(r.gross)}</span>
+          <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, color: r.tax + r.deduct > 0 ? C.coral : C.sub }}>
             {r.tax + r.deduct > 0 ? `−${money(r.tax + r.deduct)}` : "—"}
           </span>
           <span style={{ width: 76, textAlign: "right" }}><Num size={14.5} weight={800} color={C.coral}>{money(r.net)}</Num></span>
@@ -2194,10 +2194,10 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
 
       <div className="flex items-center" style={{ padding: "11px 0", borderBottom: `2px solid ${C.text}` }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 900, color: C.text }}>합계</span>
-        <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800 }}>{shift ? sum.times : sum.days}</span>
-        <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.blue }}>{sum.blocks || "—"}</span>
-        <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>{money(sum.gross)}</span>
-        <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontSize: 12, fontWeight: 800, color: C.coral }}>
+        <span style={{ width: 42, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800 }}>{shift ? sum.times : sum.days}</span>
+        <span style={{ width: 44, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.blue }}>{sum.blocks || "—"}</span>
+        <span style={{ width: 66, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.coral }}>{money(sum.gross)}</span>
+        <span style={{ width: 56, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.coral }}>
           {sum.cut > 0 ? `−${money(sum.cut)}` : "—"}
         </span>
         <span style={{ width: 76, textAlign: "right" }}><Num size={16} weight={900} color={C.coral}>{money(sum.pay)}</Num></span>
@@ -2320,7 +2320,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               {bound ? (
                 <>
                   <div style={{ fontSize: 16, fontWeight: 900, color: C.text }}>{bound.name}</div>
-                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, fontFamily: MONO }}>
+                  <div style={{ fontSize: 13, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {dev.boundAt ? `${dev.boundAt.slice(0, 10)} 연결됨` : "연결됨"} · 기기 {dev.deviceId.slice(0, 6)}
                   </div>
                 </>
@@ -2350,7 +2350,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{s.name}</div>
                 {s.lat != null ? (
-                  <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2, fontFamily: MONO }}>
+                  <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {s.lat}, {s.lng} · 반경 {s.radius}m
                   </div>
                 ) : (
@@ -2393,7 +2393,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
                   {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
                 </div>
-                <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2, fontFamily: MONO }}>
+                <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                   {sites.find((s) => s.id === w.siteId)?.name || "현장 미지정"} · {settings.payMode === "shift"
                     ? `1타임 ${w.shiftHours ?? settings.shiftHours}h / ${money(w.shiftPay ?? settings.shiftPay)}원`
                     : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
@@ -2473,7 +2473,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               </div>
               <div style={{ background: C.tileSoft, padding: 12, marginTop: 14 }}>
                 <Eyebrow>지금 설정으로 계산하면</Eyebrow>
-                <div style={{ fontSize: 12, color: C.text, marginTop: 7, lineHeight: 1.8, fontFamily: MONO }}>
+                <div style={{ fontSize: 13.5, color: C.text, marginTop: 7, lineHeight: 1.8, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                   {[Math.round(settings.shiftHours * 60) - 20, Math.round(settings.shiftHours * 60) + 12,
                     Math.round(settings.shiftHours * 60) + settings.otThreshold,
                     Math.round(settings.shiftHours * 60) + settings.otThreshold * 2].map((m, i) => {
@@ -2574,7 +2574,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <button key={h} onClick={() => update((d) => ({ ...d, settings: { ...d.settings, holidays: d.settings.holidays.filter((x) => x !== h) } }))}
                     style={{
                       display: "flex", alignItems: "center", gap: 5, padding: "6px 10px",
-                      background: C.tileSoft, border: `1px solid ${C.line}`, fontSize: 12, fontFamily: MONO, color: C.text,
+                      background: C.tileSoft, border: `1px solid ${C.line}`, fontSize: 13.5, fontFamily: MONO, fontVariantNumeric: "tabular-nums", color: C.text,
                     }}>
                     {h}{label ? ` ${label}` : ""} <X size={12} color={C.sub} />
                   </button>
@@ -2598,7 +2598,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   {workers.find((w) => w.id === l.workerId)?.name || "삭제된 근무자"} 님이 다른 기기로 연결됨
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: C.sub, marginTop: 3, fontFamily: MONO, marginLeft: 21 }}>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, fontFamily: MONO, fontVariantNumeric: "tabular-nums", marginLeft: 21 }}>
                 {l.at.slice(0, 10)} {l.at.slice(11, 16)} · {l.from} → {l.to}
               </div>
             </Tile>
@@ -2692,10 +2692,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 </Btn>
               </div>
               {cap === "fail" && <div style={{ color: C.amber, fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>위치를 가져오지 못했습니다. 실외에서 다시 시도하거나 아래에 직접 입력하세요.</div>}
-              {cap === "ok" && <div style={{ color: C.aquaDeep, fontSize: 11.5, marginTop: 8, fontWeight: 700, fontFamily: MONO }}>등록됨{sEdit.acc ? ` · 오차 ±${sEdit.acc}m` : ""}</div>}
+              {cap === "ok" && <div style={{ color: C.aquaDeep, fontSize: 13, marginTop: 8, fontWeight: 700, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>등록됨{sEdit.acc ? ` · 오차 ±${sEdit.acc}m` : ""}</div>}
               <div className="grid grid-cols-2 gap-2 mt-3">
-                <Field label="위도"><input value={sEdit.lat ?? ""} onChange={(e) => setSEdit({ ...sEdit, lat: e.target.value })} placeholder="37.4979" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
-                <Field label="경도"><input value={sEdit.lng ?? ""} onChange={(e) => setSEdit({ ...sEdit, lng: e.target.value })} placeholder="127.0276" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
+                <Field label="위도"><input value={sEdit.lat ?? ""} onChange={(e) => setSEdit({ ...sEdit, lat: e.target.value })} placeholder="37.4979" style={{ ...inputStyle, fontFamily: MONO, fontVariantNumeric: "tabular-nums", background: C.tile }} /></Field>
+                <Field label="경도"><input value={sEdit.lng ?? ""} onChange={(e) => setSEdit({ ...sEdit, lng: e.target.value })} placeholder="127.0276" style={{ ...inputStyle, fontFamily: MONO, fontVariantNumeric: "tabular-nums", background: C.tile }} /></Field>
               </div>
             </div>
 
@@ -2730,7 +2730,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div className="grid grid-cols-3 gap-0.5" style={{ background: C.line }}>
                 {[50, 100, 150, 200, 300, 500].map((r) => (
                   <button key={r} onClick={() => setSEdit({ ...sEdit, radius: r })} className="py-2.5"
-                    style={{ background: Number(sEdit.radius) === r ? C.aquaDeep : C.tileSoft, color: Number(sEdit.radius) === r ? "#fff" : C.sub, fontSize: 13, fontWeight: 800, fontFamily: MONO }}>
+                    style={{ background: Number(sEdit.radius) === r ? C.aquaDeep : C.tileSoft, color: Number(sEdit.radius) === r ? "#fff" : C.sub, fontSize: 13, fontWeight: 800, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {r}m
                   </button>
                 ))}
@@ -2793,10 +2793,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         {pinEdit && (
           <>
             <Field label="새 PIN (숫자 4자리)">
-              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.a} onChange={(e) => setPinEdit({ ...pinEdit, a: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, letterSpacing: "0.4em" }} />
+              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.a} onChange={(e) => setPinEdit({ ...pinEdit, a: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, fontVariantNumeric: "tabular-nums", letterSpacing: "0.4em" }} />
             </Field>
             <Field label="확인">
-              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.b} onChange={(e) => setPinEdit({ ...pinEdit, b: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, letterSpacing: "0.4em" }} />
+              <input type="password" inputMode="numeric" maxLength={4} value={pinEdit.b} onChange={(e) => setPinEdit({ ...pinEdit, b: e.target.value.replace(/\D/g, "") })} style={{ ...inputStyle, fontFamily: MONO, fontVariantNumeric: "tabular-nums", letterSpacing: "0.4em" }} />
             </Field>
             <Btn full disabled={pinEdit.a.length !== 4 || pinEdit.a !== pinEdit.b}
               onClick={() => { update((d) => ({ ...d, settings: { ...d.settings, adminPin: pinEdit.a } })); setPinEdit(null); setToast("PIN을 변경했습니다"); }}>
