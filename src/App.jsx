@@ -65,8 +65,10 @@ const DEV_DEFAULT = { deviceId: null, workerId: null, boundAt: null };
 
 function migrate(p) {
   const d = { ...DEFAULTS, ...p, settings: { ...DEFAULTS.settings, ...(p.settings || {}) } };
-  d.sites = (d.sites || []).map((s) =>
-    typeof s === "string" ? { id: uid(), name: s, lat: null, lng: null, radius: d.settings.defaultRadius } : s);
+  d.sites = (d.sites || []).map((s) => {
+    const site = typeof s === "string" ? { id: uid(), name: s, lat: null, lng: null, radius: d.settings.defaultRadius } : s;
+    return { workDays: [], startTime: "", endTime: "", ...site };
+  });
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
   delete d.deviceWorkerId;
@@ -1957,6 +1959,9 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       lat: sEdit.lat === "" || sEdit.lat == null ? null : Number(sEdit.lat),
       lng: sEdit.lng === "" || sEdit.lng == null ? null : Number(sEdit.lng),
       radius: Number(sEdit.radius) || settings.defaultRadius,
+      workDays: sEdit.workDays || [],
+      startTime: sEdit.startTime || "",
+      endTime: sEdit.endTime || "",
     };
     update((d) => ({ ...d, sites: sEdit.id ? d.sites.map((x) => (x.id === s.id ? s : x)) : [...d.sites, s] }));
     setSEdit(null); setCap("idle"); setToast("현장을 저장했습니다");
@@ -2039,11 +2044,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
       {/* 현장 */}
       <Sec title="현장 · 좌표와 반경" right={
-        <button onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius }); }}
+        <button onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius, workDays: [], startTime: "", endTime: "" }); }}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {sites.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>현장을 추가하고, 현장에 도착해서 좌표를 등록하세요.</div></Tile>}
         {sites.map((s) => (
-          <Tile key={s.id} onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ ...s }); }} style={{ padding: "12px 14px" }}>
+          <Tile key={s.id} onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ workDays: [], startTime: "", endTime: "", ...s }); }} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between gap-3">
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{s.name}</div>
@@ -2056,6 +2061,12 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     <AlertTriangle size={11} /> 좌표 미등록 — 위치 확인 없이 기록됨
                   </div>
                 )}
+                {(s.workDays && s.workDays.length > 0) || s.startTime ? (
+                  <div style={{ color: C.blue, fontSize: 11, marginTop: 3, fontWeight: 700 }}>
+                    {s.workDays && s.workDays.length > 0 ? s.workDays.map((d) => WD[d]).join("·") : "요일 미지정"}
+                    {s.startTime ? ` · ${s.startTime}–${s.endTime}` : ""}
+                  </div>
+                ) : null}
               </div>
               <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
             </div>
@@ -2388,6 +2399,32 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <Field label="위도"><input value={sEdit.lat ?? ""} onChange={(e) => setSEdit({ ...sEdit, lat: e.target.value })} placeholder="37.4979" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
                 <Field label="경도"><input value={sEdit.lng ?? ""} onChange={(e) => setSEdit({ ...sEdit, lng: e.target.value })} placeholder="127.0276" style={{ ...inputStyle, fontFamily: MONO, background: C.tile }} /></Field>
+              </div>
+            </div>
+
+            <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
+              <Eyebrow>근무 요일 · 시간 (선택)</Eyebrow>
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, marginBottom: 8, lineHeight: 1.5 }}>
+                이 현장에서 정기적으로 근무하는 요일과 시간대를 기록해 두면, 근무자·관리자 화면에 참고용으로 표시돼요. 출퇴근 자체를 막지는 않아요.
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {WD.map((w, i) => {
+                  const on = (sEdit.workDays || []).includes(i);
+                  return (
+                    <button key={i} onClick={() => {
+                      const cur = sEdit.workDays || [];
+                      setSEdit({ ...sEdit, workDays: on ? cur.filter((x) => x !== i) : [...cur, i].sort() });
+                    }} style={{
+                      padding: "8px 0", fontSize: 12.5, fontWeight: 800,
+                      background: on ? C.aquaDeep : C.tile, color: on ? "#fff" : C.sub,
+                      border: `1px solid ${on ? C.aquaDeep : C.line}`,
+                    }}>{w}</button>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2.5">
+                <Field label="시작 시간"><input type="time" value={sEdit.startTime || ""} onChange={(e) => setSEdit({ ...sEdit, startTime: e.target.value })} style={inputStyle} /></Field>
+                <Field label="종료 시간"><input type="time" value={sEdit.endTime || ""} onChange={(e) => setSEdit({ ...sEdit, endTime: e.target.value })} style={inputStyle} /></Field>
               </div>
             </div>
 
