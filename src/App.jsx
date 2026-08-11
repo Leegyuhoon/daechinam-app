@@ -190,7 +190,8 @@ function migrate(p) {
     let x = w.code ? w : { ...w, code: String(Math.floor(100000 + Math.random() * 900000)) };
     if (!Array.isArray(x.siteIds)) x = { ...x, siteIds: x.siteId ? [x.siteId] : [] };
     if (!x.paySettingsBySite) x = { ...x, paySettingsBySite: {} };
-    if (typeof x.isTeamLead !== "boolean") x = { ...x, isTeamLead: false };
+    if (!Array.isArray(x.leaderSiteIds)) x = { ...x, leaderSiteIds: x.isTeamLead ? (x.siteIds || (x.siteId ? [x.siteId] : [])) : [] };
+    x = { ...x, isTeamLead: x.leaderSiteIds.length > 0 };
     if (!Array.isArray(x.allowances)) x = { ...x, allowances: [] };
     return x;
   });
@@ -718,20 +719,20 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
   const [leadNoticeOpen, setLeadNoticeOpen] = useState(false);
   const [leadNoticeForm, setLeadNoticeForm] = useState({ title: "", message: "", days: "3" });
-  const mySiteNames = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
+  const myLeaderSiteIds = worker ? (worker.leaderSiteIds || []) : [];
+  const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
   const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3" }); setLeadNoticeOpen(true); };
   const submitLeadNotice = () => {
     if (!leadNoticeForm.title.trim()) { setToast("제목을 입력해 주세요"); return; }
-    const mySiteIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
-    if (mySiteIds.length === 0) { setToast("배정된 현장이 없어서 공지를 보낼 수 없어요"); return; }
+    if (myLeaderSiteIds.length === 0) { setToast("팀장으로 임명된 현장이 없어서 공지를 보낼 수 없어요"); return; }
     const start = dKey(new Date());
     const endD = new Date(); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
     update((d) => ({
       ...d,
       notices: [...(d.notices || []), {
         id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
-        audience: "site", siteIds: mySiteIds, siteName: mySiteNames.join("·"), workerIds: [],
+        audience: "site", siteIds: myLeaderSiteIds, siteName: mySiteNames.join("·"), workerIds: [],
         startDate: start, endDate: dKey(endD), active: true,
         createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
       }],
@@ -3332,6 +3333,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
     const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
     const siteIds = wEdit.siteIds || [];
+    const leaderSiteIds = (wEdit.leaderSiteIds || []).filter((id) => siteIds.includes(id)); // 담당 현장이 아니면 팀장 지정 무효
     const allowances = (wEdit.allowances || [])
       .filter((a) => a.label && a.label.trim())
       .map((a) => ({ id: a.id || uid(), label: a.label.trim(), amount: Number(a.amount) || 0 }));
@@ -3341,7 +3343,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
       paySettingsBySite: wEdit.paySettingsBySite || {},
-      isTeamLead: !!wEdit.isTeamLead, allowances,
+      leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
@@ -3489,11 +3491,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
       {/* 근무자 */}
       <Sec title="근무자" right={
-        <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
+        <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], leaderSiteIds: [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
         {workers.map((w) => (
-          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {}, isTeamLead: !!w.isTeamLead, allowances: (w.allowances || []).map((a) => ({ ...a })) })} style={{ padding: "12px 14px" }}>
+          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {}, leaderSiteIds: w.leaderSiteIds || [], allowances: (w.allowances || []).map((a) => ({ ...a })) })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-1.5">
@@ -3906,28 +3908,34 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               )}
             </Field>
 
-            <button onClick={() => setWEdit({ ...wEdit, isTeamLead: !wEdit.isTeamLead })}
-              className="flex items-center justify-between w-full"
-              style={{ background: wEdit.isTeamLead ? "#FFF4E0" : C.tileSoft, border: `1px solid ${wEdit.isTeamLead ? C.amber : C.line}`, padding: "11px 13px" }}>
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={16} color={wEdit.isTeamLead ? "#B8790A" : C.sub} />
-                <div style={{ fontSize: 13, fontWeight: 800, color: wEdit.isTeamLead ? "#7A4E07" : C.text }}>이 사람을 팀장으로 지정</div>
+            <Field label="팀장으로 임명할 현장 (선택)">
+              {(wEdit.siteIds || []).length === 0 ? (
+                <div style={{ fontSize: 12.5, color: C.sub }}>먼저 위에서 담당 현장을 선택해 주세요.</div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {(wEdit.siteIds || []).map((sid) => {
+                    const site = sites.find((s) => s.id === sid);
+                    if (!site) return null;
+                    const on = (wEdit.leaderSiteIds || []).includes(sid);
+                    return (
+                      <button key={sid} onClick={() => {
+                        const cur = wEdit.leaderSiteIds || [];
+                        setWEdit({ ...wEdit, leaderSiteIds: on ? cur.filter((id) => id !== sid) : [...cur, sid] });
+                      }} className="flex items-center gap-1.5"
+                        style={{
+                          padding: "8px 12px", fontSize: 12.5, fontWeight: 800,
+                          background: on ? C.amber : C.tileSoft, color: on ? "#3D2600" : C.sub,
+                        }}>
+                        <ShieldCheck size={13} />{site.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+                담당 현장 중 팀장을 맡을 곳만 선택하세요. 이름 옆에 "팀장" 뱃지가 붙고, 선택한 현장 동료들에게만 공지를 보낼 수 있게 돼요.
               </div>
-              <div style={{
-                width: 38, height: 22, borderRadius: 999, background: wEdit.isTeamLead ? C.amber : C.line,
-                position: "relative", transition: "background 0.15s",
-              }}>
-                <div style={{
-                  width: 18, height: 18, borderRadius: 999, background: "#fff", position: "absolute", top: 2,
-                  left: wEdit.isTeamLead ? 18 : 2, transition: "left 0.15s",
-                }} />
-              </div>
-            </button>
-            {wEdit.isTeamLead && (
-              <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.5 }}>
-                이름 옆에 "팀장" 뱃지가 붙고, 담당 현장 동료들에게 공지를 작성해서 보낼 수 있게 돼요.
-              </div>
-            )}
+            </Field>
 
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, marginBottom: 4 }}>아래는 이 근무자의 기본 급여예요 (현장 구분 없이 적용).</div>
             {settings.payMode === "shift" ? (
