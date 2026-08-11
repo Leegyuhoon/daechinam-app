@@ -163,7 +163,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -191,6 +191,7 @@ function migrate(p) {
   d.notices = Array.isArray(d.notices) ? d.notices : [];
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
   d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
+  d.payslipSigns = Array.isArray(d.payslipSigns) ? d.payslipSigns : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -668,6 +669,27 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
+  const [signOpen, setSignOpen] = useState(null); // payslipSigns entry
+  const [sigData, setSigData] = useState(null);
+  const [signBusy, setSignBusy] = useState(false);
+  const submitSign = async () => {
+    if (!sigData) { setToast("서명을 먼저 그려주세요"); return; }
+    setSignBusy(true);
+    try {
+      await update((d) => ({
+        ...d,
+        payslipSigns: (d.payslipSigns || []).map((x) => (x.id === signOpen.id ? { ...x, signedAt: new Date().toISOString(), signatureDataUrl: sigData } : x)),
+      }));
+      setToast("서명이 완료됐습니다");
+      setSignOpen(null); setSigData(null);
+    } catch (e) {
+      setToast("저장에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setSignBusy(false);
+    }
+  };
+
   const [photoOpen, setPhotoOpen] = useState(false);
   const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -768,7 +790,12 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const timeLabel = (t) => (t.startTime && t.endTime ? `${t.startTime}–${t.endTime}` : "하루 전체");
 
   const openXfer = () => {
-    setXferForm({ date: today, siteId: worker?.siteId || sites[0]?.id || "", toMode: "worker", toWorkerId: "", toName: "", startTime: "", endTime: "", message: "" });
+    const defSiteId = worker?.siteId || sites[0]?.id || "";
+    const defSite = sites.find((s) => s.id === defSiteId);
+    setXferForm({
+      date: today, siteId: defSiteId, toMode: "worker", toWorkerId: "", toName: "",
+      startTime: defSite?.startTime || "", endTime: defSite?.endTime || "", message: "",
+    });
     setXferOpen(true);
   };
   const submitXfer = () => {
@@ -1088,6 +1115,68 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         )}
       </div>
 
+      {/* 확인·서명 필요한 정산서 */}
+      {myPendingSigns.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          {myPendingSigns.map((sgn) => (
+            <div key={sgn.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.aquaDeep}` }}>
+              <div className="flex items-center gap-1.5" style={{ color: C.aquaDeep, fontSize: 11.5, fontWeight: 800 }}>
+                <Receipt size={12} /> 확인 · 서명이 필요해요
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>{ymLabel(sgn.ym)} 근무 정산서</div>
+              <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
+              <div className="mt-3">
+                <Btn full small onClick={() => { setSignOpen(sgn); setSigData(null); }}>정산서 확인하고 서명하기</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 정산서 확인 · 서명 */}
+      <Modal open={!!signOpen} onClose={() => !signBusy && setSignOpen(null)}>
+        {signOpen && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{ymLabel(signOpen.ym)} 근무 정산서</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{signOpen.company}</div>
+            <div className="mt-4" style={{ background: C.tileSoft, padding: 13 }}>
+              {(() => {
+                const s = signOpen.snapshot;
+                return (
+                  <>
+                    <Row k={s.shift ? "기본 타임" : "기본급"} v={`${money(s.base)}원`} />
+                    {s.otPay > 0 && <Row k={s.shift ? "추가근무" : "연장근무"} v={`${money(s.otPay)}원`} />}
+                    {s.holidayPay > 0 && <Row k="공휴일 근무" v={`${money(s.holidayPay)}원`} />}
+                    {s.extra > 0 && <Row k={s.extraLabel || "기타 수당"} v={`${money(s.extra)}원`} />}
+                    <div style={{ borderTop: `1px solid ${C.line}`, margin: "8px 0" }} />
+                    <Row k="지급 합계" v={`${money(s.gross)}원`} />
+                    {s.tax > 0 && <Row k="원천징수" v={`−${money(s.tax)}원`} />}
+                    {s.deduct > 0 && <Row k={s.deductLabel || "기타 공제"} v={`−${money(s.deduct)}원`} />}
+                  </>
+                );
+              })()}
+            </div>
+            <div className="mt-2" style={{ background: C.text, padding: "13px 14px" }}>
+              <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10.5, letterSpacing: "0.1em" }}>실지급액</div>
+              <div style={{ color: "#fff", fontSize: 24, fontWeight: 900, marginTop: 3 }}>{money(signOpen.snapshot.net_pay)}원</div>
+            </div>
+
+            <div className="mt-4">
+              <Eyebrow>서명</Eyebrow>
+              <div className="mt-1.5"><SignaturePad onChange={setSigData} /></div>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+                서명하면 위 내용을 확인했다는 의미로 관리자에게 전달돼요.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full disabled={signBusy} onClick={() => setSignOpen(null)}>나중에</Btn>
+              <Btn full disabled={signBusy || !sigData} onClick={submitSign}>{signBusy ? "저장 중…" : "서명 완료"}</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
       {/* 현장 사진 등록 · 용품 요청 */}
       <div className="w-full grid grid-cols-2 gap-2" style={{ maxWidth: 320, marginTop: 8 }}>
         <button onClick={openPhoto} className="flex items-center justify-center gap-1.5"
@@ -1215,13 +1304,24 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           <Field label="날짜">
             <input type="date" value={xferForm.date} onChange={(e) => setXferForm((f) => ({ ...f, date: e.target.value }))} style={inputStyle} />
           </Field>
-          {sites.length > 1 && (
-            <Field label="현장">
-              <select value={xferForm.siteId} onChange={(e) => setXferForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </Field>
-          )}
+          <Field label="현장">
+            <select value={xferForm.siteId} onChange={(e) => {
+              const s = sites.find((x) => x.id === e.target.value);
+              setXferForm((f) => ({ ...f, siteId: e.target.value, startTime: s?.startTime || f.startTime, endTime: s?.endTime || f.endTime }));
+            }} style={inputStyle}>
+              {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
+              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            {(() => {
+              const s = sites.find((x) => x.id === xferForm.siteId);
+              if (!s || !s.startTime) return null;
+              return (
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>
+                  이 현장 등록 근무시간: {s.startTime}–{s.endTime} (아래 시간대에 자동 반영됐어요)
+                </div>
+              );
+            })()}
+          </Field>
           <Field label="대신 근무할 사람">
             <div className="grid grid-cols-2 gap-1.5 mb-2">
               {[["worker", "등록된 근무자"], ["custom", "직접 입력"]].map(([k, l]) => (
@@ -1262,7 +1362,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               <input type="time" value={xferForm.endTime} onChange={(e) => setXferForm((f) => ({ ...f, endTime: e.target.value }))} style={inputStyle} />
             </div>
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
-              비워두면 "하루 전체"로 요청돼요. 예를 들어 2시간 근무를 두 사람에게 1시간씩 나눠 부탁하고 싶으면, 이 요청은 09:00–10:00으로 보내고, 나머지 10:00–11:00은 다른 사람에게 따로 요청하면 돼요.
+              비워두면 "하루 전체"로 요청돼요. 위에서 현장을 고르면, 그 현장에 등록해둔 근무시간을 버튼 하나로 채울 수 있어요.
             </div>
           </Field>
           <Field label="메시지 (선택)">
@@ -2582,10 +2682,82 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
   const [adjOpen, setAdjOpen] = useState(false);
   const [withDays, setWithDays] = useState(true);
   const [draft, setDraft] = useState(null);
+  const [sendBusy, setSendBusy] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false);
   const p = payslipCalc(data, workerId, ym);
   const { worker, recs, agg, adj } = p;
   const company = data.settings.companyName || "";
   const issued = new Date();
+
+  const sign = (data.payslipSigns || []).find((x) => x.workerId === workerId && x.ym === ym) || null;
+
+  const sendToWorker = () => {
+    setSendBusy(true);
+    const snapshot = {
+      shift: agg.shift, times: agg.times, days: agg.days, net: agg.net,
+      base: p.base, otPay: agg.otPay, holidayPay: agg.holidayPay || 0,
+      extra: p.extra, extraLabel: adj.extraLabel, gross: p.gross,
+      tax: p.tax, deduct: p.deduct, deductLabel: adj.deductLabel, net_pay: p.net,
+    };
+    update((d) => {
+      const others = (d.payslipSigns || []).filter((x) => !(x.workerId === workerId && x.ym === ym));
+      return {
+        ...d,
+        payslipSigns: [...others, {
+          id: sign?.id || uid(), workerId, workerName: worker.name, ym,
+          company, snapshot, sentAt: new Date().toISOString(),
+          signedAt: null, signatureDataUrl: null,
+        }],
+      };
+    });
+    setToast(`${worker.name}님에게 정산서를 전달했습니다`);
+    setSendBusy(false);
+  };
+
+  const downloadSigned = async () => {
+    if (!sign || !sign.signedAt) return;
+    setDlBusy(true);
+    try {
+      const s = sign.snapshot;
+      const html = `
+        <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
+          ${company ? `<div style="font-size:15px; font-weight:800;">${company}</div>` : ""}
+          <div style="font-size:22px; font-weight:900; margin-top:6px;">${ymLabel(ym)} 근무 정산서</div>
+          <div style="font-size:13px; color:#71767D; margin-top:10px;">${sign.workerName} 님</div>
+          <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:13px;">
+            ${s.shift
+              ? `<tr><td style="padding:6px 0;">기본 타임</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>
+                 ${s.otPay ? `<tr><td style="padding:6px 0;">추가근무</td><td style="padding:6px 0; text-align:right;">${money(s.otPay)}원</td></tr>` : ""}`
+              : `<tr><td style="padding:6px 0;">기본급</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>
+                 ${s.otPay ? `<tr><td style="padding:6px 0;">연장근무</td><td style="padding:6px 0; text-align:right;">${money(s.otPay)}원</td></tr>` : ""}`}
+            ${s.holidayPay ? `<tr><td style="padding:6px 0;">공휴일 근무</td><td style="padding:6px 0; text-align:right;">${money(s.holidayPay)}원</td></tr>` : ""}
+            ${s.extra ? `<tr><td style="padding:6px 0;">${s.extraLabel || "기타 수당"}</td><td style="padding:6px 0; text-align:right;">${money(s.extra)}원</td></tr>` : ""}
+            <tr style="border-top:1px solid #E5E1DA;"><td style="padding:8px 0; font-weight:800;">지급 합계</td><td style="padding:8px 0; text-align:right; font-weight:800;">${money(s.gross)}원</td></tr>
+            ${s.tax ? `<tr><td style="padding:6px 0; color:#D8503F;">원천징수</td><td style="padding:6px 0; text-align:right; color:#D8503F;">−${money(s.tax)}원</td></tr>` : ""}
+            ${s.deduct ? `<tr><td style="padding:6px 0; color:#D8503F;">${s.deductLabel || "기타 공제"}</td><td style="padding:6px 0; text-align:right; color:#D8503F;">−${money(s.deduct)}원</td></tr>` : ""}
+          </table>
+          <div style="margin-top:14px; background:#1D232A; padding:16px; color:#fff;">
+            <div style="font-size:11px; opacity:0.7; letter-spacing:0.1em;">실지급액</div>
+            <div style="font-size:26px; font-weight:900; margin-top:4px;">${money(s.net_pay)}원</div>
+          </div>
+          <div style="margin-top:28px; display:flex; align-items:flex-end; justify-content:space-between;">
+            <div style="font-size:12px; color:#71767D;">
+              전달일 ${sign.sentAt.slice(0, 10)}<br/>서명일 ${sign.signedAt.slice(0, 10)}
+            </div>
+            <div style="text-align:center;">
+              <img src="${sign.signatureDataUrl}" style="height:70px;" />
+              <div style="font-size:11px; color:#71767D; border-top:1px solid #1D232A; padding-top:4px; margin-top:2px;">${sign.workerName} (서명)</div>
+            </div>
+          </div>
+        </div>`;
+      await downloadHtmlAsPdf(html, `정산서_서명본_${sign.workerName}_${ym}.pdf`);
+      setToast("서명본을 다운로드했습니다");
+    } catch (e) {
+      setToast("다운로드에 실패했어요");
+    } finally {
+      setDlBusy(false);
+    }
+  };
 
   const text = useMemo(() => {
     const L = [];
@@ -2670,6 +2842,38 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         </div>
       </div>
       <Rule thick />
+
+      {/* 근무자 서명 전달 */}
+      <div style={{ background: sign?.signedAt ? "#EAF3DE" : C.tileSoft, border: `1px solid ${sign?.signedAt ? "#639922" : C.line}`, padding: 13, marginBottom: 4 }}>
+        {!sign && (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>근무자에게 이 정산서를 전달할 수 있어요</div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, lineHeight: 1.5 }}>전달하면 근무자 앱 화면에 뜨고, 확인 후 직접 서명할 수 있어요.</div>
+            <div className="mt-2.5"><Btn small onClick={sendToWorker} disabled={sendBusy}>{sendBusy ? "전달 중…" : "근무자에게 전달"}</Btn></div>
+          </>
+        )}
+        {sign && !sign.signedAt && (
+          <>
+            <div className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+              <Send size={13} color={C.blue} /> 전달됨 · 서명 대기 중
+            </div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · 아직 근무자가 서명하지 않았어요.</div>
+            <div className="mt-2.5"><Btn small kind="ghost" onClick={sendToWorker} disabled={sendBusy}>다시 전달하기</Btn></div>
+          </>
+        )}
+        {sign && sign.signedAt && (
+          <>
+            <div className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 800, color: "#3B6D11" }}>
+              <Check size={14} color="#3B6D11" /> 서명 완료
+            </div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · {sign.signedAt.slice(0, 10)} 서명</div>
+            <div className="flex items-center gap-3 mt-2.5">
+              <img src={sign.signatureDataUrl} style={{ height: 40, background: "#fff", border: `1px solid ${C.line}`, padding: 4 }} />
+              <Btn small onClick={downloadSigned} disabled={dlBusy}>{dlBusy ? "생성 중…" : "서명본 PDF 다운로드"}</Btn>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="flex items-baseline justify-between">
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></div>
@@ -3572,6 +3776,87 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           <Btn kind="danger" full onClick={() => { update(DEFAULTS); updateDev({ ...dev, workerId: null, boundAt: null }); setReset(false); setToast("초기화했습니다"); }}>모두 지우기</Btn>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  서명 패드  ───────────────────────── */
+function SignaturePad({ onChange }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const empty = useRef(true);
+  const [hasDrawn, setHasDrawn] = useState(false);
+
+  const getCtx = () => canvasRef.current.getContext("2d");
+  const setupCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = getCtx();
+    ctx.scale(dpr, dpr);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#1D232A";
+  };
+  useEffect(() => { setupCanvas(); }, []);
+
+  const pos = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  };
+  const start = (e) => {
+    e.preventDefault();
+    drawing.current = true;
+    const { x, y } = pos(e);
+    const ctx = getCtx();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+  const move = (e) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const { x, y } = pos(e);
+    const ctx = getCtx();
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    empty.current = false;
+    setHasDrawn(true);
+  };
+  const end = () => {
+    if (!drawing.current) return;
+    drawing.current = false;
+    onChange(empty.current ? null : canvasRef.current.toDataURL("image/png"));
+  };
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = getCtx();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    empty.current = true;
+    setHasDrawn(false);
+    onChange(null);
+  };
+
+  return (
+    <div>
+      <div style={{ position: "relative", background: "#fff", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, height: 160 }}>
+        <canvas ref={canvasRef}
+          onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+          onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+          style={{ width: "100%", height: "100%", touchAction: "none", display: "block" }} />
+        {!hasDrawn && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", color: C.sub, fontSize: 12.5 }}>
+            여기에 손가락(또는 마우스)으로 서명하세요
+          </div>
+        )}
+      </div>
+      <button onClick={clear} className="flex items-center gap-1 mt-2" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
+        <Trash2 size={12} /> 다시 서명
+      </button>
     </div>
   );
 }
