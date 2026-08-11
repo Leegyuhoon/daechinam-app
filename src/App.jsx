@@ -186,7 +186,12 @@ function migrate(p) {
     return { workDays: [], startTime: "", endTime: "", ...site };
   });
   d.bindings = d.bindings || {}; d.bindLog = d.bindLog || []; d.adjustments = d.adjustments || {};
-  d.workers = (d.workers || []).map((w) => (w.code ? w : { ...w, code: String(Math.floor(100000 + Math.random() * 900000)) }));
+  d.workers = (d.workers || []).map((w) => {
+    let x = w.code ? w : { ...w, code: String(Math.floor(100000 + Math.random() * 900000)) };
+    if (!Array.isArray(x.siteIds)) x = { ...x, siteIds: x.siteId ? [x.siteId] : [] };
+    if (!x.paySettingsBySite) x = { ...x, paySettingsBySite: {} };
+    return x;
+  });
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
   d.notices = Array.isArray(d.notices) ? d.notices : [];
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
@@ -279,19 +284,31 @@ function calcRec(rec, settings) {
   return { open: false, gross, brk, net: Math.max(0, gross - brk) };
 }
 
+/* 근무자의 특정 현장 급여 오버라이드가 있으면 그걸, 없으면 근무자 기본값, 그것도 없으면 전체 설정값 */
+function resolvePay(worker, siteId, settings) {
+  const ov = worker?.paySettingsBySite?.[siteId];
+  return {
+    wage: ov?.wage ?? worker?.wage ?? settings.wage,
+    stdHours: ov?.stdHours ?? worker?.stdHours ?? settings.stdHours,
+    shiftHours: ov?.shiftHours ?? worker?.shiftHours ?? settings.shiftHours,
+    shiftPay: ov?.shiftPay ?? worker?.shiftPay ?? settings.shiftPay,
+  };
+}
+
 /* 기록 한 건(= 한 타임)의 판정과 금액 */
 function calcPay(rec, worker, settings) {
   const c = calcRec(rec, settings);
   if (c.open) return { ...c, open: true, pay: 0 };
   const holiday = isHoliday(rec.date, settings);
   const hMult = holiday ? (settings.holidayMultiplier || 1.5) : 1;
+  const rp = resolvePay(worker, rec.siteId, settings);
   if (settings.payMode !== "shift") {
-    const wage = worker?.wage ?? settings.wage;
+    const wage = rp.wage;
     const pay = c.net * wage * hMult;
     return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, holiday };
   }
-  const sh = worker?.shiftHours ?? settings.shiftHours;
-  const sp = (worker?.shiftPay ?? settings.shiftPay) * hMult;
+  const sh = rp.shiftHours;
+  const sp = rp.shiftPay * hMult;
   const th = Math.max(1, settings.otThreshold);
   const diffMin = Math.round((c.net - sh) * 60);
   let blocks = 0;
@@ -316,9 +333,11 @@ function aggregate(records, worker, settings) {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
     if (p.open) return;
+    const rp = resolvePay(worker, r.siteId, settings);
     times++; net += p.net; pay += p.pay;
-    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday });
+    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0 });
     b.net += p.net; b.times++; b.target += shift ? sh : 0;
+    b.wageSum += rp.wage * p.net; // 같은 날 여러 현장(시급 다름) 근무 시 시간가중 평균 시급용
     if (p.holiday) {
       holidayNet += p.net;
       holidayPay += p.pay;
@@ -331,19 +350,22 @@ function aggregate(records, worker, settings) {
   });
 
   if (!shift) {
-    const wage = worker?.wage ?? settings.wage;
     const hMult = settings.holidayMultiplier || 1.5;
-    let normalNet = 0;
     holidayPay = 0;
     Object.entries(byDate).forEach(([date, b]) => {
       b.target = std;
-      if (b.holiday) { holidayDays++; return; } // 공휴일은 초과/부족 계산에서 제외, 전체 1.5배로 별도 지급
-      normalNet += b.net;
-      if (b.net > std) otMin += (b.net - std) * 60; else shortMin += (std - b.net) * 60;
+      const avgWage = b.net > 0 ? b.wageSum / b.net : settings.wage;
+      if (b.holiday) {
+        holidayDays++;
+        holidayPay += b.net * avgWage * hMult;
+        return;
+      }
+      const dayOt = Math.max(0, b.net - std);
+      const dayReg = b.net - dayOt;
+      if (dayOt > 0) otMin += dayOt * 60; else shortMin += (std - b.net) * 60;
+      base += dayReg * avgWage;
+      otPay += settings.otPremium ? dayOt * avgWage * 1.5 : dayOt * avgWage;
     });
-    base = (normalNet - otMin / 60) * wage;
-    otPay = settings.otPremium ? (otMin / 60) * wage * 1.5 : (otMin / 60) * wage;
-    holidayPay = holidayNet * wage * hMult;
     pay = base + otPay + holidayPay;
     overMin = otMin;
   } else {
@@ -1337,11 +1359,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               <select value={xferForm.toWorkerId} onChange={(e) => setXferForm((f) => ({ ...f, toWorkerId: e.target.value }))} style={inputStyle}>
                 <option value="">선택해 주세요</option>
                 {workers.filter((w) => w.id !== worker.id).map((w) => {
-                  const wSite = sites.find((s) => s.id === w.siteId);
-                  const sameSite = w.siteId && w.siteId === worker.siteId;
+                  const wIds = w.siteIds || (w.siteId ? [w.siteId] : []);
+                  const myIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
+                  const wSiteNames = wIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
+                  const sameSite = wIds.some((id) => myIds.includes(id));
                   return (
                     <option key={w.id} value={w.id}>
-                      {w.name} · {wSite ? wSite.name : "현장 미지정"}{sameSite ? " (같은 현장)" : w.siteId ? " (다른 현장)" : ""}
+                      {w.name} · {wSiteNames.length ? wSiteNames.join("·") : "현장 미지정"}{sameSite ? " (같은 현장)" : wIds.length ? " (다른 현장)" : ""}
                     </option>
                   );
                 })}
@@ -3179,10 +3203,13 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const saveWorker = () => {
     if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
     const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
+    const siteIds = wEdit.siteIds || [];
     const w = {
-      id: wEdit.id || uid(), name: wEdit.name.trim(), siteId: wEdit.siteId || null,
+      id: wEdit.id || uid(), name: wEdit.name.trim(),
+      siteIds, siteId: siteIds[0] || null, // siteId는 하위호환용(대표 현장)
       wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
+      paySettingsBySite: wEdit.paySettingsBySite || {},
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
@@ -3330,11 +3357,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
       {/* 근무자 */}
       <Sec title="근무자" right={
-        <button onClick={() => setWEdit({ id: null, name: "", siteId: sites[0]?.id || "", wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
+        <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
         {workers.map((w) => (
-          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteId: w.siteId || "" })} style={{ padding: "12px 14px" }}>
+          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {} })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-1.5">
@@ -3342,7 +3369,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
                 </div>
                 <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-                  {sites.find((s) => s.id === w.siteId)?.name || "현장 미지정"} · {settings.payMode === "shift"
+                  {(() => {
+                    const ids = w.siteIds || (w.siteId ? [w.siteId] : []);
+                    const names = ids.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
+                    return names.length ? names.join(" · ") : "현장 미지정";
+                  })()} · {settings.payMode === "shift"
                     ? `1타임 ${w.shiftHours ?? settings.shiftHours}h / ${money(w.shiftPay ?? settings.shiftPay)}원`
                     : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
                 </div>
@@ -3718,12 +3749,31 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         {wEdit && (
           <>
             <Field label="이름"><input value={wEdit.name} onChange={(e) => setWEdit({ ...wEdit, name: e.target.value })} placeholder="예: 김순자" style={inputStyle} /></Field>
-            <Field label="주 근무 현장">
-              <select value={wEdit.siteId} onChange={(e) => setWEdit({ ...wEdit, siteId: e.target.value })} style={inputStyle}>
-                <option value="">현장 미지정</option>
-                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+
+            <Field label="담당 현장 (여러 곳 선택 가능)">
+              <div className="flex flex-wrap gap-1.5">
+                {sites.map((s) => {
+                  const on = (wEdit.siteIds || []).includes(s.id);
+                  return (
+                    <button key={s.id} onClick={() => {
+                      const cur = wEdit.siteIds || [];
+                      setWEdit({ ...wEdit, siteIds: on ? cur.filter((id) => id !== s.id) : [...cur, s.id] });
+                    }} style={{
+                      padding: "8px 12px", fontSize: 12.5, fontWeight: 800,
+                      background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub,
+                    }}>{s.name}</button>
+                  );
+                })}
+                {sites.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>등록된 현장이 없습니다.</div>}
+              </div>
+              {(wEdit.siteIds || []).length > 1 && (
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+                  여러 현장에 배정됐어요. 첫 번째로 선택한 곳이 출근 시 기본 현장으로 표시돼요.
+                </div>
+              )}
             </Field>
+
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, marginBottom: 4 }}>아래는 이 근무자의 기본 급여예요 (현장 구분 없이 적용).</div>
             {settings.payMode === "shift" ? (
               <div className="grid grid-cols-2 gap-2">
                 <Field label="1타임 시간 · 비우면 기본값">
@@ -3741,7 +3791,44 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <Field label="1일 소정근로 (시간)"><input type="number" step="0.5" value={wEdit.stdHours ?? ""} placeholder={String(settings.stdHours)} onChange={(e) => setWEdit({ ...wEdit, stdHours: e.target.value })} style={inputStyle} /></Field>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2 mt-1">
+
+            {(wEdit.siteIds || []).length > 1 && (
+              <div className="mt-3" style={{ background: C.tileSoft, padding: 13 }}>
+                <Eyebrow>현장마다 급여를 다르게 (선택)</Eyebrow>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, marginBottom: 10, lineHeight: 1.5 }}>
+                  특정 현장에서만 급여가 다르면 여기에 입력하세요. 비워두면 위 기본값을 그대로 씁니다.
+                </div>
+                <div className="flex flex-col gap-3">
+                  {(wEdit.siteIds || []).map((sid) => {
+                    const site = sites.find((s) => s.id === sid);
+                    if (!site) return null;
+                    const ov = (wEdit.paySettingsBySite || {})[sid] || {};
+                    const setOv = (patch) => setWEdit({
+                      ...wEdit,
+                      paySettingsBySite: { ...(wEdit.paySettingsBySite || {}), [sid]: { ...ov, ...patch } },
+                    });
+                    return (
+                      <div key={sid}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text, marginBottom: 5 }}>{site.name}</div>
+                        {settings.payMode === "shift" ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <input type="number" step="0.5" value={ov.shiftHours ?? ""} placeholder={`시간 (기본 ${wEdit.shiftHours || settings.shiftHours})`}
+                              onChange={(e) => setOv({ shiftHours: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
+                            <input type="number" value={ov.shiftPay ?? ""} placeholder={`지급액 (기본 ${wEdit.shiftPay || settings.shiftPay})`}
+                              onChange={(e) => setOv({ shiftPay: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
+                          </div>
+                        ) : (
+                          <input type="number" value={ov.wage ?? ""} placeholder={`시급 (기본 ${wEdit.wage || settings.wage})`}
+                            onChange={(e) => setOv({ wage: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 mt-3">
               {wEdit.id ? <Btn kind="danger" full onClick={delWorker}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
                 : <Btn kind="ghost" full onClick={() => setWEdit(null)}>취소</Btn>}
               <Btn full onClick={saveWorker}>저장</Btn>
