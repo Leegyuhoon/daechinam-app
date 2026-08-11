@@ -1358,7 +1358,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>{galleryViewer.category}</span>
               {galleryViewer.authorRole === "leader" && <span style={{ fontSize: 10, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{galleryViewer.workerName} · {galleryViewer.date}</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{galleryViewer.siteName} · {galleryViewer.workerName} · {galleryViewer.date}</span>
             </div>
             {galleryViewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{galleryViewer.note}</div>}
           </>
@@ -1953,7 +1953,7 @@ function PhotoAdminView({ data, update, setToast }) {
             )}
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: catColor[viewer.category] || C.sub, padding: "3px 8px" }}>{viewer.category}</span>
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.date} · {viewer.workerName}</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.siteName} · {viewer.workerName} · {viewer.date}</span>
             </div>
             {viewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{viewer.note}</div>}
             <button onClick={() => {
