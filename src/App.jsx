@@ -1301,14 +1301,18 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       {/* 현장 게시물 보기 · 현장 매뉴얼 */}
       {worker && (myVisibleReports.length > 0 || myManuals.length > 0) && (
         <div className="w-full grid grid-cols-2 gap-2" style={{ maxWidth: 320, marginTop: 8 }}>
-          <button onClick={() => setGalleryOpen(true)} className="flex items-center justify-center gap-1.5 relative"
-            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
-            <ImageIcon size={14} /> 현장 게시물{myVisibleReports.length > 0 ? ` (${myVisibleReports.length})` : ""}
-          </button>
-          <button onClick={() => setManualOpen(true)} className="flex items-center justify-center gap-1.5"
-            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
-            <FileText size={14} /> 현장 매뉴얼{myManuals.length > 0 ? ` (${myManuals.length})` : ""}
-          </button>
+          {myVisibleReports.length > 0 ? (
+            <button onClick={() => setGalleryOpen(true)} className="flex items-center justify-center gap-1.5 relative"
+              style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+              <ImageIcon size={14} /> 현장 게시물 ({myVisibleReports.length})
+            </button>
+          ) : <div />}
+          {myManuals.length > 0 ? (
+            <button onClick={() => setManualOpen(true)} className="flex items-center justify-center gap-1.5"
+              style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+              <FileText size={14} /> 현장 매뉴얼 ({myManuals.length})
+            </button>
+          ) : <div />}
         </div>
       )}
 
@@ -3468,10 +3472,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
       if (!res.ok) throw new Error("upload failed");
       const { id: fileId } = await res.json();
+      const displayName = file.name.startsWith(siteName) ? file.name : `${siteName}_${file.name}`;
       update((d) => ({
         ...d,
         siteManuals: [...(d.siteManuals || []), {
-          id: uid(), siteId, siteName, fileId, fileName: file.name, contentType: file.type,
+          id: uid(), siteId, siteName, fileId, fileName: displayName, contentType: file.type,
           uploadedAt: new Date().toISOString(),
         }],
       }));
