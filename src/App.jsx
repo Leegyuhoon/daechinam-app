@@ -699,6 +699,28 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  // 안드로이드 Chrome: 홈 화면에 원터치로 추가할 수 있는지 감지
+  const [canInstall, setCanInstall] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.__daechinamInstallPrompt) setCanInstall(true);
+    const onInstallable = () => setCanInstall(true);
+    window.addEventListener("daechinam:installable", onInstallable);
+    return () => window.removeEventListener("daechinam:installable", onInstallable);
+  }, []);
+  const doInstall = async () => {
+    const promptEvent = window.__daechinamInstallPrompt;
+    if (!promptEvent) return;
+    setInstalling(true);
+    try {
+      promptEvent.prompt();
+      await promptEvent.userChoice;
+    } catch (e) {}
+    window.__daechinamInstallPrompt = null;
+    setCanInstall(false);
+    setInstalling(false);
+  };
+
   const myAssignedTransfers = worker ? (data.transfers || []).filter((t) => t.status === "assigned" && t.assignedWorkerId === worker.id) : [];
   const respondAssignedTransfer = (t, accept) => {
     update((d) => ({
@@ -1017,6 +1039,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 12, lineHeight: 1.6 }}>
           관리자에게 받은 <b style={{ color: C.onDark }}>6자리 연결 코드</b>를 아래에 입력해 주세요.
         </div>
+
+        {canInstall && (
+          <button onClick={doInstall} disabled={installing} className="w-full flex items-center justify-center gap-2"
+            style={{ marginTop: 16, background: C.amber, border: "none", padding: "14px 0", color: "#3D2600", fontSize: 14, fontWeight: 900 }}>
+            <Plus size={16} /> {installing ? "설치 중…" : "홈 화면에 한 번에 추가하기"}
+          </button>
+        )}
 
         <div className="mt-5">
           <input value={codeInput} onChange={(e) => { setCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setCodeErr(""); }}
