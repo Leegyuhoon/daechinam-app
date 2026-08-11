@@ -104,6 +104,24 @@
         if (document.readyState === "complete") hide();
         else window.addEventListener("load", hide);
       })();
+      // 서비스 워커 등록 (안드로이드 "설치 가능" 조건 충족용)
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("/sw.js").catch(function () {});
+        });
+      }
+
+      // 안드로이드 Chrome: 브라우저가 "설치 가능"하다고 판단하면 이 이벤트가 옴 —
+      // 잡아뒀다가 앱 안의 버튼을 눌렀을 때 원터치 설치창을 띄울 수 있게 해요.
+      window.__daechinamInstallPrompt = null;
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        window.__daechinamInstallPrompt = e;
+        window.dispatchEvent(new CustomEvent("daechinam:installable"));
+      });
+      window.addEventListener("appinstalled", function () {
+        window.__daechinamInstallPrompt = null;
+      });
     </script>
   </body>
 </html>
