@@ -8,6 +8,7 @@ const CORS = {
 
 const MAX_IMAGE = 6 * 1024 * 1024;   // 6MB
 const MAX_VIDEO = 25 * 1024 * 1024;  // 25MB (짧은 영상 기준)
+const MAX_DOC = 15 * 1024 * 1024;    // 15MB (매뉴얼 PDF 등)
 
 export default async (req, context) => {
   if (req.method === "OPTIONS") {
@@ -38,8 +39,9 @@ export default async (req, context) => {
       const newId = crypto.randomUUID();
       const contentType = req.headers.get("content-type") || "application/octet-stream";
       const isVideo = contentType.startsWith("video/");
+      const isImage = contentType.startsWith("image/");
       const buf = await req.arrayBuffer();
-      const cap = isVideo ? MAX_VIDEO : MAX_IMAGE;
+      const cap = isVideo ? MAX_VIDEO : isImage ? MAX_IMAGE : MAX_DOC;
       if (buf.byteLength > cap) {
         return new Response(JSON.stringify({ error: "too large", limitMB: Math.round(cap / 1024 / 1024) }), { status: 413, headers: { "Content-Type": "application/json", ...CORS } });
       }
