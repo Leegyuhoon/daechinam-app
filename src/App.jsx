@@ -692,7 +692,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const [chk, setChk] = useState({ state: "idle" });
   const [manualSite, setManualSite] = useState("");
   const [xferOpen, setXferOpen] = useState(false);
-  const [xferForm, setXferForm] = useState({ date: "", siteId: "", toMode: "worker", toWorkerId: "", toName: "", startTime: "", endTime: "", message: "" });
+  const [xferForm, setXferForm] = useState({ date: "", siteId: "", names: [""], message: "" });
   const worker = workers.find((w) => w.id === dev.workerId) || null;
   const today = dKey(now);
   const transfers = data.transfers || [];
@@ -862,45 +862,32 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
   const openXfer = () => {
     const defSiteId = worker?.siteId || sites[0]?.id || "";
-    const defSite = sites.find((s) => s.id === defSiteId);
-    setXferForm({
-      date: today, siteId: defSiteId, toMode: "worker", toWorkerId: "", toName: "",
-      startTime: defSite?.startTime || "", endTime: defSite?.endTime || "", message: "",
-    });
+    setXferForm({ date: today, siteId: defSiteId, names: [""], message: "" });
     setXferOpen(true);
   };
   const submitXfer = () => {
     const s = sites.find((x) => x.id === xferForm.siteId);
-    let toWorkerId = null, toWorkerName = "";
-    if (xferForm.toMode === "worker") {
-      const to = workers.find((w) => w.id === xferForm.toWorkerId);
-      if (!to) { setToast("대신 근무할 사람을 선택해 주세요"); return; }
-      toWorkerId = to.id; toWorkerName = to.name;
-    } else {
-      const name = xferForm.toName.trim();
-      if (!name) { setToast("대신 근무할 사람의 이름을 입력해 주세요"); return; }
-      toWorkerName = name;
-    }
+    const names = xferForm.names.map((n) => n.trim()).filter(Boolean);
+    if (names.length === 0) { setToast("대신 근무할 사람의 이름을 한 명 이상 입력해 주세요"); return; }
     if (!xferForm.date) { setToast("날짜를 선택해 주세요"); return; }
-    if ((xferForm.startTime && !xferForm.endTime) || (!xferForm.startTime && xferForm.endTime)) {
-      setToast("시작·종료 시간을 둘 다 입력하거나, 둘 다 비워주세요"); return;
-    }
-    if (xferForm.startTime && xferForm.endTime && xferForm.startTime >= xferForm.endTime) {
-      setToast("종료 시간이 시작 시간보다 늦어야 해요"); return;
-    }
+    const at = new Date().toISOString();
     update((d) => ({
       ...d,
-      transfers: [...(d.transfers || []), {
-        id: uid(), date: xferForm.date, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
-        fromWorkerId: worker.id, fromWorkerName: worker.name,
-        toWorkerId, toWorkerName, toRegistered: xferForm.toMode === "worker",
-        startTime: xferForm.startTime || null, endTime: xferForm.endTime || null,
-        message: xferForm.message.trim(), status: "pending",
-        createdAt: new Date().toISOString(), respondedAt: null, fulfilledRecordId: null,
-      }],
+      transfers: [
+        ...(d.transfers || []),
+        ...names.map((toWorkerName) => ({
+          id: uid(), date: xferForm.date, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+          fromWorkerId: worker.id, fromWorkerName: worker.name,
+          toWorkerId: null, toWorkerName, toRegistered: false,
+          startTime: null, endTime: null,
+          message: xferForm.message.trim(), status: "pending",
+          createdAt: at, respondedAt: null, fulfilledRecordId: null,
+        })),
+      ],
     }));
-    const tRange = xferForm.startTime && xferForm.endTime ? ` (${xferForm.startTime}–${xferForm.endTime})` : "";
-    setToast(`${toWorkerName}님에게 ${xferForm.date.slice(5)}${tRange} 근무 양도를 요청했습니다`);
+    setToast(names.length > 1
+      ? `${names.join(", ")}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`
+      : `${names[0]}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`);
     setXferOpen(false);
   };
   const respondXfer = (id, status) => {
@@ -1519,73 +1506,42 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       <Modal open={xferOpen} onClose={() => setXferOpen(false)}>
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>근무 양도 요청</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-          선택한 날짜의 근무를 다른 근무자에게 대신 부탁해요. 상대가 승인하면 자동으로 반영돼요.
+          선택한 날짜의 근무를 다른 사람에게 대신 부탁해요. 관리자가 확인하고 승인하면 반영돼요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
           <Field label="날짜">
             <input type="date" value={xferForm.date} onChange={(e) => setXferForm((f) => ({ ...f, date: e.target.value }))} style={inputStyle} />
           </Field>
           <Field label="현장">
-            <select value={xferForm.siteId} onChange={(e) => {
-              const s = sites.find((x) => x.id === e.target.value);
-              setXferForm((f) => ({ ...f, siteId: e.target.value, startTime: s?.startTime || f.startTime, endTime: s?.endTime || f.endTime }));
-            }} style={inputStyle}>
+            <select value={xferForm.siteId} onChange={(e) => setXferForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
               {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
               {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            {(() => {
-              const s = sites.find((x) => x.id === xferForm.siteId);
-              if (!s || !s.startTime) return null;
-              return (
-                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6 }}>
-                  이 현장 등록 근무시간: {s.startTime}–{s.endTime} (아래 시간대에 자동 반영됐어요)
-                </div>
-              );
-            })()}
           </Field>
-          <Field label="대신 근무할 사람">
-            <div className="grid grid-cols-2 gap-1.5 mb-2">
-              {[["worker", "등록된 근무자"], ["custom", "직접 입력"]].map(([k, l]) => (
-                <button key={k} onClick={() => setXferForm((f) => ({ ...f, toMode: k }))}
-                  style={{
-                    padding: "8px 0", fontSize: 12.5, fontWeight: 800,
-                    background: xferForm.toMode === k ? C.aquaDeep : C.tileSoft,
-                    color: xferForm.toMode === k ? "#fff" : C.sub,
-                  }}>{l}</button>
+          <Field label="대신 근무할 사람 (여러 명 가능)">
+            <div className="flex flex-col gap-2">
+              {xferForm.names.map((name, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input type="text" value={name}
+                    onChange={(e) => {
+                      const next = [...xferForm.names]; next[i] = e.target.value;
+                      setXferForm((f) => ({ ...f, names: next }));
+                    }}
+                    placeholder="이름 (예: 김관리자)" style={inputStyle} />
+                  {xferForm.names.length > 1 && (
+                    <button onClick={() => setXferForm((f) => ({ ...f, names: f.names.filter((_, idx) => idx !== i) }))}>
+                      <X size={16} color={C.sub} />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
-            {xferForm.toMode === "worker" ? (
-              <select value={xferForm.toWorkerId} onChange={(e) => setXferForm((f) => ({ ...f, toWorkerId: e.target.value }))} style={inputStyle}>
-                <option value="">선택해 주세요</option>
-                {workers.filter((w) => w.id !== worker.id).map((w) => {
-                  const wIds = w.siteIds || (w.siteId ? [w.siteId] : []);
-                  const myIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
-                  const wSiteNames = wIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
-                  const sameSite = wIds.some((id) => myIds.includes(id));
-                  return (
-                    <option key={w.id} value={w.id}>
-                      {w.name} · {wSiteNames.length ? wSiteNames.join("·") : "현장 미지정"}{sameSite ? " (같은 현장)" : wIds.length ? " (다른 현장)" : ""}
-                    </option>
-                  );
-                })}
-              </select>
-            ) : (
-              <>
-                <input type="text" value={xferForm.toName} onChange={(e) => setXferForm((f) => ({ ...f, toName: e.target.value }))}
-                  placeholder="예: 김관리자, 최사장님" style={inputStyle} />
-                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
-                  근무자로 등록되어 있지 않은 사람이에요 (예: 관리자). 이 경우 출근 시 자동 연결은 안 되고, 관리자가 "양도" 탭에서 직접 승인 처리해요.
-                </div>
-              </>
-            )}
-          </Field>
-          <Field label="시간대 (선택)">
-            <div className="grid grid-cols-2 gap-2">
-              <input type="time" value={xferForm.startTime} onChange={(e) => setXferForm((f) => ({ ...f, startTime: e.target.value }))} style={inputStyle} />
-              <input type="time" value={xferForm.endTime} onChange={(e) => setXferForm((f) => ({ ...f, endTime: e.target.value }))} style={inputStyle} />
-            </div>
-            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
-              비워두면 "하루 전체"로 요청돼요. 위에서 현장을 고르면, 그 현장에 등록해둔 근무시간을 버튼 하나로 채울 수 있어요.
+            <button onClick={() => setXferForm((f) => ({ ...f, names: [...f.names, ""] }))}
+              className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+              <Plus size={13} /> 대신할 사람 추가
+            </button>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.5 }}>
+              예: 2시간 근무를 1시간씩 두 명이 나눠서 대신할 경우, 이름을 두 명 다 추가해 주세요. 각각 별도 요청으로 접수되고, 관리자가 "양도" 탭에서 확인 후 승인 처리해요.
             </div>
           </Field>
           <Field label="메시지 (선택)">
