@@ -3473,7 +3473,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       </Sec>
 
       {/* 현장 */}
-      <Sec title="현장 · 좌표와 반경" right={
+      <Sec title={`현장 · 좌표와 반경 (${sites.length})`} right={
         <button onClick={() => { setCap("idle"); setAddrQ(""); setAddrState("idle"); setAddrResults([]); setSEdit({ id: null, name: "", lat: "", lng: "", radius: settings.defaultRadius, workDays: [], startTime: "", endTime: "" }); }}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {sites.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>현장을 추가하고, 현장에 도착해서 좌표를 등록하세요.</div></Tile>}
@@ -3514,7 +3514,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       </Sec>
 
       {/* 근무자 */}
-      <Sec title="근무자" right={
+      <Sec title={`근무자 (${workers.length}명)`} right={
         <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], leaderSiteIds: [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
