@@ -163,7 +163,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -200,6 +200,7 @@ function migrate(p) {
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
   d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
   d.payslipSigns = Array.isArray(d.payslipSigns) ? d.payslipSigns : [];
+  d.siteManuals = Array.isArray(d.siteManuals) ? d.siteManuals : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -723,6 +724,22 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
   const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3" }); setLeadNoticeOpen(true); };
+
+  const myWorkerSiteIds2 = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])) : [];
+
+  // 사진/영상 열람: 팀장은 자기 현장 전체(팀원+본인), 일반 근무자는 자기 현장의 "팀장이 올린 것"만
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryViewer, setGalleryViewer] = useState(null);
+  const myVisibleReports = worker ? (data.siteReports || []).filter((r) => {
+    if (myLeaderSiteIds.includes(r.siteId)) return true; // 내가 팀장인 현장 = 전부 다 보임
+    if (myWorkerSiteIds2.includes(r.siteId) && r.authorRole === "leader") return true; // 내 현장의 팀장 게시물만
+    return false;
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
+
+  // 현장 매뉴얼: 내가 속한 현장의 매뉴얼만
+  const myManuals = worker ? (data.siteManuals || []).filter((m) => myWorkerSiteIds2.includes(m.siteId)) : [];
+  const [manualOpen, setManualOpen] = useState(false);
+
   const submitLeadNotice = () => {
     if (!leadNoticeForm.title.trim()) { setToast("제목을 입력해 주세요"); return; }
     if (myLeaderSiteIds.length === 0) { setToast("팀장으로 임명된 현장이 없어서 공지를 보낼 수 없어요"); return; }
@@ -755,6 +772,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const submitPhoto = async () => {
     if (!photoForm.file) { setToast(photoForm.kind === "video" ? "영상을 먼저 촬영해 주세요" : "사진을 먼저 촬영해 주세요"); return; }
     const s = sites.find((x) => x.id === photoForm.siteId);
+    const authorRole = (worker.leaderSiteIds || []).includes(photoForm.siteId) ? "leader" : "worker";
     setPhotoBusy(true);
     try {
       const mediaId = photoForm.kind === "video" ? await uploadVideo(photoForm.file) : await uploadPhoto(photoForm.file);
@@ -762,7 +780,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         ...d,
         siteReports: [...(d.siteReports || []), {
           id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
-          workerId: worker.id, workerName: worker.name,
+          workerId: worker.id, workerName: worker.name, authorRole,
           category: photoForm.category, note: photoForm.note.trim(), photoId: mediaId, kind: photoForm.kind,
           createdAt: new Date().toISOString(),
         }],
@@ -1278,6 +1296,98 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           <Btn kind="ghost" full onClick={() => setLeadNoticeOpen(false)}>취소</Btn>
           <Btn full onClick={submitLeadNotice}>공지 보내기</Btn>
         </div>
+      </Modal>
+
+      {/* 현장 게시물 보기 · 현장 매뉴얼 */}
+      {worker && (myVisibleReports.length > 0 || myManuals.length > 0) && (
+        <div className="w-full grid grid-cols-2 gap-2" style={{ maxWidth: 320, marginTop: 8 }}>
+          <button onClick={() => setGalleryOpen(true)} className="flex items-center justify-center gap-1.5 relative"
+            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+            <ImageIcon size={14} /> 현장 게시물{myVisibleReports.length > 0 ? ` (${myVisibleReports.length})` : ""}
+          </button>
+          <button onClick={() => setManualOpen(true)} className="flex items-center justify-center gap-1.5"
+            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+            <FileText size={14} /> 현장 매뉴얼{myManuals.length > 0 ? ` (${myManuals.length})` : ""}
+          </button>
+        </div>
+      )}
+
+      {/* 현장 게시물 갤러리 */}
+      <Modal open={galleryOpen} onClose={() => setGalleryOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>현장 게시물</div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>
+          {myLeaderSiteIds.length > 0 ? "우리 현장의 사진·영상을 모두 볼 수 있어요." : "우리 현장 팀장이 올린 사진·영상만 보여요."}
+        </div>
+        {myVisibleReports.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.sub, padding: "20px 0", textAlign: "center" }}>아직 게시물이 없습니다.</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {myVisibleReports.map((r) => (
+              <div key={r.id} onClick={() => setGalleryViewer(r)} className="pressable" style={{ cursor: "pointer" }}>
+                <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1", background: "#000" }}>
+                  {r.kind === "video" ? (
+                    <>
+                      <video src={photoUrl(r.photoId)} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.25)" }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <div style={{ width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: "10px solid #fff", marginLeft: 2 }} />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  )}
+                  {r.authorRole === "leader" && (
+                    <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 3 }}>{r.workerName} · {r.date.slice(5)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+      <Modal open={!!galleryViewer} onClose={() => setGalleryViewer(null)}>
+        {galleryViewer && (
+          <>
+            {galleryViewer.kind === "video" ? (
+              <video src={photoUrl(galleryViewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+            ) : (
+              <img src={photoUrl(galleryViewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+            )}
+            <div className="flex items-center gap-2 mt-3">
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>{galleryViewer.category}</span>
+              {galleryViewer.authorRole === "leader" && <span style={{ fontSize: 10, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{galleryViewer.workerName} · {galleryViewer.date}</span>
+            </div>
+            {galleryViewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{galleryViewer.note}</div>}
+          </>
+        )}
+      </Modal>
+
+      {/* 현장 매뉴얼 */}
+      <Modal open={manualOpen} onClose={() => setManualOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>현장 매뉴얼</div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>관리자가 등록한 우리 현장 매뉴얼이에요.</div>
+        {myManuals.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.sub, padding: "20px 0", textAlign: "center" }}>등록된 매뉴얼이 없습니다.</div>
+        ) : (
+          <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+            {myManuals.map((m) => (
+              <a key={m.id} href={photoUrl(m.fileId)} target="_blank" rel="noreferrer" className="pressable" style={{ display: "block" }}>
+                <Tile style={{ padding: "13px 14px" }}>
+                  <div className="flex items-center gap-2.5">
+                    <FileText size={18} color={C.aquaDeep} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{m.fileName}</div>
+                      <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{m.siteName} · 열람/다운로드</div>
+                    </div>
+                  </div>
+                </Tile>
+              </a>
+            ))}
+          </div>
+        )}
       </Modal>
 
       {/* 현장 사진 등록 · 용품 요청 */}
@@ -3349,6 +3459,30 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [addrQ, setAddrQ] = useState("");
   const [addrState, setAddrState] = useState("idle"); // idle | loading | done | fail
   const [addrResults, setAddrResults] = useState([]);
+  const [manualBusy, setManualBusy] = useState(false);
+  const uploadManualFile = async (siteId, siteName, file) => {
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) { setToast("파일이 너무 커요 (최대 15MB)"); return; }
+    setManualBusy(true);
+    try {
+      const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+      if (!res.ok) throw new Error("upload failed");
+      const { id: fileId } = await res.json();
+      update((d) => ({
+        ...d,
+        siteManuals: [...(d.siteManuals || []), {
+          id: uid(), siteId, siteName, fileId, fileName: file.name, contentType: file.type,
+          uploadedAt: new Date().toISOString(),
+        }],
+      }));
+      setToast("매뉴얼을 등록했습니다");
+    } catch (e) {
+      setToast("업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setManualBusy(false);
+    }
+  };
+  const removeManual = (id) => update((d) => ({ ...d, siteManuals: (d.siteManuals || []).filter((m) => m.id !== id) }));
 
   const bound = workers.find((w) => w.id === dev.workerId);
   const noCoord = sites.filter((s) => s.lat == null).length;
@@ -3875,6 +4009,33 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <Field label="종료 시간"><input type="time" value={sEdit.endTime || ""} onChange={(e) => setSEdit({ ...sEdit, endTime: e.target.value })} style={inputStyle} /></Field>
               </div>
             </div>
+
+            {sEdit.id && (
+              <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
+                <Eyebrow>현장 매뉴얼</Eyebrow>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, marginBottom: 10, lineHeight: 1.5 }}>
+                  PDF, 이미지 등을 올려두면 이 현장 소속 근무자·팀장이 앱에서 열람·다운로드할 수 있어요.
+                </div>
+                {(data.siteManuals || []).filter((m) => m.siteId === sEdit.id).map((m) => (
+                  <div key={m.id} className="flex items-center justify-between" style={{ padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+                    <a href={photoUrl(m.fileId)} target="_blank" rel="noreferrer" className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                      <FileText size={14} color={C.aquaDeep} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fileName}</span>
+                    </a>
+                    <button onClick={() => removeManual(m.id)} style={{ flexShrink: 0 }}><X size={14} color={C.sub} /></button>
+                  </div>
+                ))}
+                <label style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10,
+                  border: `1.5px dashed ${C.line}`, padding: "10px 0", cursor: "pointer", fontSize: 12.5, fontWeight: 800, color: C.aquaDeep,
+                }}>
+                  {manualBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  {manualBusy ? "업로드 중…" : "매뉴얼 파일 추가"}
+                  <input type="file" accept=".pdf,image/*" style={{ display: "none" }} disabled={manualBusy}
+                    onChange={(e) => { uploadManualFile(sEdit.id, sEdit.name, e.target.files?.[0]); e.target.value = ""; }} />
+                </label>
+              </div>
+            )}
 
             <div className="mb-3">
               <div className="mb-1.5"><Eyebrow>허용 반경</Eyebrow></div>
