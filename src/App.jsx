@@ -2492,6 +2492,11 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
     .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date >= sk && t.date <= ek)
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  // 고정 수당(팀장수당·주유수당 등)은 "월" 단위 개념이라 월별 조회일 때만 반영
+  const allowances = mode === "month" ? (worker?.allowances || []).filter((a) => Number(a.amount) > 0) : [];
+  const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
+  const totalPay = agg.pay + allowanceTotal;
+
   const [exportBusy, setExportBusy] = useState(false);
   const downloadWorkerCsv = () => {
     const head = agg.shift
@@ -2534,8 +2539,12 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           <div style="font-size:12px; color:#71767D; margin-top:4px;">발행일 ${dKey(new Date())}</div>
           <div style="display:flex; gap:24px; margin-top:16px; font-size:13px;">
             <div>총 근무시간 <b>${hmc(agg.net)}</b></div>
-            <div>지급 합계 <b style="color:#D8503F;">${money(agg.pay)}원</b></div>
+            <div>지급 합계 <b style="color:#D8503F;">${money(totalPay)}원</b></div>
           </div>
+          ${allowances.length > 0 ? `
+          <div style="margin-top:8px; font-size:12.5px; color:#71767D;">
+            ${allowances.map((a) => `${a.label} +${money(a.amount)}원`).join(" · ")}
+          </div>` : ""}
           <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:12.5px;">
             <thead><tr style="border-bottom:2px solid #1D232A;">
               <th style="padding:7px 6px; text-align:left;">날짜</th>
@@ -2650,13 +2659,28 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           padding: 18, borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
         }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
-          <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(agg.pay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
+          <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
             {agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
               : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
           </div>
+          {allowances.length > 0 && (
+            <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.25)" }}>
+              {allowances.map((a) => (
+                <div key={a.id} className="flex items-center justify-between" style={{ marginTop: 3 }}>
+                  <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: 700 }}>{a.label}</span>
+                  <span style={{ color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>+{money(a.amount)}원</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+        {mode !== "month" && (worker?.allowances || []).some((a) => Number(a.amount) > 0) && (
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+            이 근무자는 고정 수당이 등록돼 있어요. 월별 보기로 전환하면 여기에 함께 표시·계산돼요.
+          </div>
+        )}
 
         {dayList.length > 1 && (
           <div className="mt-4" style={{ border: `1px solid ${C.lineDark}`, padding: 13 }}>
