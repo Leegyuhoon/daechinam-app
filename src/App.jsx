@@ -762,7 +762,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
   const openPhoto = () => {
-    setPhotoForm({ siteId: worker?.siteId || sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+    setPhotoForm({ siteId: worker?.siteId || myWorkerSiteIds2[0] || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
     setPhotoOpen(true);
   };
   const pickPhotoFile = (f) => {
@@ -1424,10 +1424,10 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               ))}
             </div>
           </Field>
-          {sites.length > 1 && (
+          {myWorkerSiteIds2.length > 1 && (
             <Field label="현장">
               <select value={photoForm.siteId} onChange={(e) => setPhotoForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {myWorkerSiteIds2.map((id) => sites.find((s) => s.id === id)).filter(Boolean).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </Field>
           )}
