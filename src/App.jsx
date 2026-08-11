@@ -190,6 +190,8 @@ function migrate(p) {
     let x = w.code ? w : { ...w, code: String(Math.floor(100000 + Math.random() * 900000)) };
     if (!Array.isArray(x.siteIds)) x = { ...x, siteIds: x.siteId ? [x.siteId] : [] };
     if (!x.paySettingsBySite) x = { ...x, paySettingsBySite: {} };
+    if (typeof x.isTeamLead !== "boolean") x = { ...x, isTeamLead: false };
+    if (!Array.isArray(x.allowances)) x = { ...x, allowances: [] };
     return x;
   });
   d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
@@ -211,11 +213,13 @@ function payslipCalc(data, workerId, ym) {
   const agg = aggregate(recs, worker, data.settings);
   const adj = { ...EMPTY_ADJ, ...(data.adjustments[`${workerId}:${ym}`] || {}) };
   const base = Math.round(agg.pay);
-  const extra = Number(adj.extra) || 0;
+  const allowances = (worker?.allowances || []).filter((a) => Number(a.amount) > 0);
+  const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
+  const extra = (Number(adj.extra) || 0) + allowanceTotal;
   const gross = base + extra;
   const tax = adj.tax ? Math.floor((gross * 0.033) / 10) * 10 : 0;
   const deduct = Number(adj.deduct) || 0;
-  return { worker, recs, agg, adj, base, extra, gross, tax, deduct, net: gross - tax - deduct };
+  return { worker, recs, agg, adj, base, extra, allowances, allowanceTotal, gross, tax, deduct, net: gross - tax - deduct };
 }
 const ymLabel = (ym) => `${ym.slice(0, 4)}년 ${Number(ym.slice(5, 7))}월`;
 
@@ -712,6 +716,30 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     }
   };
 
+  const [leadNoticeOpen, setLeadNoticeOpen] = useState(false);
+  const [leadNoticeForm, setLeadNoticeForm] = useState({ title: "", message: "", days: "3" });
+  const mySiteNames = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
+  const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
+  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3" }); setLeadNoticeOpen(true); };
+  const submitLeadNotice = () => {
+    if (!leadNoticeForm.title.trim()) { setToast("제목을 입력해 주세요"); return; }
+    const mySiteIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
+    if (mySiteIds.length === 0) { setToast("배정된 현장이 없어서 공지를 보낼 수 없어요"); return; }
+    const start = dKey(new Date());
+    const endD = new Date(); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
+    update((d) => ({
+      ...d,
+      notices: [...(d.notices || []), {
+        id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
+        audience: "site", siteIds: mySiteIds, siteName: mySiteNames.join("·"), workerIds: [],
+        startDate: start, endDate: dKey(endD), active: true,
+        createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
+      }],
+    }));
+    setToast("현장 동료들에게 공지를 보냈습니다");
+    setLeadNoticeOpen(false);
+  };
+
   const [photoOpen, setPhotoOpen] = useState(false);
   const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -776,10 +804,12 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     const seenKey = "cleanwork:noticeSeen";
     let seen = {};
     try { seen = JSON.parse(localStorage.getItem(seenKey) || "{}"); } catch (e) {}
+    const myWorkerSiteIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
     const due = (data.notices || []).filter((n) => {
       if (!n.active) return false;
       if (today < n.startDate || today > n.endDate) return false;
       if (n.audience === "custom" && !(n.workerIds || []).includes(worker.id)) return false;
+      if (n.audience === "site" && !(n.siteIds || []).some((id) => myWorkerSiteIds.includes(id))) return false;
       return seen[`${n.id}:${today}`] !== true;
     });
     if (due.length > 0) {
@@ -1197,6 +1227,56 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             </div>
           </>
         )}
+      </Modal>
+
+      {/* 팀장 전용: 현장 공지 */}
+      {worker?.isTeamLead && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
+          <button onClick={openLeadNotice} className="w-full flex items-center justify-center gap-2"
+            style={{ background: C.amber, border: "none", padding: "12px 0", color: "#3D2600", fontSize: 13, fontWeight: 900 }}>
+            <ShieldCheck size={15} /> 우리 현장 공지 작성 (팀장)
+          </button>
+          {myLeadNotices.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {myLeadNotices.map((n) => {
+                const live = n.active && today >= n.startDate && today <= n.endDate;
+                return (
+                  <div key={n.id} className="flex items-center justify-between" style={{ padding: "7px 2px", borderBottom: `1px solid ${C.lineDark}` }}>
+                    <div style={{ fontSize: 12, color: C.onDark, fontWeight: 700 }}>{n.title}</div>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: live ? "#fff" : C.onDarkSub, background: live ? C.blue : "transparent", padding: "2px 6px" }}>
+                      {live ? "노출 중" : "종료"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 팀장 공지 작성 모달 */}
+      <Modal open={leadNoticeOpen} onClose={() => setLeadNoticeOpen(false)}>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>우리 현장 공지 작성</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+          {mySiteNames.join("·") || "소속 현장"} 근무자들에게만 전달돼요. 관리자도 이 공지를 확인할 수 있어요.
+        </div>
+        <div className="mt-4 flex flex-col gap-2.5">
+          <Field label="제목">
+            <input value={leadNoticeForm.title} onChange={(e) => setLeadNoticeForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="예: 내일 오전 안전점검 있습니다" style={inputStyle} />
+          </Field>
+          <Field label="내용 (선택)">
+            <textarea value={leadNoticeForm.message} onChange={(e) => setLeadNoticeForm((f) => ({ ...f, message: e.target.value }))}
+              rows={3} style={{ ...inputStyle, resize: "none" }} />
+          </Field>
+          <Field label="며칠간 보여줄지">
+            <input type="number" min="1" value={leadNoticeForm.days} onChange={(e) => setLeadNoticeForm((f) => ({ ...f, days: e.target.value }))} style={inputStyle} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setLeadNoticeOpen(false)}>취소</Btn>
+          <Btn full onClick={submitLeadNotice}>공지 보내기</Btn>
+        </div>
       </Modal>
 
       {/* 현장 사진 등록 · 용품 요청 */}
@@ -1930,6 +2010,7 @@ function TransferAdminView({ data, update, setToast }) {
 function NoticeAdminView({ data, update, setToast }) {
   const { workers } = data;
   const [edit, setEdit] = useState(null);
+  const [viewer, setViewer] = useState(null);
   const notices = [...(data.notices || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const today = dKey(new Date());
 
@@ -1954,6 +2035,7 @@ function NoticeAdminView({ data, update, setToast }) {
       audience: edit.audience, workerIds: edit.audience === "custom" ? edit.workerIds : [],
       startDate, endDate, active: edit.active,
       createdAt: edit.id ? edit.createdAt : new Date().toISOString(),
+      createdBy: edit.id ? (edit.createdBy || "admin") : "admin", createdByName: edit.id ? (edit.createdByName || "관리자") : "관리자",
     };
     update((d) => ({ ...d, notices: edit.id ? (d.notices || []).map((x) => (x.id === n.id ? n : x)) : [...(d.notices || []), n] }));
     setEdit(null); setToast("공지를 저장했습니다");
@@ -1972,10 +2054,10 @@ function NoticeAdminView({ data, update, setToast }) {
         {notices.map((n) => {
           const live = n.active && today >= n.startDate && today <= n.endDate;
           return (
-            <Tile key={n.id} onClick={() => setEdit({
-              ...n, mode: "range", leadDays: 7, targetDate: n.endDate, includeTarget: true,
-              workerIds: n.workerIds || [],
-            })} style={{ padding: "13px 14px" }}>
+            <Tile key={n.id} onClick={() => {
+              if (n.createdBy && n.createdBy !== "admin") { setViewer(n); return; }
+              setEdit({ ...n, mode: "range", leadDays: 7, targetDate: n.endDate, includeTarget: true, workerIds: n.workerIds || [] });
+            }} style={{ padding: "13px 14px" }}>
               <div className="flex items-start justify-between gap-2">
                 <div style={{ minWidth: 0 }}>
                   <div className="flex items-center gap-1.5">
@@ -1983,9 +2065,19 @@ function NoticeAdminView({ data, update, setToast }) {
                     {live && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 5px" }}>노출 중</span>}
                     {!n.active && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>꺼짐</span>}
                   </div>
+                  <div className="flex items-center gap-1 mt-1">
+                    <span style={{
+                      fontSize: 9.5, fontWeight: 900, padding: "1px 5px",
+                      color: n.createdBy === "admin" || !n.createdBy ? C.sub : "#7A4E07",
+                      background: n.createdBy === "admin" || !n.createdBy ? "transparent" : C.amber,
+                      border: n.createdBy === "admin" || !n.createdBy ? `1px solid ${C.line}` : "none",
+                    }}>
+                      {n.createdBy === "admin" || !n.createdBy ? "관리자 작성" : `팀장 · ${n.createdByName || "?"}`}
+                    </span>
+                  </div>
                   {n.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>{n.message}</div>}
                   <div style={{ fontSize: 13, color: C.sub, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-                    {n.startDate.slice(5)} ~ {n.endDate.slice(5)} · {n.audience === "all" ? "전체 근무자" : `${(n.workerIds || []).length}명 지정`}
+                    {n.startDate.slice(5)} ~ {n.endDate.slice(5)} · {n.audience === "all" ? "전체 근무자" : n.audience === "site" ? `${n.siteName || "소속 현장"} 근무자` : `${(n.workerIds || []).length}명 지정`}
                   </div>
                 </div>
                 <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
@@ -2073,6 +2165,32 @@ function NoticeAdminView({ data, update, setToast }) {
                 이 공지 삭제
               </button>
             )}
+          </>
+        )}
+      </Modal>
+
+      <Modal open={!!viewer} onClose={() => setViewer(null)}>
+        {viewer && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "2px 6px" }}>팀장 작성</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.createdByName}</span>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{viewer.title}</div>
+            {viewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{viewer.message}</div>}
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+              노출 기간 {viewer.startDate} ~ {viewer.endDate}
+            </div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+              대상: {viewer.siteName || "소속 현장"} 근무자 전체
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
+              <button onClick={() => { removeNotice(viewer.id); setViewer(null); }}
+                style={{ background: "transparent", color: C.coral, border: `1px solid ${C.coral}`, fontSize: 14, fontWeight: 700 }}>
+                삭제
+              </button>
+            </div>
           </>
         )}
       </Modal>
@@ -2314,6 +2432,7 @@ function RecordsView({ data, update, setToast }) {
                   <div style={{ minWidth: 0 }}>
                     <div className="flex items-center gap-1.5">
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
+                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
                       {flags > 0 && <ShieldAlert size={13} color={C.amber} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -2473,7 +2592,10 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
       <div className="sticky top-0 flex items-center gap-3 px-4 py-3.5" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
         <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
         <div style={{ flex: 1 }}>
-          <div style={{ color: C.onDark, fontSize: 18, fontWeight: 900 }}>{worker.name}</div>
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900 }}>{worker.name}</span>
+            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+          </div>
           <div style={{ color: C.onDarkSub, fontSize: 11.5 }}>
             {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
           </div>
@@ -2900,7 +3022,10 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       </div>
 
       <div className="flex items-baseline justify-between">
-        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></div>
+        <div className="flex items-baseline gap-1.5">
+          <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></span>
+          {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+        </div>
         <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
           {agg.shift
             ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
@@ -2940,7 +3065,10 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         {agg.holidayPay > 0 && (
           <LineItem k="공휴일 근무" sub={`${agg.holidayNet.toFixed(1)}시간 × ${money(agg.wage)}원 × ${agg.holidayMultiplier}`} v={`${money(agg.holidayPay)}원`} />
         )}
-        {p.extra > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(p.extra)}원`} />}
+        {p.allowances.map((a) => (
+          <LineItem key={a.id} k={a.label} v={`${money(a.amount)}원`} />
+        ))}
+        {Number(adj.extra) > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(adj.extra)}원`} />}
         <div style={{ borderTop: `1px solid ${C.line}` }} />
         <LineItem k="지급 합계" v={`${money(p.gross)}원`} bold />
       </div>
@@ -3204,12 +3332,16 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
     const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
     const siteIds = wEdit.siteIds || [];
+    const allowances = (wEdit.allowances || [])
+      .filter((a) => a.label && a.label.trim())
+      .map((a) => ({ id: a.id || uid(), label: a.label.trim(), amount: Number(a.amount) || 0 }));
     const w = {
       id: wEdit.id || uid(), name: wEdit.name.trim(),
       siteIds, siteId: siteIds[0] || null, // siteId는 하위호환용(대표 현장)
       wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
       paySettingsBySite: wEdit.paySettingsBySite || {},
+      isTeamLead: !!wEdit.isTeamLead, allowances,
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
@@ -3361,11 +3493,12 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
         {workers.map((w) => (
-          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {} })} style={{ padding: "12px 14px" }}>
+          <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {}, isTeamLead: !!w.isTeamLead, allowances: (w.allowances || []).map((a) => ({ ...a })) })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-1.5">
                   <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
+                  {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
                   {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
                 </div>
                 <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
@@ -3773,6 +3906,29 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               )}
             </Field>
 
+            <button onClick={() => setWEdit({ ...wEdit, isTeamLead: !wEdit.isTeamLead })}
+              className="flex items-center justify-between w-full"
+              style={{ background: wEdit.isTeamLead ? "#FFF4E0" : C.tileSoft, border: `1px solid ${wEdit.isTeamLead ? C.amber : C.line}`, padding: "11px 13px" }}>
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} color={wEdit.isTeamLead ? "#B8790A" : C.sub} />
+                <div style={{ fontSize: 13, fontWeight: 800, color: wEdit.isTeamLead ? "#7A4E07" : C.text }}>이 사람을 팀장으로 지정</div>
+              </div>
+              <div style={{
+                width: 38, height: 22, borderRadius: 999, background: wEdit.isTeamLead ? C.amber : C.line,
+                position: "relative", transition: "background 0.15s",
+              }}>
+                <div style={{
+                  width: 18, height: 18, borderRadius: 999, background: "#fff", position: "absolute", top: 2,
+                  left: wEdit.isTeamLead ? 18 : 2, transition: "left 0.15s",
+                }} />
+              </div>
+            </button>
+            {wEdit.isTeamLead && (
+              <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.5 }}>
+                이름 옆에 "팀장" 뱃지가 붙고, 담당 현장 동료들에게 공지를 작성해서 보낼 수 있게 돼요.
+              </div>
+            )}
+
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, marginBottom: 4 }}>아래는 이 근무자의 기본 급여예요 (현장 구분 없이 적용).</div>
             {settings.payMode === "shift" ? (
               <div className="grid grid-cols-2 gap-2">
@@ -3827,6 +3983,50 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 </div>
               </div>
             )}
+
+            <div className="mt-3" style={{ background: C.tileSoft, padding: 13 }}>
+              <Eyebrow>고정 수당 (선택)</Eyebrow>
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 5, marginBottom: 10, lineHeight: 1.5 }}>
+                팀장수당, 주유수당처럼 매달 자동으로 더해줄 금액이 있으면 등록하세요. 정산서에 매달 자동으로 반영돼요.
+              </div>
+
+              {(wEdit.allowances || []).length > 0 && (
+                <div className="flex flex-col gap-2 mb-2.5">
+                  {wEdit.allowances.map((a, i) => (
+                    <div key={a.id} className="flex items-center gap-2">
+                      <input value={a.label} placeholder="항목명 (예: 팀장수당)"
+                        onChange={(e) => {
+                          const next = [...wEdit.allowances]; next[i] = { ...a, label: e.target.value };
+                          setWEdit({ ...wEdit, allowances: next });
+                        }} style={{ ...inputStyle, background: C.tile, flex: 2 }} />
+                      <input type="number" value={a.amount} placeholder="금액"
+                        onChange={(e) => {
+                          const next = [...wEdit.allowances]; next[i] = { ...a, amount: e.target.value };
+                          setWEdit({ ...wEdit, allowances: next });
+                        }} style={{ ...inputStyle, background: C.tile, flex: 1 }} />
+                      <button onClick={() => setWEdit({ ...wEdit, allowances: wEdit.allowances.filter((x) => x.id !== a.id) })}>
+                        <X size={16} color={C.sub} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-1.5">
+                <button onClick={() => setWEdit({ ...wEdit, allowances: [...(wEdit.allowances || []), { id: uid(), label: "팀장수당", amount: "" }] })}
+                  style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "7px 11px" }}>
+                  + 팀장수당
+                </button>
+                <button onClick={() => setWEdit({ ...wEdit, allowances: [...(wEdit.allowances || []), { id: uid(), label: "주유수당", amount: "" }] })}
+                  style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "7px 11px" }}>
+                  + 주유수당
+                </button>
+                <button onClick={() => setWEdit({ ...wEdit, allowances: [...(wEdit.allowances || []), { id: uid(), label: "", amount: "" }] })}
+                  style={{ fontSize: 12, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "7px 11px" }}>
+                  + 직접 입력
+                </button>
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-2 mt-3">
               {wEdit.id ? <Btn kind="danger" full onClick={delWorker}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
