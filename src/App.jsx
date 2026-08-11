@@ -195,7 +195,9 @@ function migrate(p) {
     if (!Array.isArray(x.allowances)) x = { ...x, allowances: [] };
     return x;
   });
-  d.transfers = Array.isArray(d.transfers) ? d.transfers : [];
+  d.transfers = (Array.isArray(d.transfers) ? d.transfers : []).map((t) => ({
+    assignedWorkerId: null, assignedWorkerName: null, ...t,
+  }));
   d.notices = Array.isArray(d.notices) ? d.notices : [];
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
   d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
@@ -697,6 +699,17 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  const myAssignedTransfers = worker ? (data.transfers || []).filter((t) => t.status === "assigned" && t.assignedWorkerId === worker.id) : [];
+  const respondAssignedTransfer = (t, accept) => {
+    update((d) => ({
+      ...d,
+      transfers: (d.transfers || []).map((x) => (x.id !== t.id ? x : accept
+        ? { ...x, status: "approved", toWorkerId: worker.id, toWorkerName: worker.name, respondedAt: new Date().toISOString() }
+        : { ...x, status: "pending", assignedWorkerId: null, assignedWorkerName: null, respondedAt: new Date().toISOString() })),
+    }));
+    setToast(accept ? "수락했습니다 — 그날 출근하면 자동으로 반영돼요" : "거절했습니다. 관리자에게 전달돼요");
+  };
+
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
   const [signOpen, setSignOpen] = useState(null); // payslipSigns entry
   const [sigData, setSigData] = useState(null);
@@ -854,9 +867,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     }
   };
 
-  const myIncoming = worker ? transfers.filter((t) => t.toWorkerId === worker.id) : [];
   const myOutgoing = worker ? transfers.filter((t) => t.fromWorkerId === worker.id) : [];
-  const pendingIncoming = myIncoming.filter((t) => t.status === "pending");
   const recentOutgoing = [...myOutgoing].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5);
   const timeLabel = (t) => (t.startTime && t.endTime ? `${t.startTime}–${t.endTime}` : "하루 전체");
 
@@ -879,6 +890,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           id: uid(), date: xferForm.date, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           fromWorkerId: worker.id, fromWorkerName: worker.name,
           toWorkerId: null, toWorkerName, toRegistered: false,
+          assignedWorkerId: null, assignedWorkerName: null,
           startTime: null, endTime: null,
           message: xferForm.message.trim(), status: "pending",
           createdAt: at, respondedAt: null, fulfilledRecordId: null,
@@ -889,14 +901,6 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       ? `${names.join(", ")}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`
       : `${names[0]}님에게 ${xferForm.date.slice(5)} 근무 양도를 요청했습니다`);
     setXferOpen(false);
-  };
-  const respondXfer = (id, status) => {
-    const t = transfers.find((x) => x.id === id);
-    update((d) => ({
-      ...d,
-      transfers: (d.transfers || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString() } : x)),
-    }));
-    setToast(status === "approved" ? `${t.date.slice(5)} ${t.siteName} 근무를 대신 맡기로 승인했습니다` : "요청을 거절했습니다");
   };
   const cancelXfer = (id) => {
     update((d) => ({
@@ -1116,29 +1120,8 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         )}
       </div>
 
-      {/* 받은 양도 요청 (승인 대기) */}
-      {pendingIncoming.length > 0 && (
-        <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
-          {pendingIncoming.map((t) => (
-            <div key={t.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.blue}` }}>
-              <div className="flex items-center gap-1.5" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
-                <Send size={12} /> {t.fromWorkerName}님이 근무 양도를 요청했어요
-              </div>
-              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
-                {t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : " · 하루 전체"}
-              </div>
-              {t.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>“{t.message}”</div>}
-              <div className="grid grid-cols-2 gap-2 mt-3">
-                <Btn kind="ghost" full small onClick={() => respondXfer(t.id, "declined")}>거절</Btn>
-                <Btn full small onClick={() => respondXfer(t.id, "approved")}>승인하고 대신 근무</Btn>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* 근무 양도 요청하기 */}
-      <div className="w-full" style={{ maxWidth: 320, marginTop: pendingIncoming.length ? 4 : 22 }}>
+      <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
         <button onClick={openXfer} className="w-full flex items-center justify-center gap-2"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
           <Repeat size={15} /> 근무 양도 요청하기
@@ -1157,11 +1140,11 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                 <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
                   <span style={{
                     fontSize: 10.5, fontWeight: 800, padding: "2px 7px",
-                    color: t.status === "approved" ? "#fff" : t.status === "declined" || t.status === "cancelled" ? C.onDarkSub : C.bg,
-                    background: t.status === "approved" ? C.blue : t.status === "pending" ? C.aqua : "transparent",
+                    color: t.status === "approved" ? "#fff" : t.status === "assigned" ? "#fff" : t.status === "declined" || t.status === "cancelled" ? C.onDarkSub : C.bg,
+                    background: t.status === "approved" ? C.aquaDeep : t.status === "assigned" ? C.blue : t.status === "pending" ? C.aqua : "transparent",
                     border: t.status === "declined" || t.status === "cancelled" ? `1px solid ${C.lineDark}` : "none",
                   }}>
-                    {t.status === "pending" ? "대기 중" : t.status === "approved" ? "승인됨" : t.status === "declined" ? "거절됨" : "취소됨"}
+                    {t.status === "pending" ? "관리자 확인 중" : t.status === "assigned" ? `${t.assignedWorkerName} 승인 대기` : t.status === "approved" ? "승인 완료" : t.status === "declined" ? "거절됨" : "취소됨"}
                   </span>
                   {t.status === "pending" && (
                     <button onClick={() => cancelXfer(t.id)} title="요청 취소"><X size={14} color={C.onDarkSub} /></button>
@@ -1172,6 +1155,28 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           </div>
         )}
       </div>
+
+      {/* 나에게 온 대신 근무 요청 */}
+      {myAssignedTransfers.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          {myAssignedTransfers.map((t) => (
+            <div key={t.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.blue}` }}>
+              <div className="flex items-center gap-1.5" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
+                <Repeat size={12} /> 대신 근무 요청이 왔어요
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
+                {t.date.slice(5).replace("-", "/")} · {t.siteName}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{t.fromWorkerName}님의 근무를 대신 부탁받았어요</div>
+              {t.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>"{t.message}"</div>}
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <Btn kind="ghost" small onClick={() => respondAssignedTransfer(t, false)}>거절</Btn>
+                <Btn small onClick={() => respondAssignedTransfer(t, true)}>수락하기</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 확인·서명 필요한 정산서 */}
       {myPendingSigns.length > 0 && (
@@ -2123,80 +2128,134 @@ function SupplyAdminView({ data, update, setToast }) {
 /* ─────────────────────────  근무 양도 관리(관리자)  ───────────────────────── */
 function TransferAdminView({ data, update, setToast }) {
   const [filter, setFilter] = useState("all");
+  const [assignPick, setAssignPick] = useState(null); // 지정 중인 transfer id
   const transfers = [...(data.transfers || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const shown = filter === "all" ? transfers : transfers.filter((t) => t.status === filter);
+  const shown = filter === "all" ? transfers : filter === "needAction" ? transfers.filter((t) => t.status === "pending") : transfers.filter((t) => t.status === filter);
 
+  const assignWorker = (id, w) => {
+    update((d) => ({
+      ...d,
+      transfers: (d.transfers || []).map((t) => (t.id === id
+        ? { ...t, status: "assigned", assignedWorkerId: w.id, assignedWorkerName: w.name, respondedAt: null }
+        : t)),
+    }));
+    setToast(`${w.name}님에게 알림을 보냈습니다 — 본인 승인을 기다려요`);
+    setAssignPick(null);
+  };
+  const approveDirect = (id) => {
+    // 미등록 인원(예: 관리자 본인, 외부인)은 앱 계정이 없으니 관리자가 바로 확정
+    update((d) => ({ ...d, transfers: (d.transfers || []).map((t) => (t.id === id ? { ...t, status: "approved", respondedAt: new Date().toISOString() } : t)) }));
+    setToast("승인 처리했습니다 (미등록 인원 — 출근 기록은 수기로 등록해 주세요)");
+  };
+  const unassign = (id) => {
+    update((d) => ({ ...d, transfers: (d.transfers || []).map((t) => (t.id === id ? { ...t, status: "pending", assignedWorkerId: null, assignedWorkerName: null } : t)) }));
+    setToast("지정을 취소했습니다");
+  };
   const setStatus = (id, status) => {
     update((d) => ({ ...d, transfers: (d.transfers || []).map((t) => (t.id === id ? { ...t, status, respondedAt: new Date().toISOString() } : t)) }));
-    setToast(status === "approved" ? "관리자가 승인 처리했습니다" : status === "declined" ? "관리자가 거절 처리했습니다" : "삭제했습니다");
+    setToast(status === "declined" ? "거절 처리했습니다" : "삭제했습니다");
   };
   const remove = (id) => update((d) => ({ ...d, transfers: (d.transfers || []).filter((t) => t.id !== id) }));
 
   const badge = (status) => {
     const map = {
-      pending: [C.aqua, C.bg, "대기 중"],
-      approved: [C.blue, "#fff", "승인됨"],
+      pending: [C.aqua, C.bg, "관리자 확인 대기"],
+      assigned: [C.blue, "#fff", "본인 승인 대기"],
+      approved: [C.aquaDeep, "#fff", "승인 완료"],
       declined: [C.lineDark, C.onDarkSub, "거절됨"],
       cancelled: [C.lineDark, C.onDarkSub, "취소됨"],
     };
     const [bg, col, label] = map[status] || map.pending;
-    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px" }}>{label}</span>;
+    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px", flexShrink: 0 }}>{label}</span>;
   };
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      <div className="flex gap-1.5 mb-3">
-        {[["all", "전체"], ["pending", "대기"], ["approved", "승인"], ["declined", "거절"], ["cancelled", "취소"]].map(([k, l]) => (
+      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+        {[["all", "전체"], ["pending", "확인 필요"], ["assigned", "승인 대기"], ["approved", "완료"], ["declined", "거절"]].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
-            style={{
-              fontSize: 12, fontWeight: 800, padding: "6px 11px",
-              background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub,
-            }}>{l}</button>
+            style={{ fontSize: 12, fontWeight: 800, padding: "6px 11px", flexShrink: 0, background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub }}>{l}</button>
         ))}
       </div>
 
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>양도 요청 내역이 없습니다.</div>}
 
       <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-        {shown.map((t) => (
-          <Tile key={t.id} style={{ padding: "13px 14px" }}>
-            <div className="flex items-start justify-between gap-2">
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
-                  {t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : " · 하루 전체"}
-                </div>
-                <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
-                  {t.fromWorkerName} <ArrowRight size={12} /> {t.toWorkerName}
-                  {t.toRegistered === false && (
-                    <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>미등록</span>
+        {shown.map((t) => {
+          const siteWorkers = (data.workers || []).filter((w) => {
+            const wSites = w.siteIds || (w.siteId ? [w.siteId] : []);
+            return !t.siteId || wSites.includes(t.siteId);
+          });
+          return (
+            <Tile key={t.id} style={{ padding: "13px 14px" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
+                    {t.date.slice(5).replace("-", "/")} · {t.siteName}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
+                    {t.fromWorkerName} <ArrowRight size={12} /> "{t.toWorkerName}"님 요청
+                  </div>
+                  {t.assignedWorkerName && (
+                    <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12.5, color: C.blue, fontWeight: 800 }}>
+                      <ShieldCheck size={12} /> {t.assignedWorkerName}님으로 지정함
+                    </div>
+                  )}
+                  {t.message && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>"{t.message}"</div>}
+                  {t.status === "approved" && (
+                    <div style={{ fontSize: 11.5, color: t.fulfilledRecordId ? C.blue : C.amber, marginTop: 4, fontWeight: 700 }}>
+                      {t.fulfilledRecordId
+                        ? "출근 완료 · 근무 기록에 반영됨"
+                        : t.toWorkerId
+                          ? `${t.toWorkerName}님 승인 완료 · 아직 출근 전`
+                          : "승인됨 · 미등록 인원이라 출근 기록은 수기로 등록해 주세요"}
+                    </div>
                   )}
                 </div>
-                {t.message && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>“{t.message}”</div>}
-                {t.status === "approved" && (
-                  <div style={{ fontSize: 11.5, color: t.fulfilledRecordId ? C.blue : C.amber, marginTop: 4, fontWeight: 700 }}>
-                    {t.fulfilledRecordId
-                      ? "출근 완료 · 근무 기록에 반영됨"
-                      : t.toRegistered === false
-                        ? "승인됨 · 미등록 인원이라 출근 기록은 수기로 등록해 주세요"
-                        : "승인됨 · 아직 출근 전"}
-                  </div>
-                )}
+                {badge(t.status)}
               </div>
-              {badge(t.status)}
-            </div>
-            <div className="flex gap-2 mt-3">
+
               {t.status === "pending" && (
-                <>
-                  <Btn kind="ghost" small onClick={() => setStatus(t.id, "declined")}>거절 처리</Btn>
-                  <Btn small onClick={() => setStatus(t.id, "approved")}>승인 처리</Btn>
-                </>
+                <div className="mt-3">
+                  {assignPick === t.id ? (
+                    <div className="flex flex-col gap-1.5">
+                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginBottom: 2 }}>등록된 근무자 중에서 지정하세요</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {siteWorkers.length === 0 && <div style={{ fontSize: 12, color: C.sub }}>이 현장에 등록된 근무자가 없어요.</div>}
+                        {siteWorkers.map((w) => (
+                          <button key={w.id} onClick={() => assignWorker(t.id, w)}
+                            style={{ fontSize: 12, fontWeight: 800, padding: "6px 10px", background: C.tileSoft, color: C.text }}>
+                            {w.name}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-2 mt-1.5">
+                        <Btn kind="ghost" small onClick={() => setAssignPick(null)}>취소</Btn>
+                        <Btn kind="ghost" small onClick={() => approveDirect(t.id)}>등록 안 된 사람(예: 관리자) — 바로 승인</Btn>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Btn kind="ghost" small onClick={() => setStatus(t.id, "declined")}>거절</Btn>
+                      <Btn small onClick={() => setAssignPick(t.id)}>근무자 지정하기</Btn>
+                    </div>
+                  )}
+                </div>
               )}
-              <button onClick={() => remove(t.id)} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
-                <Trash2 size={13} /> 삭제
-              </button>
-            </div>
-          </Tile>
-        ))}
+              {t.status === "assigned" && (
+                <div className="flex gap-2 mt-3">
+                  <Btn kind="ghost" small onClick={() => unassign(t.id)}>지정 취소</Btn>
+                </div>
+              )}
+
+              <div className="flex justify-end mt-2">
+                <button onClick={() => remove(t.id)} className="flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
+                  <Trash2 size={13} /> 삭제
+                </button>
+              </div>
+            </Tile>
+          );
+        })}
       </div>
     </div>
   );
