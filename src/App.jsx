@@ -732,7 +732,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const [galleryViewer, setGalleryViewer] = useState(null);
   const myVisibleReports = worker ? (data.siteReports || []).filter((r) => {
     if (myLeaderSiteIds.includes(r.siteId)) return true; // 내가 팀장인 현장 = 전부 다 보임
-    if (myWorkerSiteIds2.includes(r.siteId) && r.authorRole === "leader") return true; // 내 현장의 팀장 게시물만
+    if (myWorkerSiteIds2.includes(r.siteId) && (r.authorRole === "leader" || r.authorRole === "admin")) return true; // 내 현장의 팀장·관리자 게시물
     return false;
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 
@@ -1344,6 +1344,9 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                   {r.authorRole === "leader" && (
                     <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>
                   )}
+                  {r.authorRole === "admin" && (
+                    <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px" }}>관리자</span>
+                  )}
                 </div>
                 <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 3 }}>{r.workerName} · {r.date.slice(5)}</div>
               </div>
@@ -1362,6 +1365,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>{galleryViewer.category}</span>
               {galleryViewer.authorRole === "leader" && <span style={{ fontSize: 10, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+              {galleryViewer.authorRole === "admin" && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px" }}>관리자</span>}
               <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{galleryViewer.siteName} · {galleryViewer.workerName} · {galleryViewer.date}</span>
             </div>
             {galleryViewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{galleryViewer.note}</div>}
@@ -1835,16 +1839,132 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
 }
 
 /* ─────────────────────────  현장 사진 관리(관리자, 폴더 구조)  ───────────────────────── */
+/* 관리자가 현장 검수 중 사진·영상을 직접 등록하는 모달 */
+function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit, onPickFile }) {
+  return (
+    <Modal open={open} onClose={() => !busy && onClose()}>
+      <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 {form.kind === "video" ? "영상" : "사진"} 등록</div>
+      <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+        검수 중 촬영한 사진·영상을 등록하면, 그 현장 근무자·팀장 전체에게 보여요.
+      </div>
+      <div className="mt-4 flex flex-col gap-2.5">
+        <Field label="유형">
+          <div className="grid grid-cols-2 gap-1.5">
+            {[["photo", "사진", Camera], ["video", "동영상", ImageIcon]].map(([k, l, Icon]) => (
+              <button key={k} onClick={() => setForm((f) => ({ ...f, kind: k, file: null, preview: "" }))}
+                className="flex items-center justify-center gap-1.5"
+                style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: form.kind === k ? C.aquaDeep : C.tileSoft, color: form.kind === k ? "#fff" : C.sub }}>
+                <Icon size={13} />{l}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="현장">
+          <select value={form.siteId} onChange={(e) => setForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+            {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
+            {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+        <Field label="구분">
+          <div className="grid grid-cols-2 gap-1.5">
+            {["작업 전", "작업 후", "시설 훼손", "기타"].map((c) => (
+              <button key={c} onClick={() => setForm((f) => ({ ...f, category: c }))}
+                style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: form.category === c ? C.aquaDeep : C.tileSoft, color: form.category === c ? "#fff" : C.sub }}>{c}</button>
+            ))}
+          </div>
+        </Field>
+        <Field label={form.kind === "video" ? "동영상" : "사진"}>
+          {form.preview ? (
+            <div className="relative">
+              {form.kind === "video" ? (
+                <video src={form.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+              ) : (
+                <img src={form.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+              )}
+              <button onClick={() => setForm((f) => ({ ...f, file: null, preview: "" }))}
+                style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
+                <X size={14} color="#fff" />
+              </button>
+            </div>
+          ) : (
+            <label style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
+            }}>
+              <Camera size={22} color={C.sub} />
+              <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 {form.kind === "video" ? "영상 선택" : "사진 선택"}</div>
+              <input type="file" accept={form.kind === "video" ? "video/*" : "image/*"} capture="environment" style={{ display: "none" }}
+                onChange={(e) => onPickFile(e.target.files?.[0])} />
+            </label>
+          )}
+        </Field>
+        <Field label="메모 (선택)">
+          <textarea value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+            placeholder="예: 3층 창틀 파손 확인, 조치 요청" rows={2} style={{ ...inputStyle, resize: "none" }} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mt-4">
+        <Btn kind="ghost" full disabled={busy} onClick={onClose}>취소</Btn>
+        <Btn full disabled={busy} onClick={onSubmit}>{busy ? "업로드 중…" : "등록하기"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function PhotoAdminView({ data, update, setToast }) {
   const reports = data.siteReports || [];
   const [siteId, setSiteId] = useState(null);
   const [workerId, setWorkerId] = useState(null);
   const [viewer, setViewer] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   const catColor = { "시설 훼손": C.red, "작업 전": C.blue, "작업 후": C.aquaDeep, "기타": C.sub };
 
+  const openUpload = (presetSiteId) => {
+    setUploadForm({ siteId: presetSiteId || data.sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+    setUploadOpen(true);
+  };
+  const pickUploadFile = (f) => {
+    if (!f) return;
+    setUploadForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
+  };
+  const submitAdminUpload = async () => {
+    if (!uploadForm.file) { setToast(uploadForm.kind === "video" ? "영상을 먼저 선택해 주세요" : "사진을 먼저 선택해 주세요"); return; }
+    const s = data.sites.find((x) => x.id === uploadForm.siteId);
+    setUploadBusy(true);
+    try {
+      const mediaId = uploadForm.kind === "video" ? await uploadVideo(uploadForm.file) : await uploadPhoto(uploadForm.file);
+      update((d) => ({
+        ...d,
+        siteReports: [...(d.siteReports || []), {
+          id: uid(), date: dKey(new Date()), siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+          workerId: null, workerName: "관리자", authorRole: "admin",
+          category: uploadForm.category, note: uploadForm.note.trim(), photoId: mediaId, kind: uploadForm.kind,
+          createdAt: new Date().toISOString(),
+        }],
+      }));
+      setToast(uploadForm.kind === "video" ? "영상을 등록했습니다" : "사진을 등록했습니다");
+      setUploadOpen(false);
+    } catch (e) {
+      setToast(e.message || "업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setUploadBusy(false);
+    }
+  };
+
   if (reports.length === 0) {
-    return <div className="flex-1 p-4"><Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장 사진이 없습니다.</div></Tile></div>;
+    return (
+      <div className="flex-1 p-4">
+        <Btn full onClick={() => openUpload()}>
+          <span className="flex items-center justify-center gap-2"><Camera size={15} /> 사진·영상 등록 (관리자)</span>
+        </Btn>
+        <Tile style={{ marginTop: 10 }}><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장 사진이 없습니다.</div></Tile>
+        <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
+          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFile={pickUploadFile} />
+      </div>
+    );
   }
 
   // 1단계: 현장 폴더 목록
@@ -1853,7 +1973,10 @@ function PhotoAdminView({ data, update, setToast }) {
     reports.forEach((r) => { (bySite[r.siteId || "none"] ||= { name: r.siteName, items: [] }).items.push(r); });
     return (
       <div className="flex-1 overflow-y-auto p-4">
-        <Eyebrow dark>현장별로 묶어서 보여드려요 · 눌러서 열기</Eyebrow>
+        <Btn full onClick={() => openUpload()}>
+          <span className="flex items-center justify-center gap-2"><Camera size={15} /> 사진·영상 등록 (관리자)</span>
+        </Btn>
+        <div className="mt-4"><Eyebrow dark>현장별로 묶어서 보여드려요 · 눌러서 열기</Eyebrow></div>
         <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
           {Object.entries(bySite).map(([sid, g]) => (
             <Tile key={sid} onClick={() => setSiteId(sid)} style={{ padding: "14px 16px" }}>
@@ -1870,6 +1993,8 @@ function PhotoAdminView({ data, update, setToast }) {
             </Tile>
           ))}
         </div>
+        <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
+          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFile={pickUploadFile} />
       </div>
     );
   }
