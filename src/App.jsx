@@ -2433,7 +2433,7 @@ function RecordsView({ data, update, setToast }) {
                   <div style={{ minWidth: 0 }}>
                     <div className="flex items-center gap-1.5">
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
-                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
+                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                       {flags > 0 && <ShieldAlert size={13} color={C.amber} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -2595,7 +2595,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
         <div style={{ flex: 1 }}>
           <div className="flex items-center gap-1.5">
             <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900 }}>{worker.name}</span>
-            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
           </div>
           <div style={{ color: C.onDarkSub, fontSize: 11.5 }}>
             {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
@@ -3025,7 +3025,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       <div className="flex items-baseline justify-between">
         <div className="flex items-baseline gap-1.5">
           <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></span>
-          {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+          {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
         </div>
         <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
           {agg.shift
@@ -3500,7 +3500,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div>
                 <div className="flex items-center gap-1.5">
                   <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
-                  {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
+                  {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                   {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
                 </div>
                 <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
