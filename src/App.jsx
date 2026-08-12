@@ -2723,35 +2723,47 @@ function RecordsView({ data, update, setToast }) {
             {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
               {boardRows.map(({ w, recs, status, siteNames }) => {
+                const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
                   complete: { color: C.aquaDeep, label: "정상 완료" },
                   incomplete: { color: C.amber, label: "퇴근 안 함" },
                   absent: { color: C.sub, label: "결근/미출근" },
-                }[status];
+                };
                 return (
                   <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "12px 14px" }}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
-                        <div style={{ width: 9, height: 9, borderRadius: 999, background: statusInfo.color, flexShrink: 0 }} />
-                        <div style={{ minWidth: 0 }}>
-                          <div className="flex items-center gap-1.5">
-                            <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
-                            {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
-                          </div>
-                          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 1 }}>
-                            {siteNames.length > 0 ? siteNames.join("·") : "배정 현장: " + ((w.siteIds || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·") || "미지정")}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo.color }}>{statusInfo.label}</div>
-                        {recs.length > 0 && (
-                          <div style={{ fontSize: 11, color: C.sub, marginTop: 1, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-                            {tstr(recs[0].clockIn)}{recs[0].clockOut ? `–${tstr(recs[recs.length - 1].clockOut)}` : "–"}
-                          </div>
-                        )}
-                      </div>
+                    <div className="flex items-center gap-2.5" style={{ marginBottom: recs.length > 0 ? 8 : 0 }}>
+                      <div style={{ width: 9, height: 9, borderRadius: 999, background: statusInfo[status].color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
+                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
+                      {recs.length > 1 && <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>· {recs.length}건</span>}
                     </div>
+
+                    {recs.length === 0 ? (
+                      <div style={{ fontSize: 12, color: C.sub, marginLeft: 17 }}>
+                        배정 현장: {(w.siteIds || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·") || "미지정"} — 이날 기록 없음
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5" style={{ marginLeft: 17 }}>
+                        {recs.map((r) => {
+                          const st = recStatus(r);
+                          return (
+                            <div key={r.id} className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
+                                <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
+                                <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
+                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? "#8B5CF6" : C.blue, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : "일회성"}</span>}
+                              </div>
+                              <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
+                                <span style={{ fontSize: 11, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                                  {tstr(r.clockIn)}{r.clockOut ? `–${tstr(r.clockOut)}` : "–"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </Tile>
                 );
               })}
