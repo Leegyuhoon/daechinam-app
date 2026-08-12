@@ -2145,7 +2145,10 @@ function SupplyAdminView({ data, update, setToast }) {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
                 <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, fontWeight: 700 }}>
-                  {r.date.slice(5).replace("-", "/")} · {r.siteName} · {r.workerName}
+                  {r.date.slice(5).replace("-", "/")} 요청 · {r.siteName} · {r.workerName}
+                  {r.status === "delivered" && r.respondedAt && (
+                    <span style={{ color: C.aquaDeep }}> · {dKey(new Date(r.respondedAt)).slice(5).replace("-", "/")} 전달완료</span>
+                  )}
                 </div>
                 {r.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{r.note}</div>}
               </div>
