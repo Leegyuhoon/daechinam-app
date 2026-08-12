@@ -311,8 +311,9 @@ function calcPay(rec, worker, settings) {
   const holiday = isHoliday(rec.date, settings);
   // 일회성 근무(고정 금액)는 시급/타임 계산을 건너뛰고 지정한 금액을 그대로 사용
   if (rec.flatPay != null) {
-    const pay = Number(rec.flatPay) || 0;
-    return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, overMin: 0, holiday, flat: true };
+    const pending = rec.oneOffStatus === "pending";
+    const pay = pending ? 0 : (Number(rec.flatPay) || 0);
+    return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, overMin: 0, holiday, flat: true, pending };
   }
   const hMult = holiday ? (settings.holidayMultiplier || 1.5) : 1;
   const rp = resolvePay(worker, rec.siteId, settings);
@@ -662,7 +663,8 @@ export default function App() {
               if (k === "admin") {
                 const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
                 badge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length
-                  + (data.supplyRequests || []).filter((r) => r.status === "requested").length;
+                  + (data.supplyRequests || []).filter((r) => r.status === "requested").length
+                  + (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
               }
               return (
                 <button key={k} onClick={() => goTab(k)} className="relative flex flex-col items-center justify-center gap-1 py-3"
@@ -2728,6 +2730,9 @@ function RecordsView({ data, update, setToast }) {
                     <div className="flex items-center gap-1.5">
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
+                      {records.some((r) => r.workerId === w.id && r.flatPay != null && r.oneOffStatus === "pending") && (
+                        <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: "#8B5CF6", padding: "1px 4px" }}>승인 대기</span>
+                      )}
                       {flags > 0 && <ShieldAlert size={13} color={C.amber} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -3162,6 +3167,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
   const cellStatus = (dateKey) => {
     const recs = byDate[dateKey];
     if (!recs || recs.length === 0) return "none";
+    if (recs.some((r) => r.flatPay != null && r.oneOffStatus === "pending")) return "pending";
     if (recs.some((r) => !r.clockOut)) return "incomplete";
     return "complete";
   };
@@ -3187,11 +3193,23 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
         id: uid(), workerId, date: selDate, site: oneOffForm.siteName.trim(), siteId: null,
         clockIn: mk(oneOffForm.inT), clockOut: mk(oneOffForm.outT),
         flatPay: Number(oneOffForm.amount) || 0,
+        oneOffStatus: isAdmin ? "approved" : "pending",
         breakMinutes: null, note: "일회성 근무", manual: true,
         inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
       }],
     }));
+    setToast(isAdmin ? "일회성 근무를 추가했습니다" : "등록됐어요 — 관리자 승인 후 정산에 반영돼요");
     setOneOffOpen(false);
+  };
+
+  const approveOneOff = (recId, approve) => {
+    update((d) => ({
+      ...d,
+      records: approve
+        ? d.records.map((r) => (r.id === recId ? { ...r, oneOffStatus: "approved" } : r))
+        : d.records.filter((r) => r.id !== recId),
+    }));
+    setToast(approve ? "승인했습니다 — 정산에 반영됐어요" : "거절하고 삭제했습니다");
   };
 
   if (!worker) return null;
@@ -3247,7 +3265,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             const holiday = isHoliday(dateKey, settings);
             const isToday = dateKey === todayKey;
             const isSel = dateKey === selDate;
-            const bg = status === "complete" ? C.aquaDeep : status === "incomplete" ? C.amber : C.tile;
+            const bg = status === "complete" ? C.aquaDeep : status === "incomplete" ? C.amber : status === "pending" ? "#8B5CF6" : C.tile;
             const col = status === "none" ? (holiday ? C.red : C.text) : "#fff";
             return (
               <button key={i} onClick={() => setSelDate(dateKey === selDate ? null : dateKey)}
@@ -3271,6 +3289,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.amber, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.tile, border: `1px solid ${C.line}`, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>기록 없음</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 8, height: 8, borderRadius: 999, background: C.red }} /><span style={{ fontSize: 11, color: C.sub }}>공휴일(1.5배)</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: "#8B5CF6", borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>승인 대기</span></div>
         </div>
 
         {/* 선택한 날짜 상세 */}
@@ -3296,7 +3315,8 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px" }}>일회성</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px" }}>일회성</span>}
+                            {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#8B5CF6", padding: "1px 5px" }}>승인 대기</span>}
                           </div>
                           {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
@@ -3305,12 +3325,20 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                           {r.clockOut && ` · ${hmc(p.net)}`}
                         </div>
                         {r.clockOut && (
-                          <div style={{ fontSize: 12, color: p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.holiday ? 800 : 400 }}>
-                            {money(p.pay)}원{p.flat ? " (고정 지급액)" : ""}{p.holiday && !p.flat ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}
+                          <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
+                            {p.pending
+                              ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
+                              : `${money(p.pay)}원${p.flat ? " (고정 지급액)" : ""}${p.holiday && !p.flat ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}`}
                           </div>
                         )}
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
                         {r.outFlag && <div style={{ fontSize: 11.5, color: C.amber, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
+                        {p.pending && isAdmin && (
+                          <div className="grid grid-cols-2 gap-2 mt-2.5">
+                            <Btn kind="ghost" small onClick={() => approveOneOff(r.id, false)}>거절(삭제)</Btn>
+                            <Btn small onClick={() => approveOneOff(r.id, true)}>승인하기</Btn>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
