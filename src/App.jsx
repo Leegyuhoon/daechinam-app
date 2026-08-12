@@ -1686,7 +1686,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       </Modal>
 
       {calOpen && worker && (
-        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} canAdd={!!worker.canSelfLogOneOff} />
+        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} canAdd={!!worker.canSelfLogOneOff} setToast={setToast} />
       )}
     </div>
   );
@@ -3111,7 +3111,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
       </Modal>
 
       {calOpen && (
-        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} canAdd />
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} canAdd isAdmin setToast={setToast} />
       )}
     </div>
   );
@@ -3126,13 +3126,13 @@ const PRINT_CSS = `@media print {
 }`;
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
-function AttendanceCalendar({ data, update, workerId, onClose, canAdd }) {
+function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, setToast }) {
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
   const [anchor, setAnchor] = useState(new Date());
   const [selDate, setSelDate] = useState(null);
   const [oneOffOpen, setOneOffOpen] = useState(false);
-  const [oneOffForm, setOneOffForm] = useState({ siteId: "", inT: "09:00", outT: "18:00", amount: "150000" });
+  const [oneOffForm, setOneOffForm] = useState({ siteName: "", inT: "09:00", outT: "18:00", amount: "150000" });
 
   const y = anchor.getFullYear(), m = anchor.getMonth();
   const monthKey = `${y}-${pad(m + 1)}`;
@@ -3174,17 +3174,17 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd }) {
   const selDayAgg = selDate ? aggregate(selRecs, worker, settings) : null;
 
   const openOneOff = () => {
-    setOneOffForm({ siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", amount: "150000" });
+    setOneOffForm({ siteName: worker.siteId ? (data.sites.find((s) => s.id === worker.siteId)?.name || "") : "", inT: "09:00", outT: "18:00", amount: "150000" });
     setOneOffOpen(true);
   };
   const submitOneOff = () => {
     if (!selDate) return;
-    const site = data.sites.find((x) => x.id === oneOffForm.siteId);
+    if (!oneOffForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
     const mk = (t) => { const [h, mi] = t.split(":").map(Number); const d = parseKey(selDate); d.setHours(h, mi, 0, 0); return d.toISOString(); };
     update((d) => ({
       ...d,
       records: [...d.records, {
-        id: uid(), workerId, date: selDate, site: site?.name || "현장 미지정", siteId: site?.id || null,
+        id: uid(), workerId, date: selDate, site: oneOffForm.siteName.trim(), siteId: null,
         clockIn: mk(oneOffForm.inT), clockOut: mk(oneOffForm.outT),
         flatPay: Number(oneOffForm.amount) || 0,
         breakMinutes: null, note: "일회성 근무", manual: true,
@@ -3339,19 +3339,25 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd }) {
           {selDate} · {worker.name}님 — 정규 시급/타임 계산과 별개로, 이 날 하루치 금액을 직접 지정해서 이번 달 정산에 합산해요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
-          <Field label="현장">
-            <select value={oneOffForm.siteId} onChange={(e) => setOneOffForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-              {data.sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
-              {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+          <Field label="현장 (직접 입력)">
+            <input type="text" value={oneOffForm.siteName} onChange={(e) => setOneOffForm((f) => ({ ...f, siteName: e.target.value }))}
+              placeholder="예: 강남 오피스텔 청소" style={inputStyle} />
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="출근 시간"><input type="time" value={oneOffForm.inT} onChange={(e) => setOneOffForm((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} /></Field>
             <Field label="퇴근 시간"><input type="time" value={oneOffForm.outT} onChange={(e) => setOneOffForm((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} /></Field>
           </div>
-          <Field label="지급 금액 (원) · 기본 150,000원, 수정 가능">
-            <input type="number" value={oneOffForm.amount} onChange={(e) => setOneOffForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
-          </Field>
+          {isAdmin ? (
+            <Field label="지급 금액 (원) · 기본 150,000원, 수정 가능">
+              <input type="number" value={oneOffForm.amount} onChange={(e) => setOneOffForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+            </Field>
+          ) : (
+            <Field label="지급 금액 (원)">
+              <div style={{ ...inputStyle, display: "flex", alignItems: "center", background: C.tileSoft, color: C.sub }}>
+                {money(Number(oneOffForm.amount))}원 (관리자가 정한 고정 금액)
+              </div>
+            </Field>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2 mt-4">
           <Btn kind="ghost" full onClick={() => setOneOffOpen(false)}>취소</Btn>
