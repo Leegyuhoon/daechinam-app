@@ -2507,6 +2507,22 @@ function RecordsView({ data, update, setToast }) {
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
   const [siteBrowse, setSiteBrowse] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [boardDate, setBoardDate] = useState(dKey(new Date()));
+
+  const boardRows = useMemo(() => {
+    if (!boardOpen) return [];
+    return workers.map((w) => {
+      const recs = records.filter((r) => r.workerId === w.id && r.date === boardDate);
+      let status = "absent";
+      if (recs.length > 0) status = recs.some((r) => !r.clockOut) ? "incomplete" : "complete";
+      const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
+      return { w, recs, status, siteNames };
+    }).sort((a, b) => {
+      const order = { incomplete: 0, complete: 1, absent: 2 };
+      return order[a.status] - order[b.status] || a.w.name.localeCompare(b.w.name);
+    });
+  }, [boardOpen, boardDate, workers, records]);
 
   const [s, e] = rangeOf(mode, anchor);
   const sk = dKey(s), ek = dKey(e);
@@ -2665,6 +2681,84 @@ function RecordsView({ data, update, setToast }) {
       )}
 
       <div className="px-4 mt-5">
+        <button onClick={() => setBoardOpen((v) => !v)} className="w-full flex items-center justify-center gap-2 mb-3"
+          style={{
+            padding: "11px 0", fontSize: 13, fontWeight: 800, borderRadius: RADIUS_SM,
+            background: boardOpen ? C.aquaDeep : C.bgSoft, color: boardOpen ? "#fff" : C.onDark, border: `1px solid ${C.lineDark}`,
+          }}>
+          <CalendarDays size={15} /> {boardOpen ? "출근 현황판 닫기" : "오늘 출근 현황판 보기"}
+        </button>
+
+        {boardOpen ? (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <button onClick={() => setBoardDate(dKey(new Date(parseKey(boardDate).getTime() - 86400000)))} className="p-2" style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}` }}>
+                <ChevronLeft size={16} color={C.onDark} />
+              </button>
+              <div className="flex items-center gap-2">
+                <input type="date" value={boardDate} onChange={(e) => setBoardDate(e.target.value)}
+                  style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, color: C.onDark, padding: "8px 10px", fontSize: 13.5, borderRadius: RADIUS_SM }} />
+                {boardDate !== dKey(new Date()) && (
+                  <button onClick={() => setBoardDate(dKey(new Date()))} style={{ fontSize: 11.5, color: C.aqua, fontWeight: 800 }}>오늘로</button>
+                )}
+              </div>
+              <button onClick={() => setBoardDate(dKey(new Date(parseKey(boardDate).getTime() + 86400000)))} className="p-2" style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}` }}>
+                <ChevronRight size={16} color={C.onDark} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {[
+                ["complete", "정상 완료", C.aquaDeep, boardRows.filter((r) => r.status === "complete").length],
+                ["incomplete", "퇴근 안 함", C.amber, boardRows.filter((r) => r.status === "incomplete").length],
+                ["absent", "결근/미출근", C.sub, boardRows.filter((r) => r.status === "absent").length],
+              ].map(([k, l, col, n]) => (
+                <div key={k} style={{ background: C.tile, padding: "10px 8px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: col }}>{n}</div>
+                  <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>{l}</div>
+                </div>
+              ))}
+            </div>
+
+            {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
+            <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
+              {boardRows.map(({ w, recs, status, siteNames }) => {
+                const statusInfo = {
+                  complete: { color: C.aquaDeep, label: "정상 완료" },
+                  incomplete: { color: C.amber, label: "퇴근 안 함" },
+                  absent: { color: C.sub, label: "결근/미출근" },
+                }[status];
+                return (
+                  <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "12px 14px" }}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
+                        <div style={{ width: 9, height: 9, borderRadius: 999, background: statusInfo.color, flexShrink: 0 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
+                            {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 1 }}>
+                            {siteNames.length > 0 ? siteNames.join("·") : "배정 현장: " + ((w.siteIds || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·") || "미지정")}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo.color }}>{statusInfo.label}</div>
+                        {recs.length > 0 && (
+                          <div style={{ fontSize: 11, color: C.sub, marginTop: 1, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                            {tstr(recs[0].clockIn)}{recs[0].clockOut ? `–${tstr(recs[recs.length - 1].clockOut)}` : "–"}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Tile>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+        <>
         <div className="flex items-center gap-2 mb-3">
           <Search size={15} color={C.onDarkSub} style={{ flexShrink: 0 }} />
           <input value={q} onChange={(e) => { setQ(e.target.value); setSiteBrowse(false); }} placeholder="이름 또는 현장 검색"
@@ -2757,6 +2851,8 @@ function RecordsView({ data, update, setToast }) {
           ))}
             </div>
           </>
+        )}
+        </>
         )}
       </div>
 
