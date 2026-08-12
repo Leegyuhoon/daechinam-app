@@ -3202,14 +3202,32 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
     setOneOffOpen(false);
   };
 
-  const approveOneOff = (recId, approve) => {
+  const [reviewRec, setReviewRec] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ siteName: "", inT: "", outT: "", amount: "" });
+  const openReview = (r) => {
+    setReviewForm({ siteName: r.site || "", inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "", amount: String(r.flatPay ?? "") });
+    setReviewRec(r);
+  };
+  const rejectOneOff = (recId) => {
+    update((d) => ({ ...d, records: d.records.filter((r) => r.id !== recId) }));
+    setToast("거절하고 삭제했습니다");
+    setReviewRec(null);
+  };
+  const saveAndApproveOneOff = () => {
+    if (!reviewForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
+    const mk = (t) => { const [h, mi] = t.split(":").map(Number); const d = parseKey(reviewRec.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
     update((d) => ({
       ...d,
-      records: approve
-        ? d.records.map((r) => (r.id === recId ? { ...r, oneOffStatus: "approved" } : r))
-        : d.records.filter((r) => r.id !== recId),
+      records: d.records.map((r) => (r.id === reviewRec.id ? {
+        ...r,
+        site: reviewForm.siteName.trim(),
+        clockIn: mk(reviewForm.inT), clockOut: mk(reviewForm.outT),
+        flatPay: Number(reviewForm.amount) || 0,
+        oneOffStatus: "approved",
+      } : r)),
     }));
-    setToast(approve ? "승인했습니다 — 정산에 반영됐어요" : "거절하고 삭제했습니다");
+    setToast("승인했습니다 — 정산에 반영됐어요");
+    setReviewRec(null);
   };
 
   if (!worker) return null;
@@ -3334,9 +3352,8 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
                         {r.outFlag && <div style={{ fontSize: 11.5, color: C.amber, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
                         {p.pending && isAdmin && (
-                          <div className="grid grid-cols-2 gap-2 mt-2.5">
-                            <Btn kind="ghost" small onClick={() => approveOneOff(r.id, false)}>거절(삭제)</Btn>
-                            <Btn small onClick={() => approveOneOff(r.id, true)}>승인하기</Btn>
+                          <div className="mt-2.5">
+                            <Btn small onClick={() => openReview(r)}>내용 확인하고 승인하기</Btn>
                           </div>
                         )}
                       </div>
@@ -3391,6 +3408,33 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
           <Btn kind="ghost" full onClick={() => setOneOffOpen(false)}>취소</Btn>
           <Btn full onClick={submitOneOff}>추가하기</Btn>
         </div>
+      </Modal>
+
+      <Modal open={!!reviewRec} onClose={() => setReviewRec(null)}>
+        {reviewRec && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>일회성 근무 확인</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+              {reviewRec.date} · {worker.name}님이 요청한 내용이에요. 필요하면 아래 내용을 수정한 뒤 승인하세요.
+            </div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="현장 (직접 입력)">
+                <input type="text" value={reviewForm.siteName} onChange={(e) => setReviewForm((f) => ({ ...f, siteName: e.target.value }))} style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="출근 시간"><input type="time" value={reviewForm.inT} onChange={(e) => setReviewForm((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} /></Field>
+                <Field label="퇴근 시간"><input type="time" value={reviewForm.outT} onChange={(e) => setReviewForm((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} /></Field>
+              </div>
+              <Field label="지급 금액 (원)">
+                <input type="number" value={reviewForm.amount} onChange={(e) => setReviewForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => rejectOneOff(reviewRec.id)}>거절(삭제)</Btn>
+              <Btn full onClick={saveAndApproveOneOff}>저장하고 승인</Btn>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );
