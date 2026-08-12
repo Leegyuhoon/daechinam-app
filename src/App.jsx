@@ -308,6 +308,11 @@ function calcPay(rec, worker, settings) {
   const c = calcRec(rec, settings);
   if (c.open) return { ...c, open: true, pay: 0 };
   const holiday = isHoliday(rec.date, settings);
+  // 일회성 근무(고정 금액)는 시급/타임 계산을 건너뛰고 지정한 금액을 그대로 사용
+  if (rec.flatPay != null) {
+    const pay = Number(rec.flatPay) || 0;
+    return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, overMin: 0, holiday, flat: true };
+  }
   const hMult = holiday ? (settings.holidayMultiplier || 1.5) : 1;
   const rp = resolvePay(worker, rec.siteId, settings);
   if (settings.payMode !== "shift") {
@@ -3105,7 +3110,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
       </Modal>
 
       {calOpen && (
-        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} />
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} isAdmin />
       )}
     </div>
   );
@@ -3120,11 +3125,13 @@ const PRINT_CSS = `@media print {
 }`;
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
-function AttendanceCalendar({ data, workerId, onClose }) {
+function AttendanceCalendar({ data, update, workerId, onClose, isAdmin }) {
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
   const [anchor, setAnchor] = useState(new Date());
   const [selDate, setSelDate] = useState(null);
+  const [oneOffOpen, setOneOffOpen] = useState(false);
+  const [oneOffForm, setOneOffForm] = useState({ siteId: "", inT: "09:00", outT: "18:00", amount: "150000" });
 
   const y = anchor.getFullYear(), m = anchor.getMonth();
   const monthKey = `${y}-${pad(m + 1)}`;
@@ -3164,6 +3171,27 @@ function AttendanceCalendar({ data, workerId, onClose }) {
 
   const selRecs = selDate ? (byDate[selDate] || []) : [];
   const selDayAgg = selDate ? aggregate(selRecs, worker, settings) : null;
+
+  const openOneOff = () => {
+    setOneOffForm({ siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", amount: "150000" });
+    setOneOffOpen(true);
+  };
+  const submitOneOff = () => {
+    if (!selDate) return;
+    const site = data.sites.find((x) => x.id === oneOffForm.siteId);
+    const mk = (t) => { const [h, mi] = t.split(":").map(Number); const d = parseKey(selDate); d.setHours(h, mi, 0, 0); return d.toISOString(); };
+    update((d) => ({
+      ...d,
+      records: [...d.records, {
+        id: uid(), workerId, date: selDate, site: site?.name || "현장 미지정", siteId: site?.id || null,
+        clockIn: mk(oneOffForm.inT), clockOut: mk(oneOffForm.outT),
+        flatPay: Number(oneOffForm.amount) || 0,
+        breakMinutes: null, note: "일회성 근무", manual: true,
+        inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
+      }],
+    }));
+    setOneOffOpen(false);
+  };
 
   if (!worker) return null;
 
@@ -3265,7 +3293,10 @@ function AttendanceCalendar({ data, workerId, onClose }) {
                     return (
                       <div key={r.id} style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
                         <div className="flex items-center justify-between">
-                          <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
+                            {p.flat && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px" }}>일회성</span>}
+                          </div>
                           {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
                         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
@@ -3274,7 +3305,7 @@ function AttendanceCalendar({ data, workerId, onClose }) {
                         </div>
                         {r.clockOut && (
                           <div style={{ fontSize: 12, color: p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.holiday ? 800 : 400 }}>
-                            {money(p.pay)}원{p.holiday ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}
+                            {money(p.pay)}원{p.flat ? " (고정 지급액)" : ""}{p.holiday && !p.flat ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}
                           </div>
                         )}
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
@@ -3289,9 +3320,43 @@ function AttendanceCalendar({ data, workerId, onClose }) {
                 </div>
               </>
             )}
+
+            {isAdmin && (
+              <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+                <button onClick={openOneOff} className="flex items-center gap-1.5" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
+                  <Plus size={14} /> 이 날짜에 일회성 근무 추가
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      <Modal open={oneOffOpen} onClose={() => setOneOffOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>일회성 근무 추가</div>
+        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+          {selDate} · {worker.name}님 — 정규 시급/타임 계산과 별개로, 이 날 하루치 금액을 직접 지정해서 이번 달 정산에 합산해요.
+        </div>
+        <div className="mt-4 flex flex-col gap-2.5">
+          <Field label="현장">
+            <select value={oneOffForm.siteId} onChange={(e) => setOneOffForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+              {data.sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
+              {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="출근 시간"><input type="time" value={oneOffForm.inT} onChange={(e) => setOneOffForm((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} /></Field>
+            <Field label="퇴근 시간"><input type="time" value={oneOffForm.outT} onChange={(e) => setOneOffForm((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} /></Field>
+          </div>
+          <Field label="지급 금액 (원) · 기본 150,000원, 수정 가능">
+            <input type="number" value={oneOffForm.amount} onChange={(e) => setOneOffForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Btn kind="ghost" full onClick={() => setOneOffOpen(false)}>취소</Btn>
+          <Btn full onClick={submitOneOff}>추가하기</Btn>
+        </div>
+      </Modal>
     </div>
   );
 }
