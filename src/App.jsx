@@ -193,6 +193,7 @@ function migrate(p) {
     if (!Array.isArray(x.leaderSiteIds)) x = { ...x, leaderSiteIds: x.isTeamLead ? (x.siteIds || (x.siteId ? [x.siteId] : [])) : [] };
     x = { ...x, isTeamLead: x.leaderSiteIds.length > 0 };
     if (!Array.isArray(x.allowances)) x = { ...x, allowances: [] };
+    if (typeof x.canSelfLogOneOff !== "boolean") x = { ...x, canSelfLogOneOff: false };
     return x;
   });
   d.transfers = (Array.isArray(d.transfers) ? d.transfers : []).map((t) => ({
@@ -1685,7 +1686,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       </Modal>
 
       {calOpen && worker && (
-        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} />
+        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} canAdd={!!worker.canSelfLogOneOff} />
       )}
     </div>
   );
@@ -3110,7 +3111,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
       </Modal>
 
       {calOpen && (
-        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} isAdmin />
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} canAdd />
       )}
     </div>
   );
@@ -3125,7 +3126,7 @@ const PRINT_CSS = `@media print {
 }`;
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
-function AttendanceCalendar({ data, update, workerId, onClose, isAdmin }) {
+function AttendanceCalendar({ data, update, workerId, onClose, canAdd }) {
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
   const [anchor, setAnchor] = useState(new Date());
@@ -3321,7 +3322,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, isAdmin }) {
               </>
             )}
 
-            {isAdmin && (
+            {canAdd && (
               <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
                 <button onClick={openOneOff} className="flex items-center gap-1.5" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
                   <Plus size={14} /> 이 날짜에 일회성 근무 추가
@@ -3933,6 +3934,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
+      canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
@@ -4607,6 +4609,24 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 </div>
               </div>
             )}
+
+            <button onClick={() => setWEdit({ ...wEdit, canSelfLogOneOff: !wEdit.canSelfLogOneOff })}
+              className="flex items-center justify-between w-full mt-3"
+              style={{ background: wEdit.canSelfLogOneOff ? "#EAF3DE" : C.tileSoft, border: `1px solid ${wEdit.canSelfLogOneOff ? "#639922" : C.line}`, padding: "11px 13px" }}>
+              <div style={{ minWidth: 0, textAlign: "left" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: wEdit.canSelfLogOneOff ? "#3B6D11" : C.text }}>본인이 캘린더에서 일회성 근무 직접 등록</div>
+                <div style={{ fontSize: 11, color: C.sub, marginTop: 2, lineHeight: 1.4 }}>켜두면 이 근무자가 본인 캘린더에서 직접 날짜·현장·금액을 입력해 추가할 수 있어요.</div>
+              </div>
+              <div style={{
+                width: 38, height: 22, borderRadius: 999, background: wEdit.canSelfLogOneOff ? "#639922" : C.line,
+                position: "relative", flexShrink: 0, marginLeft: 10,
+              }}>
+                <div style={{
+                  width: 18, height: 18, borderRadius: 999, background: "#fff", position: "absolute", top: 2,
+                  left: wEdit.canSelfLogOneOff ? 18 : 2, transition: "left 0.15s",
+                }} />
+              </div>
+            </button>
 
             <div className="mt-3" style={{ background: C.tileSoft, padding: 13 }}>
               <Eyebrow>고정 수당 (선택)</Eyebrow>
