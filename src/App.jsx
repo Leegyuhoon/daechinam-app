@@ -2499,7 +2499,7 @@ function NoticeAdminView({ data, update, setToast }) {
 
 /* ─────────────────────────  근무 기록  ───────────────────────── */
 function RecordsView({ data, update, setToast }) {
-  const { workers, sites, records, settings } = data;
+  const { workers, sites, records, settings, transfers } = data;
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
   const [detail, setDetail] = useState(null);
@@ -2577,13 +2577,65 @@ function RecordsView({ data, update, setToast }) {
       const recs = records.filter((r) => r.workerId === w.id && r.date === boardDate);
       let status = "absent";
       if (recs.length > 0) status = recs.some((r) => !r.clockOut) ? "incomplete" : "complete";
+      let offInfo = null;
+      if (status === "absent") {
+        const t = (transfers || []).find((x) => x.fromWorkerId === w.id && x.date === boardDate && x.status === "approved");
+        if (t) { status = t.noRequest ? "offNoRequest" : "offRequested"; offInfo = t; }
+      }
       const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
-      return { w, recs, status, siteNames };
+      return { w, recs, status, siteNames, offInfo };
     }).sort((a, b) => {
-      const order = { incomplete: 0, complete: 1, absent: 2 };
+      const order = { incomplete: 0, offNoRequest: 1, complete: 2, offRequested: 3, absent: 4 };
       return order[a.status] - order[b.status] || a.w.name.localeCompare(b.w.name);
     });
-  }, [boardOpen, boardDate, workers, records]);
+  }, [boardOpen, boardDate, workers, records, transfers]);
+
+  const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
+  const [markOffForm, setMarkOffForm] = useState({ siteId: "", subWorkerId: "", amount: "" });
+  const openMarkOff = (w) => {
+    const defSite = w.siteId || sites[0]?.id || "";
+    const dw = workers.find((x) => x.id === w.id);
+    const suggested = settings.payMode === "shift" ? (dw?.shiftPay ?? settings.shiftPay) : (dw?.wage ?? settings.wage) * (dw?.stdHours ?? settings.stdHours);
+    setMarkOffForm({ siteId: defSite, subWorkerId: "", amount: String(suggested) });
+    setMarkOffFor(w);
+  };
+  const submitMarkOff = () => {
+    const site = sites.find((s) => s.id === markOffForm.siteId);
+    const sub = workers.find((x) => x.id === markOffForm.subWorkerId);
+    const at = new Date().toISOString();
+    update((d) => {
+      let next = { ...d };
+      next.transfers = [
+        ...(d.transfers || []),
+        {
+          id: uid(), date: boardDate, siteId: site?.id || null, siteName: site?.name || "현장 미지정",
+          fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
+          toWorkerId: sub?.id || null, toWorkerName: sub?.name || "", toRegistered: !!sub,
+          assignedWorkerId: sub?.id || null, assignedWorkerName: sub?.name || null,
+          startTime: null, endTime: null, message: "",
+          status: "approved", noRequest: true,
+          createdAt: at, respondedAt: at, fulfilledRecordId: null,
+        },
+      ];
+      if (sub) {
+        next.records = [
+          ...d.records,
+          {
+            id: uid(), workerId: sub.id, date: boardDate, site: site?.name || "현장 미지정", siteId: site?.id || null,
+            clockIn: (() => { const dt = parseKey(boardDate); dt.setHours(9, 0, 0, 0); return dt.toISOString(); })(),
+            clockOut: (() => { const dt = parseKey(boardDate); dt.setHours(18, 0, 0, 0); return dt.toISOString(); })(),
+            flatPay: Number(markOffForm.amount) || 0, oneOffStatus: "approved",
+            breakMinutes: null, note: `${markOffFor.name}님 갑작스러운 휴무 대체`, manual: true,
+            coverForId: markOffFor.id, coverForName: markOffFor.name,
+            inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
+          },
+        ];
+      }
+      return next;
+    });
+    setToast(sub ? `휴무 처리하고 ${sub.name}님 대체 근무를 등록했습니다` : "휴무로 처리했습니다");
+    setMarkOffFor(null);
+  };
 
   const [s, e] = rangeOf(mode, anchor);
   const sk = dKey(s), ek = dKey(e);
@@ -2754,7 +2806,7 @@ function RecordsView({ data, update, setToast }) {
           <>
             <button onClick={openCover} className="w-full flex items-center justify-center gap-1.5 mb-3"
               style={{ padding: "9px 0", fontSize: 12, fontWeight: 800, background: "#EEF2FF", border: "1px solid #C7D2FE", color: "#4338CA" }}>
-              <SlidersHorizontal size={13} /> 휴무자 몫, 커버한 사람들끼리 시간 비율로 나누기
+              <SlidersHorizontal size={13} /> 휴무자 몫, 대신 근무자들끼리 균등하게 나누기
             </button>
 
             <div className="flex items-center justify-between mb-3">
@@ -2773,40 +2825,56 @@ function RecordsView({ data, update, setToast }) {
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="grid grid-cols-4 gap-1.5 mb-3">
               {[
                 ["complete", "정상 완료", C.aquaDeep, boardRows.filter((r) => r.status === "complete").length],
                 ["incomplete", "퇴근 안 함", C.amber, boardRows.filter((r) => r.status === "incomplete").length],
+                ["off", "휴무", C.blue, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest").length],
                 ["absent", "결근/미출근", C.sub, boardRows.filter((r) => r.status === "absent").length],
               ].map(([k, l, col, n]) => (
-                <div key={k} style={{ background: C.tile, padding: "10px 8px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: col }}>{n}</div>
-                  <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>{l}</div>
+                <div key={k} style={{ background: C.tile, padding: "10px 6px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 900, color: col }}>{n}</div>
+                  <div style={{ fontSize: 9.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>{l}</div>
                 </div>
               ))}
             </div>
 
             {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {boardRows.map(({ w, recs, status, siteNames }) => {
+              {boardRows.map(({ w, recs, status, siteNames, offInfo }) => {
                 const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
                   complete: { color: C.aquaDeep, label: "정상 완료" },
                   incomplete: { color: C.amber, label: "퇴근 안 함" },
+                  offRequested: { color: C.blue, label: "휴무(양도 요청됨)" },
+                  offNoRequest: { color: "#8B5CF6", label: "휴무(요청 없음 · 사후등록)" },
                   absent: { color: C.sub, label: "결근/미출근" },
                 };
                 return (
-                  <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "12px 14px" }}>
-                    <div className="flex items-center gap-2.5" style={{ marginBottom: recs.length > 0 ? 8 : 0 }}>
+                  <Tile key={w.id} style={{ padding: "12px 14px" }}>
+                    <div onClick={() => setDetail(w.id)} className="flex items-center gap-2.5" style={{ marginBottom: (recs.length > 0 || status.startsWith("off")) ? 8 : 0, cursor: "pointer" }}>
                       <div style={{ width: 9, height: 9, borderRadius: 999, background: statusInfo[status].color, flexShrink: 0 }} />
                       <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
                       {recs.length > 1 && <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>· {recs.length}건</span>}
                     </div>
 
-                    {recs.length === 0 ? (
-                      <div style={{ fontSize: 12, color: C.sub, marginLeft: 17 }}>
-                        배정 현장: {(w.siteIds || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·") || "미지정"} — 이날 기록 없음
+                    {status.startsWith("off") ? (
+                      <div style={{ marginLeft: 17 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: statusInfo[status].color }}>{statusInfo[status].label}</div>
+                        {offInfo?.assignedWorkerName && (
+                          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{offInfo.assignedWorkerName}님이 대신 근무</div>
+                        )}
+                      </div>
+                    ) : recs.length === 0 ? (
+                      <div style={{ marginLeft: 17 }}>
+                        <div style={{ fontSize: 12, color: C.sub }}>
+                          배정 현장: {(w.siteIds || []).map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·") || "미지정"} — 이날 기록 없음
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); openMarkOff(w); }}
+                          className="flex items-center gap-1 mt-2" style={{ fontSize: 11.5, fontWeight: 800, color: "#8B5CF6" }}>
+                          <ShieldCheck size={12} /> 휴무로 처리하기 (사전 요청 없었음)
+                        </button>
                       </div>
                     ) : (
                       <div className="flex flex-col gap-1.5" style={{ marginLeft: 17 }}>
@@ -2817,7 +2885,7 @@ function RecordsView({ data, update, setToast }) {
                               <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
-                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? "#8B5CF6" : C.blue, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : "일회성"}</span>}
+                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? "#8B5CF6" : C.blue, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
@@ -3012,6 +3080,41 @@ function RecordsView({ data, update, setToast }) {
           <Btn kind="ghost" full onClick={() => setCoverOpen(false)}>취소</Btn>
           <Btn full onClick={submitCover}>각자 급여에 반영하기</Btn>
         </div>
+      </Modal>
+
+      <Modal open={!!markOffFor} onClose={() => setMarkOffFor(null)}>
+        {markOffFor && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무로 처리하기</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+              {boardDate} · <b style={{ color: C.text }}>{markOffFor.name}</b>님 — 미리 양도 요청을 못 했던 상황(갑작스러운 사정)이라, 관리자가 사후에 "휴무"로 정식 처리해요.
+              대신 근무한 사람이 있으면 아래에서 같이 등록할 수 있어요.
+            </div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="현장">
+                <select value={markOffForm.siteId} onChange={(e) => setMarkOffForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                  {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
+                  {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <Field label="대신 근무한 사람 (있으면 선택, 없으면 비워두세요)">
+                <select value={markOffForm.subWorkerId} onChange={(e) => setMarkOffForm((f) => ({ ...f, subWorkerId: e.target.value }))} style={inputStyle}>
+                  <option value="">없음 (아무도 대신 안 함)</option>
+                  {workers.filter((w) => w.id !== markOffFor.id).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </Field>
+              {markOffForm.subWorkerId && (
+                <Field label="대신 근무자 지급 금액 (원)">
+                  <input type="number" value={markOffForm.amount} onChange={(e) => setMarkOffForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+                </Field>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setMarkOffFor(null)}>취소</Btn>
+              <Btn full onClick={submitMarkOff}>휴무 처리하기</Btn>
+            </div>
+          </>
+        )}
       </Modal>
 
       {detail && (
