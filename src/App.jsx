@@ -2091,6 +2091,7 @@ function PhotoAdminView({ data, update, setToast }) {
             </div>
             {viewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{viewer.note}</div>}
             <button onClick={() => {
+              if (!window.confirm("이 사진/영상을 정말 삭제할까요?")) return;
               update((d) => ({ ...d, siteReports: (d.siteReports || []).filter((x) => x.id !== viewer.id) }));
               setViewer(null); setToast("삭제했습니다");
             }} className="flex items-center gap-1 mt-4" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700 }}>
@@ -2158,7 +2159,7 @@ function SupplyAdminView({ data, update, setToast }) {
                 </>
               )}
               {r.status === "approved" && <Btn small onClick={() => setStatus(r.id, "delivered")}>전달 완료 처리</Btn>}
-              <button onClick={() => remove(r.id)} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
+              <button onClick={() => { if (window.confirm("이 요청을 정말 삭제할까요?")) remove(r.id); }} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
                 <Trash2 size={13} /> 삭제
               </button>
             </div>
@@ -2293,7 +2294,7 @@ function TransferAdminView({ data, update, setToast }) {
               )}
 
               <div className="flex justify-end mt-2">
-                <button onClick={() => remove(t.id)} className="flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
+                <button onClick={() => { if (window.confirm("이 양도 요청을 정말 삭제할까요?")) remove(t.id); }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>
                   <Trash2 size={13} /> 삭제
                 </button>
               </div>
@@ -2480,7 +2481,7 @@ function NoticeAdminView({ data, update, setToast }) {
               <Btn full onClick={saveNotice}>저장</Btn>
             </div>
             {edit.id && (
-              <button onClick={() => removeNotice(edit.id)} className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
+              <button onClick={() => { if (window.confirm(`"${edit.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) removeNotice(edit.id); }} className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
                 이 공지 삭제
               </button>
             )}
@@ -2505,7 +2506,7 @@ function NoticeAdminView({ data, update, setToast }) {
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
-              <button onClick={() => { removeNotice(viewer.id); setViewer(null); }}
+              <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
                 style={{ background: "transparent", color: C.coral, border: `1px solid ${C.coral}`, fontSize: 14, fontWeight: 700 }}>
                 삭제
               </button>
@@ -4938,7 +4939,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                       <FileText size={14} color={C.aquaDeep} style={{ flexShrink: 0 }} />
                       <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fileName}</span>
                     </a>
-                    <button onClick={() => removeManual(m.id)} style={{ flexShrink: 0 }}><X size={14} color={C.sub} /></button>
+                    <button onClick={() => { if (window.confirm(`"${m.fileName}" 파일을 정말 삭제할까요?`)) removeManual(m.id); }} style={{ flexShrink: 0 }}><X size={14} color={C.sub} /></button>
                   </div>
                 ))}
                 <label style={{
