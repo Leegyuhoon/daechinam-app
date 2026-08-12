@@ -1774,6 +1774,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
   const photoBadge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length;
   const supplyBadge = (data.supplyRequests || []).filter((r) => r.status === "requested").length;
+  const oneOffBadge = (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
 
   const goView = (k) => {
     setView(k);
@@ -1781,7 +1782,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   };
 
   const tabs = [
-    ["records", "근무 기록", ClipboardList, 0],
+    ["records", "근무 기록", ClipboardList, oneOffBadge],
     ["transfers", "양도", Repeat, 0],
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
