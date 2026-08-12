@@ -2511,9 +2511,9 @@ function RecordsView({ data, update, setToast }) {
   const [boardDate, setBoardDate] = useState(dKey(new Date()));
 
   const [coverOpen, setCoverOpen] = useState(false);
-  const [coverForm, setCoverForm] = useState({ siteName: "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", hours: "" }] });
+  const [coverForm, setCoverForm] = useState({ siteId: "", offWorkerIds: [], totalAmount: "200000", participants: [""] });
   const openCover = () => {
-    setCoverForm({ siteName: "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", hours: "" }, { workerId: "", hours: "" }] });
+    setCoverForm({ siteId: sites[0]?.id || "", offWorkerIds: [], totalAmount: "200000", participants: ["", ""] });
     setCoverOpen(true);
   };
   // 휴무자를 선택하면 그 사람들의 평소 1일 급여 합계를 총액으로 자동 제안
@@ -2534,37 +2534,33 @@ function RecordsView({ data, update, setToast }) {
     }, 0);
     setCoverForm((f) => ({ ...f, offWorkerIds: next, totalAmount: String(nextTotal) }));
   };
-  const coverHoursSum = coverForm.participants.reduce((sum, p) => sum + (Number(p.hours) || 0), 0);
-  const coverShares = coverForm.participants.map((p) => {
-    const h = Number(p.hours) || 0;
-    return coverHoursSum > 0 ? Math.round((h / coverHoursSum) * (Number(coverForm.totalAmount) || 0)) : 0;
+  // 인원수로 균등하게 나눔 (마지막 사람이 반올림 오차를 흡수)
+  const coverValidIds = coverForm.participants.filter(Boolean);
+  const coverShares = coverValidIds.map((_, i) => {
+    if (coverValidIds.length === 0) return 0;
+    const base = Math.floor((Number(coverForm.totalAmount) || 0) / coverValidIds.length);
+    const remainder = (Number(coverForm.totalAmount) || 0) - base * coverValidIds.length;
+    return i === coverValidIds.length - 1 ? base + remainder : base;
   });
   const submitCover = () => {
-    const valid = coverForm.participants.filter((p) => p.workerId && Number(p.hours) > 0);
-    if (valid.length === 0) { setToast("근무자와 시간을 입력해 주세요"); return; }
-    if (!coverForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
+    if (coverValidIds.length === 0) { setToast("대신 근무한 사람을 선택해 주세요"); return; }
+    const site = sites.find((s) => s.id === coverForm.siteId);
+    if (!site) { setToast("현장을 선택해 주세요"); return; }
     const offNames = coverForm.offWorkerIds.map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·");
     const noteBase = offNames ? `${offNames}님 휴무 대체 추가 근무분` : "휴무 대체 추가 근무분";
-    const shares = valid.map((p) => {
-      const h = Number(p.hours) || 0;
-      return coverHoursSum > 0 ? Math.round((h / coverHoursSum) * (Number(coverForm.totalAmount) || 0)) : 0;
-    });
-    // 반올림 오차는 마지막 사람에게 몰아서 합계를 정확히 맞춤
-    const diff = (Number(coverForm.totalAmount) || 0) - shares.reduce((a, b) => a + b, 0);
-    shares[shares.length - 1] += diff;
 
     // 본인의 정규 1타임 근무와는 별개로 "추가분"이 더해지는 것 — 정규 기록은 그대로 두고, 추가 기록을 하나 더 만듦
-    const mk = (h) => { const d = parseKey(boardDate); d.setHours(18, 0, 0, 0); const out = new Date(d.getTime() + h * 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
+    const mkTime = () => { const d = parseKey(boardDate); d.setHours(18, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
     update((d) => ({
       ...d,
       records: [
         ...d.records,
-        ...valid.map((p, i) => {
-          const t = mk(Number(p.hours));
+        ...coverValidIds.map((workerId, i) => {
+          const t = mkTime();
           return {
-            id: uid(), workerId: p.workerId, date: boardDate, site: coverForm.siteName.trim(), siteId: null,
+            id: uid(), workerId, date: boardDate, site: site.name, siteId: site.id,
             clockIn: t.in, clockOut: t.out,
-            flatPay: shares[i], oneOffStatus: "approved",
+            flatPay: coverShares[i], oneOffStatus: "approved",
             breakMinutes: null, note: noteBase, manual: true, isExtra: true,
             inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
           };
@@ -2941,13 +2937,15 @@ function RecordsView({ data, update, setToast }) {
       <Modal open={coverOpen} onClose={() => setCoverOpen(false)}>
         <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무자 몫 나눠서 정산</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-          {boardDate} — 휴무한 사람들 몫의 총액을, 대신 커버한 사람들끼리 실제 근무시간 비율로 나눠서 각자 급여에 반영해요.
+          {boardDate} — 휴무한 사람들 몫의 총액을, 대신 근무한 사람들끼리 인원수대로 균등하게 나눠서 각자 급여에 반영해요.
           커버한 사람이 그날 <b style={{ color: C.text }}>본인 정규 근무(1타임)도 따로 했다면, 그 금액은 그대로 유지되고 여기서 계산된 금액이 추가로 더해져요.</b> (본인 근무 + 대체 근무 추가분)
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
-          <Field label="현장 (직접 입력)">
-            <input type="text" value={coverForm.siteName} onChange={(e) => setCoverForm((f) => ({ ...f, siteName: e.target.value }))}
-              placeholder="예: 강남현장" style={inputStyle} />
+          <Field label="현장">
+            <select value={coverForm.siteId} onChange={(e) => setCoverForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+              {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
+              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
           </Field>
 
           <Field label="휴무자 선택 (누가 쉬었는지)">
@@ -2975,39 +2973,37 @@ function RecordsView({ data, update, setToast }) {
           </Field>
 
           <div>
-            <Eyebrow>대신 커버한 사람들</Eyebrow>
+            <Eyebrow>대신 근무한 사람들</Eyebrow>
             <div className="flex flex-col gap-2 mt-2">
-              {coverForm.participants.map((p, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <select value={p.workerId} onChange={(e) => {
-                    const next = [...coverForm.participants]; next[i] = { ...p, workerId: e.target.value };
-                    setCoverForm((f) => ({ ...f, participants: next }));
-                  }} style={{ ...inputStyle, flex: 2 }}>
-                    <option value="">근무자 선택</option>
-                    {workers.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
-                  <input type="number" step="0.5" placeholder="시간" value={p.hours}
-                    onChange={(e) => {
-                      const next = [...coverForm.participants]; next[i] = { ...p, hours: e.target.value };
+              {coverForm.participants.map((wid, i) => {
+                const validIdx = coverValidIds.indexOf(wid);
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <select value={wid} onChange={(e) => {
+                      const next = [...coverForm.participants]; next[i] = e.target.value;
                       setCoverForm((f) => ({ ...f, participants: next }));
-                    }} style={{ ...inputStyle, flex: 1 }} />
-                  <div style={{ flex: 1, fontSize: 12.5, fontWeight: 800, color: C.coral, textAlign: "right" }}>
-                    {money(coverShares[i] || 0)}원
+                    }} style={{ ...inputStyle, flex: 2 }}>
+                      <option value="">근무자 선택</option>
+                      {workers.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                    <div style={{ flex: 1, fontSize: 12.5, fontWeight: 800, color: C.coral, textAlign: "right" }}>
+                      {wid && validIdx >= 0 ? `${money(coverShares[validIdx] || 0)}원` : ""}
+                    </div>
+                    {coverForm.participants.length > 1 && (
+                      <button onClick={() => setCoverForm((f) => ({ ...f, participants: f.participants.filter((_, idx) => idx !== i) }))}>
+                        <X size={16} color={C.sub} />
+                      </button>
+                    )}
                   </div>
-                  {coverForm.participants.length > 1 && (
-                    <button onClick={() => setCoverForm((f) => ({ ...f, participants: f.participants.filter((_, idx) => idx !== i) }))}>
-                      <X size={16} color={C.sub} />
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, { workerId: "", hours: "" }] }))}
+            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, ""] }))}
               className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
               <Plus size={13} /> 사람 추가
             </button>
             <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>총 근무시간 {coverHoursSum}시간 · 배분 합계</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{coverValidIds.length}명이 균등하게 나눔 · 배분 합계</span>
               <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{money(coverShares.reduce((a, b) => a + b, 0))}원</span>
             </div>
           </div>
