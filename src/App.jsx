@@ -2264,7 +2264,7 @@ function TransferAdminView({ data, update, setToast }) {
 
 /* ─────────────────────────  공지사항 관리(관리자)  ───────────────────────── */
 function NoticeAdminView({ data, update, setToast }) {
-  const { workers } = data;
+  const { workers, sites } = data;
   const [edit, setEdit] = useState(null);
   const [viewer, setViewer] = useState(null);
   const notices = [...(data.notices || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -2278,6 +2278,7 @@ function NoticeAdminView({ data, update, setToast }) {
 
   const saveNotice = () => {
     if (!edit.title.trim()) { setToast("제목을 입력해 주세요"); return; }
+    if (edit.audience === "site" && (edit.siteIds || []).length === 0) { setToast("현장을 한 곳 이상 선택해 주세요"); return; }
     let startDate = edit.startDate, endDate = edit.endDate;
     if (edit.mode === "target") {
       const t = parseKey(edit.targetDate);
@@ -2286,9 +2287,12 @@ function NoticeAdminView({ data, update, setToast }) {
       startDate = dKey(s); endDate = dKey(e);
     }
     if (startDate > endDate) { setToast("종료일이 시작일보다 빨라요"); return; }
+    const siteIds = edit.audience === "site" ? (edit.siteIds || []) : [];
+    const siteName = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·");
     const n = {
       id: edit.id || uid(), title: edit.title.trim(), message: edit.message.trim(),
       audience: edit.audience, workerIds: edit.audience === "custom" ? edit.workerIds : [],
+      siteIds, siteName,
       startDate, endDate, active: edit.active,
       createdAt: edit.id ? edit.createdAt : new Date().toISOString(),
       createdBy: edit.id ? (edit.createdBy || "admin") : "admin", createdByName: edit.id ? (edit.createdByName || "관리자") : "관리자",
@@ -2354,12 +2358,28 @@ function NoticeAdminView({ data, update, setToast }) {
               </Field>
 
               <Field label="받는 사람">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[["all", "전체 근무자"], ["custom", "선택한 사람만"]].map(([k, l]) => (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[["all", "전체 근무자"], ["site", "현장 선택"], ["custom", "선택한 사람만"]].map(([k, l]) => (
                     <button key={k} onClick={() => setEdit({ ...edit, audience: k })}
-                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: edit.audience === k ? C.aquaDeep : C.tileSoft, color: edit.audience === k ? "#fff" : C.sub }}>{l}</button>
+                      style={{ padding: "9px 0", fontSize: 12, fontWeight: 800, background: edit.audience === k ? C.aquaDeep : C.tileSoft, color: edit.audience === k ? "#fff" : C.sub }}>{l}</button>
                   ))}
                 </div>
+                {edit.audience === "site" && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {sites.map((s) => {
+                      const on = (edit.siteIds || []).includes(s.id);
+                      return (
+                        <button key={s.id} onClick={() => {
+                          const cur = edit.siteIds || [];
+                          setEdit({ ...edit, siteIds: on ? cur.filter((x) => x !== s.id) : [...cur, s.id] });
+                        }} style={{ padding: "6px 10px", fontSize: 12, fontWeight: 800, background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub }}>
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                    {sites.length === 0 && <div style={{ fontSize: 12, color: C.sub }}>등록된 현장이 없습니다.</div>}
+                  </div>
+                )}
                 {edit.audience === "custom" && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {workers.map((w) => {
