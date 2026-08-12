@@ -662,9 +662,12 @@ export default function App() {
               let badge = 0;
               if (k === "admin") {
                 const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
+                const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
                 badge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length
                   + (data.supplyRequests || []).filter((r) => r.status === "requested").length
-                  + (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
+                  + (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length
+                  + (data.transfers || []).filter((t) => t.status === "pending").length
+                  + (data.notices || []).filter((n) => n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
               }
               return (
                 <button key={k} onClick={() => goTab(k)} className="relative flex flex-col items-center justify-center gap-1 py-3"
@@ -1772,21 +1775,25 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
 
   const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
+  const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
   const photoBadge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length;
   const supplyBadge = (data.supplyRequests || []).filter((r) => r.status === "requested").length;
   const oneOffBadge = (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
+  const transferBadge = (data.transfers || []).filter((t) => t.status === "pending").length;
+  const noticeBadge = (data.notices || []).filter((n) => n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
 
   const goView = (k) => {
     setView(k);
     if (k === "photos") { localStorage.setItem("cleanwork:lastSeenPhotos", new Date().toISOString()); setSeenTick((t) => t + 1); }
+    if (k === "notices") { localStorage.setItem("cleanwork:lastSeenNotices", new Date().toISOString()); setSeenTick((t) => t + 1); }
   };
 
   const tabs = [
     ["records", "근무 기록", ClipboardList, oneOffBadge],
-    ["transfers", "양도", Repeat, 0],
+    ["transfers", "양도", Repeat, transferBadge],
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
-    ["notices", "공지", Bell, 0],
+    ["notices", "공지", Bell, noticeBadge],
     ["settings", "설정", SettingsIcon, 0],
   ];
   return (
