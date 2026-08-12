@@ -6,7 +6,7 @@ import {
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
-  Camera, Package, Image as ImageIcon, Folder, Search,
+  Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -694,6 +694,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const [chk, setChk] = useState({ state: "idle" });
   const [manualSite, setManualSite] = useState("");
   const [xferOpen, setXferOpen] = useState(false);
+  const [calOpen, setCalOpen] = useState(false);
   const [xferForm, setXferForm] = useState({ date: "", siteId: "", names: [""], message: "" });
   const worker = workers.find((w) => w.id === dev.workerId) || null;
   const today = dKey(now);
@@ -1121,8 +1122,16 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         )}
       </div>
 
-      {/* 근무 양도 요청하기 */}
+      {/* 내 출퇴근 캘린더 */}
       <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
+        <button onClick={() => setCalOpen(true)} className="w-full flex items-center justify-center gap-2"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
+          <CalendarDays size={15} /> 내 출퇴근 캘린더
+        </button>
+      </div>
+
+      {/* 근무 양도 요청하기 */}
+      <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
         <button onClick={openXfer} className="w-full flex items-center justify-center gap-2"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
           <Repeat size={15} /> 근무 양도 요청하기
@@ -1456,9 +1465,9 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               }}>
                 <Camera size={22} color={C.sub} />
                 <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>
-                  눌러서 {photoForm.kind === "video" ? "영상 촬영" : "사진 촬영"}
+                  눌러서 {photoForm.kind === "video" ? "영상 촬영 또는 선택" : "사진 촬영 또는 선택"}
                 </div>
-                <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} capture="environment" style={{ display: "none" }}
+                <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
                   onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
               </label>
             )}
@@ -1669,6 +1678,10 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           </Btn>
         </div>
       </Modal>
+
+      {calOpen && worker && (
+        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} />
+      )}
     </div>
   );
 }
@@ -1855,7 +1868,7 @@ function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit,
             }}>
               <Camera size={22} color={C.sub} />
               <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 {form.kind === "video" ? "영상 선택" : "사진 선택"}</div>
-              <input type="file" accept={form.kind === "video" ? "video/*" : "image/*"} capture="environment" style={{ display: "none" }}
+              <input type="file" accept={form.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
                 onChange={(e) => onPickFile(e.target.files?.[0])} />
             </label>
           )}
@@ -2752,6 +2765,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
   const { records, settings } = data;
   const worker = data.workers.find((w) => w.id === workerId);
   const [edit, setEdit] = useState(null);
+  const [calOpen, setCalOpen] = useState(false);
   const [s, e] = rangeOf(mode, anchor);
   const sk = dKey(s), ek = dKey(e);
 
@@ -2885,6 +2899,10 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
             {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
           </div>
         </div>
+        <button onClick={() => setCalOpen(true)} className="flex items-center justify-center" title="출퇴근 캘린더"
+          style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36, flexShrink: 0 }}>
+          <CalendarDays size={16} />
+        </button>
         <button onClick={addManual} className="flex items-center justify-center" title="기록 직접 추가"
           style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36 }}>
           <Plus size={16} />
@@ -3085,6 +3103,10 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
           </>
         )}
       </Modal>
+
+      {calOpen && (
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} />
+      )}
     </div>
   );
 }
@@ -3096,6 +3118,167 @@ const PRINT_CSS = `@media print {
   #paper { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; padding: 0 !important; }
   .no-print { display: none !important; }
 }`;
+
+/* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
+function AttendanceCalendar({ data, workerId, onClose }) {
+  const worker = data.workers.find((w) => w.id === workerId);
+  const settings = data.settings;
+  const [anchor, setAnchor] = useState(new Date());
+  const [selDate, setSelDate] = useState(null);
+
+  const y = anchor.getFullYear(), m = anchor.getMonth();
+  const monthKey = `${y}-${pad(m + 1)}`;
+  const first = new Date(y, m, 1);
+  const startWeekday = first.getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayKey = dKey(new Date());
+
+  const monthRecs = useMemo(
+    () => data.records.filter((r) => r.workerId === workerId && r.date.slice(0, 7) === monthKey),
+    [data.records, workerId, monthKey]
+  );
+  const byDate = useMemo(() => {
+    const map = {};
+    monthRecs.forEach((r) => { (map[r.date] ||= []).push(r); });
+    return map;
+  }, [monthRecs]);
+  const monthAgg = aggregate(monthRecs, worker, settings);
+
+  const [ws, we] = rangeOf("week", new Date());
+  const weekRecs = useMemo(
+    () => data.records.filter((r) => r.workerId === workerId && r.date >= dKey(ws) && r.date <= dKey(we)),
+    [data.records, workerId, ws, we]
+  );
+  const weekAgg = aggregate(weekRecs, worker, settings);
+
+  const cellStatus = (dateKey) => {
+    const recs = byDate[dateKey];
+    if (!recs || recs.length === 0) return "none";
+    if (recs.some((r) => !r.clockOut)) return "incomplete";
+    return "complete";
+  };
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const selRecs = selDate ? (byDate[selDate] || []) : [];
+  const selDayAgg = selDate ? aggregate(selRecs, worker, settings) : null;
+
+  if (!worker) return null;
+
+  return (
+    <div className="absolute inset-0 z-40 flex flex-col" style={{ background: C.tileSoft }}>
+      <div className="sticky top-0 flex items-center gap-2 px-4 py-3" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
+        <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: C.onDark, fontSize: 16, fontWeight: 900 }}>{worker.name}{worker.isTeamLead ? "" : ""} 님의 출퇴근 캘린더</div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        {/* 월 이동 */}
+        <div className="flex items-center justify-between mb-3">
+          <button onClick={() => setAnchor(new Date(y, m - 1, 1))} className="p-2" style={{ background: C.tile, border: `1px solid ${C.line}` }}>
+            <ChevronLeft size={16} color={C.text} />
+          </button>
+          <div style={{ fontSize: 16, fontWeight: 900, color: C.text }}>{y}년 {m + 1}월</div>
+          <button onClick={() => setAnchor(new Date(y, m + 1, 1))} className="p-2" style={{ background: C.tile, border: `1px solid ${C.line}` }}>
+            <ChevronRight size={16} color={C.text} />
+          </button>
+        </div>
+
+        {/* 이번 주 · 이번 달 요약 */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
+            <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
+            <div className="mt-1"><Num size={18}>{hmc(weekAgg.net)}</Num></div>
+            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(weekAgg.pay)}원</div>
+          </div>
+          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
+            <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
+            <div className="mt-1"><Num size={18}>{hmc(monthAgg.net)}</Num></div>
+            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(monthAgg.pay)}원</div>
+          </div>
+        </div>
+
+        {/* 요일 헤더 */}
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {WD.map((w, i) => (
+            <div key={i} style={{ textAlign: "center", fontSize: 11, fontWeight: 800, color: i === 0 ? C.coral : i === 6 ? C.blue : C.sub }}>{w}</div>
+          ))}
+        </div>
+
+        {/* 날짜 그리드 */}
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((d, i) => {
+            if (d === null) return <div key={i} />;
+            const dateKey = `${y}-${pad(m + 1)}-${pad(d)}`;
+            const status = cellStatus(dateKey);
+            const isToday = dateKey === todayKey;
+            const isSel = dateKey === selDate;
+            const bg = status === "complete" ? C.aquaDeep : status === "incomplete" ? C.amber : C.tile;
+            const col = status === "none" ? C.text : "#fff";
+            return (
+              <button key={i} onClick={() => setSelDate(dateKey === selDate ? null : dateKey)}
+                style={{
+                  aspectRatio: "1", background: bg, color: col, fontSize: 12.5, fontWeight: 800,
+                  border: isToday ? `2px solid ${C.blue}` : isSel ? `2px solid ${C.text}` : `1px solid ${C.line}`,
+                  borderRadius: RADIUS_SM, position: "relative",
+                }}>
+                {d}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 범례 */}
+        <div className="flex items-center gap-3 mt-3">
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.aquaDeep, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>출퇴근 완료</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.amber, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.tile, border: `1px solid ${C.line}`, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>기록 없음</span></div>
+        </div>
+
+        {/* 선택한 날짜 상세 */}
+        {selDate && (
+          <div className="mt-4" style={{ background: C.tile, padding: 14, boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
+            <div style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{selDate} ({WD[parseKey(selDate).getDay()]})</div>
+            {selRecs.length === 0 ? (
+              <div style={{ fontSize: 13, color: C.sub, marginTop: 8 }}>이 날은 출퇴근 기록이 없어요.</div>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2 mt-2.5">
+                  {selRecs.map((r) => {
+                    const p = calcPay(r, worker, settings);
+                    return (
+                      <div key={r.id} style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
+                          {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "1px 6px" }}>퇴근 전</span>}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                          출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
+                          {r.clockOut && ` · ${hmc(p.net)}`}
+                        </div>
+                        {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
+                        {r.outFlag && <div style={{ fontSize: 11.5, color: C.amber, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>이날 합계</span>
+                  <span style={{ fontSize: 15, fontWeight: 900, color: C.coral }}>{hmc(selDayAgg.net)} · {money(selDayAgg.pay)}원</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 const PaperShell = ({ title, onClose, actions, children }) => (
   <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.tileSoft }}>
