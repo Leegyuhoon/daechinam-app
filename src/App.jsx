@@ -3215,18 +3215,22 @@ function AttendanceCalendar({ data, workerId, onClose }) {
             if (d === null) return <div key={i} />;
             const dateKey = `${y}-${pad(m + 1)}-${pad(d)}`;
             const status = cellStatus(dateKey);
+            const holiday = isHoliday(dateKey, settings);
             const isToday = dateKey === todayKey;
             const isSel = dateKey === selDate;
             const bg = status === "complete" ? C.aquaDeep : status === "incomplete" ? C.amber : C.tile;
-            const col = status === "none" ? C.text : "#fff";
+            const col = status === "none" ? (holiday ? C.red : C.text) : "#fff";
             return (
               <button key={i} onClick={() => setSelDate(dateKey === selDate ? null : dateKey)}
                 style={{
                   aspectRatio: "1", background: bg, color: col, fontSize: 12.5, fontWeight: 800,
-                  border: isToday ? `2px solid ${C.blue}` : isSel ? `2px solid ${C.text}` : `1px solid ${C.line}`,
+                  border: isToday ? `2px solid ${C.blue}` : isSel ? `2px solid ${C.text}` : holiday ? `1.5px solid ${C.red}` : `1px solid ${C.line}`,
                   borderRadius: RADIUS_SM, position: "relative",
                 }}>
                 {d}
+                {holiday && (
+                  <div style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: 999, background: status === "none" ? C.red : "#fff" }} />
+                )}
               </button>
             );
           })}
@@ -3237,12 +3241,20 @@ function AttendanceCalendar({ data, workerId, onClose }) {
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.aquaDeep, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>출퇴근 완료</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.amber, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.tile, border: `1px solid ${C.line}`, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>기록 없음</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 8, height: 8, borderRadius: 999, background: C.red }} /><span style={{ fontSize: 11, color: C.sub }}>공휴일(1.5배)</span></div>
         </div>
 
         {/* 선택한 날짜 상세 */}
         {selDate && (
           <div className="mt-4" style={{ background: C.tile, padding: 14, boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
-            <div style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{selDate} ({WD[parseKey(selDate).getDay()]})</div>
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{selDate} ({WD[parseKey(selDate).getDay()]})</span>
+              {isHoliday(selDate, settings) && (
+                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "2px 6px" }}>
+                  공휴일 · {settings.holidayMultiplier || 1.5}배
+                </span>
+              )}
+            </div>
             {selRecs.length === 0 ? (
               <div style={{ fontSize: 13, color: C.sub, marginTop: 8 }}>이 날은 출퇴근 기록이 없어요.</div>
             ) : (
@@ -3260,6 +3272,11 @@ function AttendanceCalendar({ data, workerId, onClose }) {
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
                           {r.clockOut && ` · ${hmc(p.net)}`}
                         </div>
+                        {r.clockOut && (
+                          <div style={{ fontSize: 12, color: p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.holiday ? 800 : 400 }}>
+                            {money(p.pay)}원{p.holiday ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}
+                          </div>
+                        )}
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
                         {r.outFlag && <div style={{ fontSize: 11.5, color: C.amber, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
                       </div>
