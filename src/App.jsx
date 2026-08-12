@@ -19,6 +19,20 @@ const C = {
   amber: "#FFB020", coral: "#FF6B5E", red: "#E5372B", blue: "#2F6FEB", blueDeep: "#1B4FC4",
   line: "#E6E2DB", lineDark: "#343C45",
 };
+
+/* 근무 상태 전용 색상 — 헷갈리지 않도록 서로 완전히 다른 색상만 사용 */
+const ST = {
+  complete: "#16A34A",    // 정상 완료 — 초록
+  incomplete: "#F59E0B",  // 퇴근 안 함 — 주황
+  absent: "#71767D",      // 결근/미출근 — 회색
+  offRequested: "#2563EB",  // 휴무(양도 요청됨) — 파랑
+  offNoRequest: "#7C3AED",  // 휴무(사후등록) — 보라
+  pending: "#DB2777",       // 일회성 근무 승인 대기 — 핑크
+  extra: "#0D9488",         // 확정된 일회성·대체근무 — 청록
+  holiday: "#E5372B",       // 공휴일 — 빨강
+  outside: "#CA8A04",       // 현장 밖에서 처리됨 — 카키(다른 주황류와 구분되게)
+};
+
 const SANS = "'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,-apple-system,sans-serif";
 const MONO = SANS; // 숫자 전용 폰트 — 모노스페이스 대신 한글과 어울리는 세련된 산세리프로 통일 (숫자 정렬은 tabular-nums로 처리)
 
@@ -1162,7 +1176,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                   <span style={{
                     fontSize: 10.5, fontWeight: 800, padding: "2px 7px",
                     color: t.status === "approved" ? "#fff" : t.status === "assigned" ? "#fff" : t.status === "declined" || t.status === "cancelled" ? C.onDarkSub : C.bg,
-                    background: t.status === "approved" ? C.aquaDeep : t.status === "assigned" ? C.blue : t.status === "pending" ? C.aqua : "transparent",
+                    background: t.status === "approved" ? ST.complete : t.status === "assigned" ? ST.pending : t.status === "pending" ? C.aqua : "transparent",
                     border: t.status === "declined" || t.status === "cancelled" ? `1px solid ${C.lineDark}` : "none",
                   }}>
                     {t.status === "pending" ? "관리자 확인 중" : t.status === "assigned" ? `${t.assignedWorkerName} 승인 대기` : t.status === "approved" ? "승인 완료" : t.status === "declined" ? "거절됨" : "취소됨"}
@@ -1649,7 +1663,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             {chk.state === "outdone" && (
               <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.55, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                 {chk.d == null ? "현장 좌표 없음" : `${chk.site.name}에서 ${dist(chk.d)}`}
-                {chk.outside && <span style={{ color: C.amber, fontWeight: 800 }}> · 현장 밖 퇴근으로 표시됩니다</span>}
+                {chk.outside && <span style={{ color: ST.outside, fontWeight: 800 }}> · 현장 밖 퇴근으로 표시됩니다</span>}
               </div>
             )}
           </div>
@@ -2190,8 +2204,8 @@ function TransferAdminView({ data, update, setToast }) {
   const badge = (status) => {
     const map = {
       pending: [C.aqua, C.bg, "관리자 확인 대기"],
-      assigned: [C.blue, "#fff", "본인 승인 대기"],
-      approved: [C.aquaDeep, "#fff", "승인 완료"],
+      assigned: [ST.pending, "#fff", "본인 승인 대기"],
+      approved: [ST.complete, "#fff", "승인 완료"],
       declined: [C.lineDark, C.onDarkSub, "거절됨"],
       cancelled: [C.lineDark, C.onDarkSub, "취소됨"],
     };
@@ -2834,10 +2848,10 @@ function RecordsView({ data, update, setToast }) {
 
             <div className="grid grid-cols-4 gap-1.5 mb-3">
               {[
-                ["complete", "정상 완료", C.aquaDeep, boardRows.filter((r) => r.status === "complete").length],
-                ["incomplete", "퇴근 안 함", C.amber, boardRows.filter((r) => r.status === "incomplete").length],
-                ["off", "휴무", C.blue, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest").length],
-                ["absent", "결근/미출근", C.sub, boardRows.filter((r) => r.status === "absent").length],
+                ["complete", "정상 완료", ST.complete, boardRows.filter((r) => r.status === "complete").length],
+                ["incomplete", "퇴근 안 함", ST.incomplete, boardRows.filter((r) => r.status === "incomplete").length],
+                ["off", "휴무", ST.offRequested, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest").length],
+                ["absent", "결근/미출근", ST.absent, boardRows.filter((r) => r.status === "absent").length],
               ].map(([k, l, col, n]) => (
                 <div key={k} style={{ background: C.tile, padding: "10px 6px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
                   <div style={{ fontSize: 17, fontWeight: 900, color: col }}>{n}</div>
@@ -2851,11 +2865,11 @@ function RecordsView({ data, update, setToast }) {
               {boardRows.map(({ w, recs, status, siteNames, offInfo }) => {
                 const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
-                  complete: { color: C.aquaDeep, label: "정상 완료" },
-                  incomplete: { color: C.amber, label: "퇴근 안 함" },
-                  offRequested: { color: C.blue, label: "휴무(양도 요청됨)" },
-                  offNoRequest: { color: "#8B5CF6", label: "휴무(요청 없음 · 사후등록)" },
-                  absent: { color: C.sub, label: "결근/미출근" },
+                  complete: { color: ST.complete, label: "정상 완료" },
+                  incomplete: { color: ST.incomplete, label: "퇴근 안 함" },
+                  offRequested: { color: ST.offRequested, label: "휴무(양도 요청됨)" },
+                  offNoRequest: { color: ST.offNoRequest, label: "휴무(요청 없음 · 사후등록)" },
+                  absent: { color: ST.absent, label: "결근/미출근" },
                 };
                 return (
                   <Tile key={w.id} style={{ padding: "12px 14px" }}>
@@ -2892,7 +2906,7 @@ function RecordsView({ data, update, setToast }) {
                               <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
-                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? "#8B5CF6" : C.blue, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>}
+                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
@@ -2979,9 +2993,9 @@ function RecordsView({ data, update, setToast }) {
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                       {records.some((r) => r.workerId === w.id && r.flatPay != null && r.oneOffStatus === "pending") && (
-                        <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: "#8B5CF6", padding: "1px 4px" }}>승인 대기</span>
+                        <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px" }}>승인 대기</span>
                       )}
-                      {flags > 0 && <ShieldAlert size={13} color={C.amber} />}
+                      {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
                       {shift ? `${times}타임 · ${days}일` : `${days}일 근무`}
@@ -3409,7 +3423,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
                       {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
-                      {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, border: `1px solid ${C.amber}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
+                      {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: ST.outside, border: `1px solid ${ST.outside}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.text, fontWeight: 700 }}>
                       {tstr(r.clockIn)} – {r.clockOut ? tstr(r.clockOut) : "근무 중"}
@@ -3531,10 +3545,19 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
 
   const cellStatus = (dateKey) => {
     const recs = byDate[dateKey];
-    if (!recs || recs.length === 0) return "none";
+    if (!recs || recs.length === 0) {
+      const off = (data.transfers || []).find((t) => t.fromWorkerId === workerId && t.date === dateKey && t.status === "approved");
+      if (off) return off.noRequest ? "offNoRequest" : "offRequested";
+      return "none";
+    }
     if (recs.some((r) => r.flatPay != null && r.oneOffStatus === "pending")) return "pending";
     if (recs.some((r) => !r.clockOut)) return "incomplete";
     return "complete";
+  };
+
+  const cellColors = {
+    complete: ST.complete, incomplete: ST.incomplete, pending: ST.pending,
+    offRequested: ST.offRequested, offNoRequest: ST.offNoRequest, none: C.tile,
   };
 
   const cells = [];
@@ -3648,7 +3671,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             const holiday = isHoliday(dateKey, settings);
             const isToday = dateKey === todayKey;
             const isSel = dateKey === selDate;
-            const bg = status === "complete" ? C.aquaDeep : status === "incomplete" ? C.amber : status === "pending" ? "#8B5CF6" : C.tile;
+            const bg = cellColors[status] || C.tile;
             const col = status === "none" ? (holiday ? C.red : C.text) : "#fff";
             return (
               <button key={i} onClick={() => setSelDate(dateKey === selDate ? null : dateKey)}
@@ -3667,12 +3690,14 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
         </div>
 
         {/* 범례 */}
-        <div className="flex items-center gap-3 mt-3">
-          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.aquaDeep, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>출퇴근 완료</span></div>
-          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.amber, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3">
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.complete, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>출퇴근 완료</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.incomplete, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.tile, border: `1px solid ${C.line}`, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>기록 없음</span></div>
-          <div className="flex items-center gap-1"><div style={{ width: 8, height: 8, borderRadius: 999, background: C.red }} /><span style={{ fontSize: 11, color: C.sub }}>공휴일(1.5배)</span></div>
-          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: "#8B5CF6", borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>승인 대기</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 8, height: 8, borderRadius: 999, background: ST.holiday }} /><span style={{ fontSize: 11, color: C.sub }}>공휴일(1.5배)</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.pending, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>승인 대기</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offRequested, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(양도)</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offNoRequest, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(사후등록)</span></div>
         </div>
 
         {/* 선택한 날짜 상세 */}
@@ -3681,13 +3706,28 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             <div className="flex items-center gap-1.5">
               <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{selDate} ({WD[parseKey(selDate).getDay()]})</span>
               {isHoliday(selDate, settings) && (
-                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "2px 6px" }}>
+                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: ST.holiday, padding: "2px 6px" }}>
                   공휴일 · {settings.holidayMultiplier || 1.5}배
                 </span>
               )}
             </div>
             {selRecs.length === 0 ? (
-              <div style={{ fontSize: 13, color: C.sub, marginTop: 8 }}>이 날은 출퇴근 기록이 없어요.</div>
+              (() => {
+                const off = (data.transfers || []).find((t) => t.fromWorkerId === workerId && t.date === selDate && t.status === "approved");
+                if (off) {
+                  return (
+                    <div className="mt-2">
+                      <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: off.noRequest ? ST.offNoRequest : ST.offRequested, padding: "2px 7px" }}>
+                        {off.noRequest ? "휴무 (사전 요청 없음 · 사후등록)" : "휴무 (양도 요청됨)"}
+                      </span>
+                      {off.assignedWorkerName && (
+                        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>{off.assignedWorkerName}님이 대신 근무했어요.</div>
+                      )}
+                    </div>
+                  );
+                }
+                return <div style={{ fontSize: 13, color: C.sub, marginTop: 8 }}>이 날은 출퇴근 기록이 없어요.</div>;
+              })()
             ) : (
               <>
                 <div className="flex flex-col gap-2 mt-2.5">
@@ -3698,10 +3738,10 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px" }}>{r.isExtra ? "대체 추가분" : "일회성"}</span>}
-                            {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#8B5CF6", padding: "1px 5px" }}>승인 대기</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>{r.isExtra ? "대체 추가분" : "일회성"}</span>}
+                            {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
                           </div>
-                          {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, padding: "1px 6px" }}>퇴근 전</span>}
+                          {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
                         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
@@ -3715,7 +3755,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                           </div>
                         )}
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
-                        {r.outFlag && <div style={{ fontSize: 11.5, color: C.amber, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
+                        {r.outFlag && <div style={{ fontSize: 11.5, color: ST.outside, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
                         {p.pending && isAdmin && (
                           <div className="mt-2.5">
                             <Btn small onClick={() => openReview(r)}>내용 확인하고 승인하기</Btn>
