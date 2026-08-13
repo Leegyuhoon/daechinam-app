@@ -3515,39 +3515,46 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
     setEdit(null); setToast("기록을 삭제했습니다");
   };
 
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, []);
+
   return (
-    <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
-      <div className="sticky top-0 flex items-center gap-3 px-4 py-3.5" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
-        <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>{worker.name}</span>
-            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
-          </div>
-          <div style={{ color: C.onDarkSub, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+    <div ref={scrollRef} className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
+      <div className="sticky top-0" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
+        <div className="flex items-center gap-3 px-4 pt-3.5 pb-2">
+          <button onClick={onClose} style={{ flexShrink: 0 }}><ArrowLeft size={20} color={C.onDark} /></button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{worker.name}</span>
+              {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
+            </div>
+            <div style={{ color: C.onDarkSub, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+            </div>
           </div>
         </div>
-        <button onClick={() => setCalOpen(true)} className="flex items-center justify-center" title="출퇴근 캘린더"
-          style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36, flexShrink: 0 }}>
-          <CalendarDays size={16} />
-        </button>
-        <button onClick={addManual} className="flex items-center justify-center" title="기록 직접 추가"
-          style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36 }}>
-          <Plus size={16} />
-        </button>
-        <button onClick={downloadWorkerCsv} className="flex items-center justify-center" title="엑셀 다운로드"
-          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0 }}>
-          <FileText size={15} />
-        </button>
-        <button onClick={downloadWorkerPdf} disabled={exportBusy} className="flex items-center justify-center" title="PDF 다운로드"
-          style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0, opacity: exportBusy ? 0.5 : 1 }}>
-          <Printer size={15} />
-        </button>
-        <button onClick={onPayslip} className="flex items-center gap-1 px-2.5 py-2"
-          style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 36 }}>
-          <Receipt size={13} /> 정산서
-        </button>
+        <div className="flex items-center gap-2 px-4 pb-3" style={{ overflowX: "auto" }}>
+          <button onClick={() => setCalOpen(true)} className="flex items-center justify-center" title="출퇴근 캘린더"
+            style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36, flexShrink: 0 }}>
+            <CalendarDays size={16} />
+          </button>
+          <button onClick={addManual} className="flex items-center justify-center" title="기록 직접 추가"
+            style={{ border: `1px solid ${C.lineDark}`, color: C.aqua, width: 38, height: 36, flexShrink: 0 }}>
+            <Plus size={16} />
+          </button>
+          <button onClick={downloadWorkerCsv} className="flex items-center justify-center" title="엑셀 다운로드"
+            style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0 }}>
+            <FileText size={15} />
+          </button>
+          <button onClick={downloadWorkerPdf} disabled={exportBusy} className="flex items-center justify-center" title="PDF 다운로드"
+            style={{ border: `1px solid ${C.lineDark}`, color: C.onDarkSub, width: 38, height: 36, flexShrink: 0, opacity: exportBusy ? 0.5 : 1 }}>
+            <Printer size={15} />
+          </button>
+          <button onClick={onPayslip} className="flex items-center gap-1 px-2.5 py-2"
+            style={{ background: C.aquaDeep, color: "#fff", fontSize: 12, fontWeight: 800, height: 36, flexShrink: 0 }}>
+            <Receipt size={13} /> 정산서
+          </button>
+        </div>
       </div>
 
       <div className="p-4">
@@ -3858,6 +3865,9 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
     setReviewRec(null);
   };
 
+  const calScrollRef = useRef(null);
+  useEffect(() => { if (calScrollRef.current) calScrollRef.current.scrollTop = 0; }, []);
+
   if (!worker) return null;
 
   return (
@@ -3869,7 +3879,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div ref={calScrollRef} className="flex-1 overflow-y-auto p-4">
         {/* 월 이동 */}
         <div className="flex items-center justify-between mb-3">
           <button onClick={() => setAnchor(new Date(y, m - 1, 1))} className="p-2" style={{ background: C.tile, border: `1px solid ${C.line}` }}>
@@ -4088,20 +4098,24 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
 }
 
 
-const PaperShell = ({ title, onClose, actions, children }) => (
-  <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.tileSoft }}>
-    <style>{PRINT_CSS}</style>
-    <div className="sticky top-0 flex items-center gap-2 px-4 py-3 no-print" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
-      <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
-      <div style={{ flex: 1, color: C.onDark, fontSize: 15, fontWeight: 800 }}>{title}</div>
-      {actions}
+const PaperShell = ({ title, onClose, actions, children }) => {
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, []);
+  return (
+    <div ref={scrollRef} className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.tileSoft }}>
+      <style>{PRINT_CSS}</style>
+      <div className="sticky top-0 flex items-center gap-2 px-4 py-3 no-print" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
+        <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
+        <div style={{ flex: 1, color: C.onDark, fontSize: 15, fontWeight: 800 }}>{title}</div>
+        {actions}
+      </div>
+      <div className="p-3">
+        <div id="paper" style={{ background: C.tile, padding: 22, borderRadius: RADIUS, boxShadow: SHADOW_MD }}>{children}</div>
+        <div style={{ height: 20 }} />
+      </div>
     </div>
-    <div className="p-3">
-      <div id="paper" style={{ background: C.tile, padding: 22, borderRadius: RADIUS, boxShadow: SHADOW_MD }}>{children}</div>
-      <div style={{ height: 20 }} />
-    </div>
-  </div>
-);
+  );
+};
 
 const Rule = ({ thick }) => <div style={{ height: thick ? 2 : 1, background: thick ? C.text : C.line, margin: "12px 0" }} />;
 const LineItem = ({ k, v, sub, bold, color }) => (
