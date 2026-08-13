@@ -507,7 +507,28 @@ function Tile({ children, style, onClick, soft }) {
     </div>
   );
 }
+// 기기 뒤로가기(안드로이드 물리/제스처 버튼, 아이폰 스와이프)를 누르면
+// 앱이 꺼지는 대신 지금 열려있는 화면/팝업만 닫히도록 만드는 공용 훅.
+// open===true인 동안 히스토리를 하나 쌓아뒀다가, 뒤로가기가 오면 onClose를 호출함.
+function useBackClose(open, onClose) {
+  useEffect(() => {
+    if (!open) return;
+    let closedByBack = false;
+    window.history.pushState({ modal: true }, "");
+    const onPopState = () => { closedByBack = true; onClose(); };
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      // 뒤로가기가 아니라 버튼 등으로 닫힌 경우엔, 아까 쌓아둔 히스토리를 다시 빼줘야
+      // 다음 번 뒤로가기가 엉뚱한 데서 한 번 더 소모되지 않음
+      if (!closedByBack) window.history.back();
+    };
+  }, [open]);
+}
+
 function Modal({ open, onClose, children, title }) {
+  useBackClose(open, onClose);
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -657,6 +678,7 @@ export default function App() {
   }, []);
 
   const goTab = (k) => { if (k === "clock") { setUnlocked(false); setRevealAdmin(false); } setTab(k); };
+  useBackClose(tab === "admin", () => goTab("clock"));
 
   if (loading || !data || !dev) {
     return (
@@ -3196,6 +3218,7 @@ function RecordsView({ data, update, setToast }) {
 
 /* ─────────────────────────  개인 상세  ───────────────────────── */
 function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast, onPayslip }) {
+  useBackClose(true, onClose);
   const { records, settings } = data;
   const worker = data.workers.find((w) => w.id === workerId);
   const [edit, setEdit] = useState(null);
@@ -3555,6 +3578,7 @@ const PRINT_CSS = `@media print {
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
 function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, setToast }) {
+  useBackClose(true, onClose);
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
   const [anchor, setAnchor] = useState(new Date());
@@ -3920,6 +3944,7 @@ const LineItem = ({ k, v, sub, bold, color }) => (
 
 /* ─────────────────────────  개인 월 정산서  ───────────────────────── */
 function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
+  useBackClose(true, onClose);
   const [adjOpen, setAdjOpen] = useState(false);
   const [withDays, setWithDays] = useState(true);
   const [draft, setDraft] = useState(null);
@@ -4318,6 +4343,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
 
 /* ─────────────────────────  전체 급여대장  ───────────────────────── */
 function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
+  useBackClose(true, onClose);
   const shift = data.settings.payMode === "shift";
   const rows = data.workers.map((w) => ({ w, ...payslipCalc(data, w.id, ym) })).filter((r) => r.agg.times > 0 || r.extra || r.deduct);
   const sum = rows.reduce((a, r) => ({
