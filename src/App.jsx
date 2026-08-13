@@ -6,7 +6,7 @@ import {
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
-  Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays,
+  Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays, RefreshCw,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -357,6 +357,7 @@ function aggregate(records, worker, settings) {
   let net = 0, pay = 0, times = 0, base = 0, otPay = 0, blocks = 0;
   let otMin = 0, shortMin = 0, overMin = 0, flags = 0;
   let holidayNet = 0, holidayPay = 0, holidayDays = 0;
+  let flatTotal = 0; // 일회성/고정금액 합계 — 공휴일 배율 미적용, 있는 그대로
 
   records.forEach((r) => {
     if (r.outFlag) flags++;
@@ -364,15 +365,17 @@ function aggregate(records, worker, settings) {
     if (p.open) return;
     const rp = resolvePay(worker, r.siteId, settings);
     times++; net += p.net; pay += p.pay;
-    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0 });
+    const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
     b.net += p.net; b.times++; b.target += shift ? sh : 0;
-    b.wageSum += rp.wage * p.net; // 같은 날 여러 현장(시급 다름) 근무 시 시간가중 평균 시급용
-    if (p.holiday) {
-      holidayNet += p.net;
-      holidayPay += p.pay;
+    if (p.flat) {
+      // 일회성 근무는 시간·요일과 무관하게 지정된 금액 그대로 — 시급 재계산 대상에서 제외
+      b.flatNet += p.net; b.flatPay += p.pay; flatTotal += p.pay;
+    } else {
+      b.wageSum += rp.wage * p.net; // 같은 날 여러 현장(시급 다름) 근무 시 시간가중 평균 시급용
+      if (p.holiday) { holidayNet += p.net; holidayPay += p.pay; }
     }
     if (shift) {
-      if (!p.holiday) { base += p.base; otPay += p.otPay; }
+      if (!p.holiday && !p.flat) { base += p.base; otPay += p.otPay; }
       blocks += p.blocks;
       otMin += p.otMin; shortMin += p.shortMin; overMin += p.overMin;
     }
@@ -383,19 +386,20 @@ function aggregate(records, worker, settings) {
     holidayPay = 0;
     Object.entries(byDate).forEach(([date, b]) => {
       b.target = std;
-      const avgWage = b.net > 0 ? b.wageSum / b.net : settings.wage;
+      const wageNet = Math.max(0, b.net - b.flatNet); // 일회성 근무 시간은 시급 계산에서 제외
+      const avgWage = wageNet > 0 ? b.wageSum / wageNet : settings.wage;
       if (b.holiday) {
         holidayDays++;
-        holidayPay += b.net * avgWage * hMult;
+        holidayPay += wageNet * avgWage * hMult;
         return;
       }
-      const dayOt = Math.max(0, b.net - std);
-      const dayReg = b.net - dayOt;
-      if (dayOt > 0) otMin += dayOt * 60; else shortMin += (std - b.net) * 60;
+      const dayOt = Math.max(0, wageNet - std);
+      const dayReg = wageNet - dayOt;
+      if (dayOt > 0) otMin += dayOt * 60; else shortMin += Math.max(0, std - wageNet) * 60;
       base += dayReg * avgWage;
       otPay += settings.otPremium ? dayOt * avgWage * 1.5 : dayOt * avgWage;
     });
-    pay = base + otPay + holidayPay;
+    pay = base + otPay + holidayPay + flatTotal;
     overMin = otMin;
   } else {
     Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
@@ -631,6 +635,21 @@ export default function App() {
     catch (e) { setToast("저장 실패 — 인터넷 연결을 확인해 주세요"); }
   }, []);
 
+  // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
+  const refreshShared = useCallback(async () => {
+    try {
+      const r = await loadShared();
+      if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
+    } catch (e) {}
+  }, []);
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === "visible") refreshShared(); }, 20000);
+    const onVis = () => { if (document.visibilityState === "visible") refreshShared(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); };
+  }, [refreshShared]);
+
   const updateDev = useCallback(async (mut) => {
     const next = typeof mut === "function" ? mut(devRef.current) : mut;
     devRef.current = next; setDev(next);
@@ -664,7 +683,7 @@ export default function App() {
           {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
           {tab === "admin" && (
             unlocked
-              ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} />
+              ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
               : <AdminGate data={data} update={update} setToast={setToast} onPass={() => setUnlocked(true)} />
           )}
         </div>
@@ -1784,9 +1803,10 @@ function AdminGate({ data, update, setToast, onPass }) {
 }
 
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
-function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
+function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }) {
   const [view, setView] = useState("records");
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
+  const [refreshing, setRefreshing] = useState(false);
 
   const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
   const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
@@ -1828,6 +1848,11 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock }) {
             </button>
           ))}
         </div>
+        <button onClick={async () => { setRefreshing(true); await onRefresh(); setRefreshing(false); setToast("최신 내용으로 새로고침했습니다"); }}
+          className="flex items-center justify-center" title="새로고침"
+          style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, flexShrink: 0 }}>
+          <RefreshCw size={16} color={C.onDarkSub} className={refreshing ? "animate-spin" : ""} />
+        </button>
         <button onClick={onLock} className="flex items-center justify-center" title="잠그기"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, flexShrink: 0 }}>
           <Lock size={16} color={C.onDarkSub} />
@@ -2616,49 +2641,52 @@ function RecordsView({ data, update, setToast }) {
   }, [boardOpen, boardDate, workers, records, transfers]);
 
   const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
-  const [markOffForm, setMarkOffForm] = useState({ siteId: "", subWorkerId: "", amount: "" });
+  const [markOffForm, setMarkOffForm] = useState({ siteName: "", subs: [{ workerId: "", amount: "" }] });
   const openMarkOff = (w) => {
-    const defSite = w.siteId || sites[0]?.id || "";
     const dw = workers.find((x) => x.id === w.id);
+    const defSiteName = sites.find((s) => s.id === (w.siteId || dw?.siteId))?.name || "";
     const suggested = settings.payMode === "shift" ? (dw?.shiftPay ?? settings.shiftPay) : (dw?.wage ?? settings.wage) * (dw?.stdHours ?? settings.stdHours);
-    setMarkOffForm({ siteId: defSite, subWorkerId: "", amount: String(suggested) });
+    setMarkOffForm({ siteName: defSiteName, subs: [{ workerId: "", amount: String(suggested) }] });
     setMarkOffFor(w);
   };
   const submitMarkOff = () => {
-    const site = sites.find((s) => s.id === markOffForm.siteId);
-    const sub = workers.find((x) => x.id === markOffForm.subWorkerId);
+    if (!markOffForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
+    const validSubs = markOffForm.subs.filter((s) => s.workerId);
     const at = new Date().toISOString();
+    const firstSub = validSubs[0] ? workers.find((x) => x.id === validSubs[0].workerId) : null;
     update((d) => {
       let next = { ...d };
       next.transfers = [
         ...(d.transfers || []),
         {
-          id: uid(), date: boardDate, siteId: site?.id || null, siteName: site?.name || "현장 미지정",
+          id: uid(), date: boardDate, siteId: null, siteName: markOffForm.siteName.trim(),
           fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
-          toWorkerId: sub?.id || null, toWorkerName: sub?.name || "", toRegistered: !!sub,
-          assignedWorkerId: sub?.id || null, assignedWorkerName: sub?.name || null,
+          toWorkerId: firstSub?.id || null, toWorkerName: validSubs.map((s) => workers.find((w) => w.id === s.workerId)?.name).filter(Boolean).join("·"),
+          toRegistered: validSubs.length > 0,
+          assignedWorkerId: firstSub?.id || null, assignedWorkerName: firstSub?.name || null,
           startTime: null, endTime: null, message: "",
           status: "approved", noRequest: true,
           createdAt: at, respondedAt: at, fulfilledRecordId: null,
         },
       ];
-      if (sub) {
-        next.records = [
-          ...d.records,
-          {
-            id: uid(), workerId: sub.id, date: boardDate, site: site?.name || "현장 미지정", siteId: site?.id || null,
+      next.records = [
+        ...d.records,
+        ...validSubs.map((s) => {
+          const w = workers.find((x) => x.id === s.workerId);
+          return {
+            id: uid(), workerId: s.workerId, date: boardDate, site: markOffForm.siteName.trim(), siteId: null,
             clockIn: (() => { const dt = parseKey(boardDate); dt.setHours(9, 0, 0, 0); return dt.toISOString(); })(),
             clockOut: (() => { const dt = parseKey(boardDate); dt.setHours(18, 0, 0, 0); return dt.toISOString(); })(),
-            flatPay: Number(markOffForm.amount) || 0, oneOffStatus: "approved",
+            flatPay: Number(s.amount) || 0, oneOffStatus: "approved",
             breakMinutes: null, note: `${markOffFor.name}님 갑작스러운 휴무 대체`, manual: true,
             coverForId: markOffFor.id, coverForName: markOffFor.name,
             inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
-          },
-        ];
-      }
+          };
+        }),
+      ];
       return next;
     });
-    setToast(sub ? `휴무 처리하고 ${sub.name}님 대체 근무를 등록했습니다` : "휴무로 처리했습니다");
+    setToast(validSubs.length > 0 ? `휴무 처리하고 ${validSubs.length}명의 대체 근무를 등록했습니다` : "휴무로 처리했습니다");
     setMarkOffFor(null);
   };
 
@@ -3116,23 +3144,40 @@ function RecordsView({ data, update, setToast }) {
               대신 근무한 사람이 있으면 아래에서 같이 등록할 수 있어요.
             </div>
             <div className="mt-4 flex flex-col gap-2.5">
-              <Field label="현장">
-                <select value={markOffForm.siteId} onChange={(e) => setMarkOffForm((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                  {sites.length === 0 && <option value="">등록된 현장이 없습니다</option>}
-                  {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+              <Field label="현장 (직접 입력)">
+                <input type="text" value={markOffForm.siteName} onChange={(e) => setMarkOffForm((f) => ({ ...f, siteName: e.target.value }))}
+                  placeholder="예: 강남현장" style={inputStyle} />
               </Field>
-              <Field label="대신 근무한 사람 (있으면 선택, 없으면 비워두세요)">
-                <select value={markOffForm.subWorkerId} onChange={(e) => setMarkOffForm((f) => ({ ...f, subWorkerId: e.target.value }))} style={inputStyle}>
-                  <option value="">없음 (아무도 대신 안 함)</option>
-                  {workers.filter((w) => w.id !== markOffFor.id).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              </Field>
-              {markOffForm.subWorkerId && (
-                <Field label="대신 근무자 지급 금액 (원)">
-                  <input type="number" value={markOffForm.amount} onChange={(e) => setMarkOffForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
-                </Field>
-              )}
+              <div>
+                <Eyebrow>대신 근무한 사람 (있으면 추가, 없으면 비워두세요)</Eyebrow>
+                <div className="flex flex-col gap-2 mt-2">
+                  {markOffForm.subs.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <select value={s.workerId} onChange={(e) => {
+                        const next = [...markOffForm.subs]; next[i] = { ...s, workerId: e.target.value };
+                        setMarkOffForm((f) => ({ ...f, subs: next }));
+                      }} style={{ ...inputStyle, flex: 2 }}>
+                        <option value="">선택 안 함</option>
+                        {workers.filter((w) => w.id !== markOffFor.id).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      </select>
+                      <input type="number" placeholder="지급 금액" value={s.amount}
+                        onChange={(e) => {
+                          const next = [...markOffForm.subs]; next[i] = { ...s, amount: e.target.value };
+                          setMarkOffForm((f) => ({ ...f, subs: next }));
+                        }} style={{ ...inputStyle, flex: 1 }} />
+                      {markOffForm.subs.length > 1 && (
+                        <button onClick={() => setMarkOffForm((f) => ({ ...f, subs: f.subs.filter((_, idx) => idx !== i) }))}>
+                          <X size={16} color={C.sub} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setMarkOffForm((f) => ({ ...f, subs: [...f.subs, { workerId: "", amount: "" }] }))}
+                  className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+                  <Plus size={13} /> 대신 근무한 사람 추가
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setMarkOffFor(null)}>취소</Btn>
