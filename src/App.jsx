@@ -333,11 +333,17 @@ function calcPay(rec, worker, settings) {
   const rp = resolvePay(worker, rec.siteId, settings);
   if (settings.payMode !== "shift") {
     const wage = rp.wage;
-    const pay = c.net * wage * hMult;
+    // capBase: "기본근무+대체근무" 확정된 기록은 본인 기본시간만큼만 정상 지급,
+    // 초과분은 관리자의 "결근자 몫 나누기"에서 따로 배분되므로 여기서 중복으로 계산하지 않음
+    const payHours = rec.capBase ? Math.min(c.net, rp.stdHours) : c.net;
+    const pay = payHours * wage * hMult;
     return { ...c, open: false, pay, base: pay, otPay: 0, blocks: 0, diffMin: 0, otMin: 0, shortMin: 0, holiday };
   }
   const sh = rp.shiftHours;
   const sp = rp.shiftPay * hMult;
+  if (rec.capBase) {
+    return { ...c, open: false, base: sp, otPay: 0, pay: sp, blocks: 0, diffMin: 0, holiday, otMin: 0, shortMin: 0, overMin: 0, target: sh };
+  }
   const th = Math.max(1, settings.otThreshold);
   const diffMin = Math.round((c.net - sh) * 60);
   let blocks = 0;
@@ -778,6 +784,43 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   };
 
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
+
+  // 대신 근무하기로 확정된 날, 퇴근까지 완료했는데 아직 "대체근무만/기본근무+대체근무" 확인을 안 한 건이 있으면 물어봄
+  const myCoverConfirmNeeded = useMemo(() => {
+    if (!worker) return [];
+    return (data.transfers || []).filter((t) =>
+      t.status === "approved" && t.noRequest && t.assignedWorkerId === worker.id && !t.coverType
+    ).map((t) => {
+      const recs = records.filter((r) => r.workerId === worker.id && r.date === t.date && (!t.siteId || r.siteId === t.siteId) && r.clockOut && r.flatPay == null);
+      return { t, recs };
+    }).filter((x) => x.recs.length > 0); // 실제로 그날 그 현장에서 퇴근까지 완료한 기록이 있어야 물어봄
+  }, [worker, data.transfers, records]);
+
+  const [coverConfirmFor, setCoverConfirmFor] = useState(null); // { t, recs }
+  const answerCoverConfirm = (mixed) => {
+    const { t, recs } = coverConfirmFor;
+    update((d) => {
+      let recs2 = [...d.records];
+      if (mixed) {
+        // 본인 기본 1타임만큼은 정상 지급 확정, 초과분은 관리자의 균등/비례 분배 대상으로 남겨둠(중복 계산 방지)
+        recs2 = recs2.map((r) => (recs.some((x) => x.id === r.id) ? { ...r, capBase: true } : r));
+      }
+      const totalNet = recs.reduce((sum, r) => sum + calcRec(r, d.settings).net, 0);
+      const rp = resolvePay(worker, recs[0]?.siteId, d.settings);
+      const baseHours = d.settings.payMode === "shift" ? rp.shiftHours : rp.stdHours;
+      const excessHours = mixed ? Math.max(0, totalNet - baseHours) : totalNet;
+      return {
+        ...d,
+        records: recs2,
+        transfers: (d.transfers || []).map((x) => (x.id === t.id
+          ? { ...x, coverType: mixed ? "mixed" : "pure", confirmedAt: new Date().toISOString(), excessHours, baseHours }
+          : x)),
+      };
+    });
+    setToast("확인해주셔서 감사해요 — 관리자가 정확한 금액을 배분해드릴 거예요");
+    setCoverConfirmFor(null);
+  };
+
   const [signOpen, setSignOpen] = useState(null); // payslipSigns entry
   const [sigData, setSigData] = useState(null);
   const [signBusy, setSignBusy] = useState(false);
@@ -1252,6 +1295,50 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           ))}
         </div>
       )}
+
+      {/* 대체근무 유형 확인 (퇴근 완료 후) */}
+      {myCoverConfirmNeeded.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          {myCoverConfirmNeeded.map(({ t, recs }) => (
+            <div key={t.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid #8B5CF6` }}>
+              <div className="flex items-center gap-1.5" style={{ color: "#8B5CF6", fontSize: 11.5, fontWeight: 800 }}>
+                <ShieldCheck size={12} /> 근무 확인이 필요해요
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
+                {t.date.slice(5).replace("-", "/")} · {t.siteName}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{t.fromWorkerName}님 대신 근무하신 것, 정확한 급여 계산을 위해 확인이 필요해요</div>
+              <div className="mt-3">
+                <Btn full small onClick={() => setCoverConfirmFor({ t, recs })}>근무 유형 확인하기</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 대체근무 유형 선택 모달 */}
+      <Modal open={!!coverConfirmFor} onClose={() => setCoverConfirmFor(null)}>
+        {coverConfirmFor && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근무 유형 확인</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
+              {coverConfirmFor.t.date} · <b style={{ color: C.text }}>{coverConfirmFor.t.siteName}</b>에서 {coverConfirmFor.t.fromWorkerName}님 대신 근무하신 것, 어떤 근무였나요?
+            </div>
+            <div className="flex flex-col gap-2 mt-4">
+              <button onClick={() => answerCoverConfirm(false)} className="pressable text-left"
+                style={{ padding: "14px 16px", background: C.tileSoft, border: `1.5px solid ${C.line}` }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>대체근무만 했어요</div>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>그날 제 원래 근무는 없었고, 오직 대신 근무만 했어요</div>
+              </button>
+              <button onClick={() => answerCoverConfirm(true)} className="pressable text-left"
+                style={{ padding: "14px 16px", background: C.tileSoft, border: `1.5px solid ${C.line}` }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>기본근무 + 대체근무를 했어요</div>
+                <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>제 원래 근무를 하면서, 추가로 대신 근무까지 했어요</div>
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* 확인·서명 필요한 정산서 */}
       {myPendingSigns.length > 0 && (
@@ -2596,9 +2683,9 @@ function RecordsView({ data, update, setToast }) {
   const [boardDate, setBoardDate] = useState(dKey(new Date()));
 
   const [coverOpen, setCoverOpen] = useState(false);
-  const [coverForm, setCoverForm] = useState({ siteId: "", offWorkerIds: [], totalAmount: "200000", participants: [""] });
+  const [coverForm, setCoverForm] = useState({ siteId: "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: true, weight: 1 }] });
   const openCover = () => {
-    setCoverForm({ siteId: sites[0]?.id || "", offWorkerIds: [], totalAmount: "200000", participants: ["", ""] });
+    setCoverForm({ siteId: sites[0]?.id || "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: true, weight: 1 }, { workerId: "", pure: true, weight: 1 }] });
     setCoverOpen(true);
   };
   // 휴무자를 선택하면 그 사람들의 평소 1일 급여 합계를 총액으로 자동 제안
@@ -2619,40 +2706,81 @@ function RecordsView({ data, update, setToast }) {
     }, 0);
     setCoverForm((f) => ({ ...f, offWorkerIds: next, totalAmount: String(nextTotal) }));
   };
-  // 인원수로 균등하게 나눔 (마지막 사람이 반올림 오차를 흡수)
-  const coverValidIds = coverForm.participants.filter(Boolean);
-  const coverShares = coverValidIds.map((_, i) => {
-    if (coverValidIds.length === 0) return 0;
-    const base = Math.floor((Number(coverForm.totalAmount) || 0) / coverValidIds.length);
-    const remainder = (Number(coverForm.totalAmount) || 0) - base * coverValidIds.length;
-    return i === coverValidIds.length - 1 ? base + remainder : base;
+  // 인원수 균등 분배가 기본. 단, "기본근무+대체근무"로 확인된 사람이 섞여있으면
+  // 그 사람은 초과 근무시간 비율만큼만 가중치를 둬서 더 공평하게 나눔
+  // (순수 대체근무 = 가중치 1, 기본+대체 = 초과시간/본인기준시간 비율)
+  const coverValidParts = coverForm.participants.filter((p) => p.workerId);
+  const coverWeights = coverValidParts.map((p) => (p.pure ? 1 : Math.max(0.1, Number(p.weight) || 1)));
+  const coverWeightSum = coverWeights.reduce((a, b) => a + b, 0);
+  const coverShares = coverValidParts.map((_, i) => {
+    if (coverValidParts.length === 0 || coverWeightSum === 0) return 0;
+    return Math.round((coverWeights[i] / coverWeightSum) * (Number(coverForm.totalAmount) || 0));
   });
+  // 반올림 오차는 마지막 사람에게 몰아서 합계를 정확히 맞춤
+  if (coverShares.length > 0) {
+    const diff = (Number(coverForm.totalAmount) || 0) - coverShares.reduce((a, b) => a + b, 0);
+    coverShares[coverShares.length - 1] += diff;
+  }
+
+  // 근무자들이 이미 "확인"해준 답변을 자동으로 불러오기
+  const autoFillFromConfirmed = () => {
+    if (!coverForm.siteId) { setToast("먼저 현장을 선택해 주세요"); return; }
+    const matches = (data.transfers || []).filter((t) =>
+      t.date === boardDate && t.siteId === coverForm.siteId && t.coverType && t.assignedWorkerId
+    );
+    if (matches.length === 0) { setToast("이 현장·날짜에 근무자가 확인해준 내역이 아직 없어요"); return; }
+    setCoverForm((f) => ({
+      ...f,
+      offWorkerIds: [...new Set(matches.map((t) => t.fromWorkerId))],
+      participants: matches.map((t) => ({
+        workerId: t.assignedWorkerId, pure: t.coverType === "pure",
+        weight: t.coverType === "mixed" && t.baseHours ? (t.excessHours / t.baseHours) : 1,
+      })),
+    }));
+    setToast(`${matches.length}명의 확인 내역을 불러왔어요 — 금액만 확인하고 반영하세요`);
+  };
+
   const submitCover = () => {
-    if (coverValidIds.length === 0) { setToast("대신 근무한 사람을 선택해 주세요"); return; }
+    if (coverValidParts.length === 0) { setToast("대신 근무한 사람을 선택해 주세요"); return; }
     const site = sites.find((s) => s.id === coverForm.siteId);
     if (!site) { setToast("현장을 선택해 주세요"); return; }
     const offNames = coverForm.offWorkerIds.map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·");
-    const noteBase = offNames ? `${offNames}님 휴무 대체 추가 근무분` : "휴무 대체 추가 근무분";
+    const noteBase = offNames ? `${offNames}님 휴무 대체 근무분` : "휴무 대체 근무분";
 
-    // 본인의 정규 1타임 근무와는 별개로 "추가분"이 더해지는 것 — 정규 기록은 그대로 두고, 추가 기록을 하나 더 만듦
     const mkTime = () => { const d = parseKey(boardDate); d.setHours(9, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
-    update((d) => ({
-      ...d,
-      records: [
-        ...d.records,
-        ...coverValidIds.map((workerId, i) => {
-          const t = mkTime();
-          return {
-            id: uid(), workerId, date: boardDate, site: site.name, siteId: site.id,
-            clockIn: t.in, clockOut: t.out,
-            flatPay: coverShares[i], oneOffStatus: "approved",
-            breakMinutes: null, note: noteBase, manual: true, isExtra: true,
-            inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
-          };
-        }),
-      ],
-    }));
-    setToast("추가 근무분을 등록했습니다 — 각자 본인 정규 근무 금액에 더해져서 합산돼요");
+    let overwrittenCount = 0;
+    update((d) => {
+      let recs = [...d.records];
+      coverValidParts.forEach((p, i) => {
+        if (p.pure) {
+          // 순수 대체근무만 한 경우 — 그날 이미 자동 계산된 정상 출퇴근 기록이 있으면
+          // 새로 더하지 않고 그 기록의 금액을 배분액으로 덮어써서 이중 계산을 막음
+          const existingIdx = recs.findIndex((r) => r.workerId === p.workerId && r.date === boardDate && r.flatPay == null);
+          if (existingIdx >= 0) {
+            overwrittenCount++;
+            recs[existingIdx] = {
+              ...recs[existingIdx],
+              flatPay: coverShares[i], oneOffStatus: "approved",
+              note: (recs[existingIdx].note ? recs[existingIdx].note + " · " : "") + `${noteBase}(정상 계산 대신 이 금액으로 확정)`,
+            };
+            return;
+          }
+        }
+        // 순수 대체가 아니거나(본인 정규 근무 + 추가), 아직 출퇴근 기록이 없는 경우엔 별도로 추가
+        const t = mkTime();
+        recs.push({
+          id: uid(), workerId: p.workerId, date: boardDate, site: site.name, siteId: site.id,
+          clockIn: t.in, clockOut: t.out,
+          flatPay: coverShares[i], oneOffStatus: "approved",
+          breakMinutes: null, note: noteBase, manual: true, isExtra: !p.pure,
+          inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
+        });
+      });
+      return { ...d, records: recs };
+    });
+    setToast(overwrittenCount > 0
+      ? `등록했습니다 (${overwrittenCount}명은 이중 계산 방지를 위해 기존 출퇴근 금액을 배분액으로 바꿨어요)`
+      : "등록했습니다");
     setCoverOpen(false);
   };
 
@@ -3096,7 +3224,6 @@ function RecordsView({ data, update, setToast }) {
         <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무자 몫 나눠서 정산</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
           {boardDate} — 휴무한 사람들 몫의 총액을, 대신 근무한 사람들끼리 인원수대로 균등하게 나눠서 각자 급여에 반영해요.
-          커버한 사람이 그날 <b style={{ color: C.text }}>본인 정규 근무(1타임)도 따로 했다면, 그 금액은 그대로 유지되고 여기서 계산된 금액이 추가로 더해져요.</b> (본인 근무 + 대체 근무 추가분)
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
           <Field label="현장">
@@ -3131,37 +3258,69 @@ function RecordsView({ data, update, setToast }) {
           </Field>
 
           <div>
-            <Eyebrow>대신 근무한 사람들</Eyebrow>
+            <div className="flex items-center justify-between">
+              <Eyebrow>대신 근무한 사람들</Eyebrow>
+              <button onClick={autoFillFromConfirmed} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: "#8B5CF6" }}>
+                <ShieldCheck size={12} /> 근무자 확인 내역으로 자동 채우기
+              </button>
+            </div>
             <div className="flex flex-col gap-2 mt-2">
-              {coverForm.participants.map((wid, i) => {
-                const validIdx = coverValidIds.indexOf(wid);
+              {coverForm.participants.map((p, i) => {
+                const validIdx = coverValidParts.findIndex((v) => v === p);
                 return (
-                  <div key={i} className="flex items-center gap-2">
-                    <select value={wid} onChange={(e) => {
-                      const next = [...coverForm.participants]; next[i] = e.target.value;
-                      setCoverForm((f) => ({ ...f, participants: next }));
-                    }} style={{ ...inputStyle, flex: 2 }}>
-                      <option value="">근무자 선택</option>
-                      {workers.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                    <div style={{ flex: 1, fontSize: 12.5, fontWeight: 800, color: C.coral, textAlign: "right" }}>
-                      {wid && validIdx >= 0 ? `${money(coverShares[validIdx] || 0)}원` : ""}
+                  <div key={i} style={{ background: C.tileSoft, padding: 10 }}>
+                    <div className="flex items-center gap-2">
+                      <select value={p.workerId} onChange={(e) => {
+                        const next = [...coverForm.participants]; next[i] = { ...p, workerId: e.target.value };
+                        setCoverForm((f) => ({ ...f, participants: next }));
+                      }} style={{ ...inputStyle, flex: 2, background: C.tile }}>
+                        <option value="">근무자 선택</option>
+                        {workers.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                      </select>
+                      <div style={{ flex: 1, fontSize: 12.5, fontWeight: 800, color: C.coral, textAlign: "right" }}>
+                        {p.workerId && validIdx >= 0 ? `${money(coverShares[validIdx] || 0)}원` : ""}
+                      </div>
+                      {coverForm.participants.length > 1 && (
+                        <button onClick={() => setCoverForm((f) => ({ ...f, participants: f.participants.filter((_, idx) => idx !== i) }))}>
+                          <X size={16} color={C.sub} />
+                        </button>
+                      )}
                     </div>
-                    {coverForm.participants.length > 1 && (
-                      <button onClick={() => setCoverForm((f) => ({ ...f, participants: f.participants.filter((_, idx) => idx !== i) }))}>
-                        <X size={16} color={C.sub} />
-                      </button>
+                    {p.workerId && (
+                      <>
+                        <label className="flex items-start gap-2 mt-2" style={{ cursor: "pointer" }}>
+                          <input type="checkbox" checked={p.pure} style={{ marginTop: 2 }}
+                            onChange={(e) => {
+                              const next = [...coverForm.participants]; next[i] = { ...p, pure: e.target.checked };
+                              setCoverForm((f) => ({ ...f, participants: next }));
+                            }} />
+                          <span style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.5 }}>
+                            이날 <b style={{ color: C.text }}>순수하게 대체근무만</b> 했어요 (본인 정규 근무는 없었음)
+                            <br />체크하면 이미 자동 계산된 출퇴근 금액을 이 배분액으로 바꿔요(이중 지급 방지). 체크 해제하면 본인 정규 근무 금액에 이 배분액을 추가로 더해요.
+                          </span>
+                        </label>
+                        {!p.pure && (
+                          <div className="flex items-center gap-2 mt-2">
+                            <span style={{ fontSize: 11, color: C.sub, flexShrink: 0 }}>가중치(초과시간 비율)</span>
+                            <input type="number" step="0.1" value={p.weight ?? 1}
+                              onChange={(e) => {
+                                const next = [...coverForm.participants]; next[i] = { ...p, weight: e.target.value };
+                                setCoverForm((f) => ({ ...f, participants: next }));
+                              }} style={{ ...inputStyle, flex: 1, padding: "6px 8px", fontSize: 12 }} />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
               })}
             </div>
-            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, ""] }))}
+            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, { workerId: "", pure: true, weight: 1 }] }))}
               className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
               <Plus size={13} /> 사람 추가
             </button>
             <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{coverValidIds.length}명이 균등하게 나눔 · 배분 합계</span>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{coverValidParts.length}명이 균등하게 나눔 · 배분 합계</span>
               <span style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{money(coverShares.reduce((a, b) => a + b, 0))}원</span>
             </div>
           </div>
