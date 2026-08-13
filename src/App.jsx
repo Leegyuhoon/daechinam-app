@@ -842,13 +842,20 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   };
 
   const [leadNoticeOpen, setLeadNoticeOpen] = useState(false);
-  const [leadNoticeForm, setLeadNoticeForm] = useState({ title: "", message: "", days: "3" });
+  const [leadNoticeForm, setLeadNoticeForm] = useState({ title: "", message: "", days: "3", audience: "site", siteIds: [], workerIds: [] });
   const myLeaderSiteIds = worker ? (worker.leaderSiteIds || []) : [];
   const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
-  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3" }); setLeadNoticeOpen(true); };
+  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [] }); setLeadNoticeOpen(true); };
 
   const myWorkerSiteIds2 = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])) : [];
+
+  // 내가 팀장인 현장 소속 근무자들만 (선택한 사람 옵션에 노출할 대상)
+  const myTeamWorkers = worker ? workers.filter((w) => {
+    if (w.id === worker.id) return false;
+    const wSites = w.siteIds || (w.siteId ? [w.siteId] : []);
+    return wSites.some((id) => myLeaderSiteIds.includes(id));
+  }) : [];
 
   // 사진/영상 열람: 팀장은 자기 현장 전체(팀원+본인), 일반 근무자는 자기 현장의 "팀장이 올린 것"만
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -866,18 +873,23 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const submitLeadNotice = () => {
     if (!leadNoticeForm.title.trim()) { setToast("제목을 입력해 주세요"); return; }
     if (myLeaderSiteIds.length === 0) { setToast("팀장으로 임명된 현장이 없어서 공지를 보낼 수 없어요"); return; }
+    const siteIds = leadNoticeForm.audience === "site" ? leadNoticeForm.siteIds.filter((id) => myLeaderSiteIds.includes(id)) : [];
+    const workerIds = leadNoticeForm.audience === "custom" ? leadNoticeForm.workerIds.filter((id) => myTeamWorkers.some((w) => w.id === id)) : [];
+    if (leadNoticeForm.audience === "site" && siteIds.length === 0) { setToast("현장을 한 곳 이상 선택해 주세요"); return; }
+    if (leadNoticeForm.audience === "custom" && workerIds.length === 0) { setToast("받는 사람을 한 명 이상 선택해 주세요"); return; }
+    const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
     const start = dKey(new Date());
     const endD = new Date(); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
     update((d) => ({
       ...d,
       notices: [...(d.notices || []), {
         id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
-        audience: "site", siteIds: myLeaderSiteIds, siteName: mySiteNames.join("·"), workerIds: [],
+        audience: leadNoticeForm.audience, siteIds, siteName: siteNames.join("·"), workerIds,
         startDate: start, endDate: dKey(endD), active: true,
         createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
       }],
     }));
-    setToast("현장 동료들에게 공지를 보냈습니다");
+    setToast("공지를 보냈습니다");
     setLeadNoticeOpen(false);
   };
 
@@ -1431,7 +1443,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       <Modal open={leadNoticeOpen} onClose={() => setLeadNoticeOpen(false)}>
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>우리 현장 공지 작성</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-          {mySiteNames.join("·") || "소속 현장"} 근무자들에게만 전달돼요. 관리자도 이 공지를 확인할 수 있어요.
+          내가 팀장인 현장({mySiteNames.join("·") || "소속 현장"}) 안에서만 전달돼요. 관리자도 이 공지를 확인할 수 있어요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
           <Field label="제목">
@@ -1442,6 +1454,52 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             <textarea value={leadNoticeForm.message} onChange={(e) => setLeadNoticeForm((f) => ({ ...f, message: e.target.value }))}
               rows={3} style={{ ...inputStyle, resize: "none" }} />
           </Field>
+
+          <Field label="받는 대상">
+            <div className="grid grid-cols-2 gap-1.5">
+              {[["site", "현장 선택"], ["custom", "선택한 사람"]].map(([k, l]) => (
+                <button key={k} onClick={() => setLeadNoticeForm((f) => ({ ...f, audience: k }))}
+                  style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: leadNoticeForm.audience === k ? C.aquaDeep : C.tileSoft, color: leadNoticeForm.audience === k ? "#fff" : C.sub }}>{l}</button>
+              ))}
+            </div>
+
+            {leadNoticeForm.audience === "site" && (
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {myLeaderSiteIds.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>팀장으로 임명된 현장이 없어요.</div>}
+                {myLeaderSiteIds.map((id) => {
+                  const site = sites.find((s) => s.id === id);
+                  if (!site) return null;
+                  const on = leadNoticeForm.siteIds.includes(id);
+                  return (
+                    <button key={id} onClick={() => setLeadNoticeForm((f) => ({
+                      ...f, siteIds: on ? f.siteIds.filter((x) => x !== id) : [...f.siteIds, id],
+                    }))}
+                      style={{ padding: "7px 11px", fontSize: 12.5, fontWeight: 800, background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub }}>
+                      {site.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {leadNoticeForm.audience === "custom" && (
+              <div className="flex flex-col gap-1 mt-2.5" style={{ maxHeight: 180, overflowY: "auto" }}>
+                {myTeamWorkers.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>내 현장에 다른 근무자가 없어요.</div>}
+                {myTeamWorkers.map((w) => {
+                  const on = leadNoticeForm.workerIds.includes(w.id);
+                  return (
+                    <label key={w.id} className="flex items-center gap-2" style={{ padding: "7px 2px", cursor: "pointer" }}>
+                      <input type="checkbox" checked={on} onChange={() => setLeadNoticeForm((f) => ({
+                        ...f, workerIds: on ? f.workerIds.filter((x) => x !== w.id) : [...f.workerIds, w.id],
+                      }))} />
+                      <span style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>{w.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+
           <Field label="며칠간 보여줄지">
             <input type="number" min="1" value={leadNoticeForm.days} onChange={(e) => setLeadNoticeForm((f) => ({ ...f, days: e.target.value }))} style={inputStyle} />
           </Field>
