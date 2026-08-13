@@ -2600,7 +2600,7 @@ function RecordsView({ data, update, setToast }) {
     const noteBase = offNames ? `${offNames}님 휴무 대체 추가 근무분` : "휴무 대체 추가 근무분";
 
     // 본인의 정규 1타임 근무와는 별개로 "추가분"이 더해지는 것 — 정규 기록은 그대로 두고, 추가 기록을 하나 더 만듦
-    const mkTime = () => { const d = parseKey(boardDate); d.setHours(18, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
+    const mkTime = () => { const d = parseKey(boardDate); d.setHours(9, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
     update((d) => ({
       ...d,
       records: [
@@ -2629,8 +2629,12 @@ function RecordsView({ data, update, setToast }) {
       if (recs.length > 0) status = recs.some((r) => !r.clockOut) ? "incomplete" : "complete";
       let offInfo = null;
       if (status === "absent") {
-        const t = (transfers || []).find((x) => x.fromWorkerId === w.id && x.date === boardDate && x.status === "approved");
-        if (t) { status = t.noRequest ? "offNoRequest" : "offRequested"; offInfo = t; }
+        const matches = (transfers || []).filter((x) => x.fromWorkerId === w.id && x.date === boardDate && x.status === "approved");
+        if (matches.length > 0) {
+          status = matches[0].noRequest ? "offNoRequest" : "offRequested";
+          const subNames = matches.map((t) => t.assignedWorkerName).filter(Boolean);
+          offInfo = { ...matches[0], assignedWorkerNames: subNames };
+        }
       }
       const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
       return { w, recs, status, siteNames, offInfo };
@@ -2641,52 +2645,50 @@ function RecordsView({ data, update, setToast }) {
   }, [boardOpen, boardDate, workers, records, transfers]);
 
   const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
-  const [markOffForm, setMarkOffForm] = useState({ siteName: "", subs: [{ workerId: "", amount: "" }] });
+  const [markOffSubs, setMarkOffSubs] = useState([""]); // 대신 근무한 사람 workerId 목록
   const openMarkOff = (w) => {
-    const dw = workers.find((x) => x.id === w.id);
-    const defSiteName = sites.find((s) => s.id === (w.siteId || dw?.siteId))?.name || "";
-    const suggested = settings.payMode === "shift" ? (dw?.shiftPay ?? settings.shiftPay) : (dw?.wage ?? settings.wage) * (dw?.stdHours ?? settings.stdHours);
-    setMarkOffForm({ siteName: defSiteName, subs: [{ workerId: "", amount: String(suggested) }] });
+    setMarkOffSubs([""]);
     setMarkOffFor(w);
   };
   const submitMarkOff = () => {
-    if (!markOffForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
-    const validSubs = markOffForm.subs.filter((s) => s.workerId);
+    const site = sites.find((s) => s.id === (markOffFor.siteId || markOffFor.siteIds?.[0]));
+    const validSubIds = markOffSubs.filter(Boolean);
     const at = new Date().toISOString();
-    const firstSub = validSubs[0] ? workers.find((x) => x.id === validSubs[0].workerId) : null;
-    update((d) => {
-      let next = { ...d };
-      next.transfers = [
+    // 순수 기록용 — 실제 급여는 절대 자동 생성하지 않음.
+    // 대신 근무한 사람이 같은 현장 정규 근무자라면, 본인이 출근~퇴근을 평소보다 길게 눌러서
+    // 늘어난 시간만큼 기존 "연장근무" 계산으로 자동 반영되는 게 맞음.
+    // 완전히 다른 사람이 대신 왔거나 별도 금액을 얹어주고 싶다면, 캘린더의 "일회성 근무 추가"를 따로 쓰면 됨.
+    update((d) => ({
+      ...d,
+      transfers: [
         ...(d.transfers || []),
-        {
-          id: uid(), date: boardDate, siteId: null, siteName: markOffForm.siteName.trim(),
-          fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
-          toWorkerId: firstSub?.id || null, toWorkerName: validSubs.map((s) => workers.find((w) => w.id === s.workerId)?.name).filter(Boolean).join("·"),
-          toRegistered: validSubs.length > 0,
-          assignedWorkerId: firstSub?.id || null, assignedWorkerName: firstSub?.name || null,
-          startTime: null, endTime: null, message: "",
-          status: "approved", noRequest: true,
-          createdAt: at, respondedAt: at, fulfilledRecordId: null,
-        },
-      ];
-      next.records = [
-        ...d.records,
-        ...validSubs.map((s) => {
-          const w = workers.find((x) => x.id === s.workerId);
-          return {
-            id: uid(), workerId: s.workerId, date: boardDate, site: markOffForm.siteName.trim(), siteId: null,
-            clockIn: (() => { const dt = parseKey(boardDate); dt.setHours(9, 0, 0, 0); return dt.toISOString(); })(),
-            clockOut: (() => { const dt = parseKey(boardDate); dt.setHours(18, 0, 0, 0); return dt.toISOString(); })(),
-            flatPay: Number(s.amount) || 0, oneOffStatus: "approved",
-            breakMinutes: null, note: `${markOffFor.name}님 갑작스러운 휴무 대체`, manual: true,
-            coverForId: markOffFor.id, coverForName: markOffFor.name,
-            inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
-          };
-        }),
-      ];
-      return next;
-    });
-    setToast(validSubs.length > 0 ? `휴무 처리하고 ${validSubs.length}명의 대체 근무를 등록했습니다` : "휴무로 처리했습니다");
+        ...(validSubIds.length > 0
+          ? validSubIds.map((subId) => {
+              const sub = workers.find((x) => x.id === subId);
+              return {
+                id: uid(), date: boardDate, siteId: site?.id || null, siteName: site?.name || "현장 미지정",
+                fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
+                toWorkerId: sub?.id || null, toWorkerName: sub?.name || "",
+                toRegistered: true, assignedWorkerId: sub?.id || null, assignedWorkerName: sub?.name || null,
+                startTime: null, endTime: null, message: "",
+                status: "approved", noRequest: true,
+                createdAt: at, respondedAt: at, fulfilledRecordId: null,
+              };
+            })
+          : [{
+              id: uid(), date: boardDate, siteId: site?.id || null, siteName: site?.name || "현장 미지정",
+              fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
+              toWorkerId: null, toWorkerName: "", toRegistered: false,
+              assignedWorkerId: null, assignedWorkerName: null,
+              startTime: null, endTime: null, message: "",
+              status: "approved", noRequest: true,
+              createdAt: at, respondedAt: at, fulfilledRecordId: null,
+            }]),
+      ],
+    }));
+    setToast(validSubIds.length > 0
+      ? `휴무로 기록했습니다. ${validSubIds.length}명이 대신 근무했다는 것도 함께 남았어요 — 그 사람들 급여는 본인 출퇴근(연장근무 포함)이나 별도 "일회성 근무"로 직접 반영해 주세요.`
+      : "휴무로 처리했습니다");
     setMarkOffFor(null);
   };
 
@@ -2915,8 +2917,8 @@ function RecordsView({ data, update, setToast }) {
                     {status.startsWith("off") ? (
                       <div style={{ marginLeft: 17 }}>
                         <div style={{ fontSize: 12, fontWeight: 800, color: statusInfo[status].color }}>{statusInfo[status].label}</div>
-                        {offInfo?.assignedWorkerName && (
-                          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{offInfo.assignedWorkerName}님이 대신 근무</div>
+                        {offInfo?.assignedWorkerNames?.length > 0 && (
+                          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{offInfo.assignedWorkerNames.join("·")}님이 대신 근무</div>
                         )}
                       </div>
                     ) : recs.length === 0 ? (
@@ -3140,44 +3142,37 @@ function RecordsView({ data, update, setToast }) {
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무로 처리하기</div>
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-              {boardDate} · <b style={{ color: C.text }}>{markOffFor.name}</b>님 — 미리 양도 요청을 못 했던 상황(갑작스러운 사정)이라, 관리자가 사후에 "휴무"로 정식 처리해요.
-              대신 근무한 사람이 있으면 아래에서 같이 등록할 수 있어요.
+              {boardDate} · <b style={{ color: C.text }}>{markOffFor.name}</b>님 — 미리 양도 요청을 못 했던 상황(갑작스러운 사정)이라, 관리자가 사후에 "휴무"로 정식 기록만 남겨요.
             </div>
-            <div className="mt-4 flex flex-col gap-2.5">
-              <Field label="현장 (직접 입력)">
-                <input type="text" value={markOffForm.siteName} onChange={(e) => setMarkOffForm((f) => ({ ...f, siteName: e.target.value }))}
-                  placeholder="예: 강남현장" style={inputStyle} />
-              </Field>
-              <div>
-                <Eyebrow>대신 근무한 사람 (있으면 추가, 없으면 비워두세요)</Eyebrow>
-                <div className="flex flex-col gap-2 mt-2">
-                  {markOffForm.subs.map((s, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <select value={s.workerId} onChange={(e) => {
-                        const next = [...markOffForm.subs]; next[i] = { ...s, workerId: e.target.value };
-                        setMarkOffForm((f) => ({ ...f, subs: next }));
-                      }} style={{ ...inputStyle, flex: 2 }}>
-                        <option value="">선택 안 함</option>
-                        {workers.filter((w) => w.id !== markOffFor.id).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                      </select>
-                      <input type="number" placeholder="지급 금액" value={s.amount}
-                        onChange={(e) => {
-                          const next = [...markOffForm.subs]; next[i] = { ...s, amount: e.target.value };
-                          setMarkOffForm((f) => ({ ...f, subs: next }));
-                        }} style={{ ...inputStyle, flex: 1 }} />
-                      {markOffForm.subs.length > 1 && (
-                        <button onClick={() => setMarkOffForm((f) => ({ ...f, subs: f.subs.filter((_, idx) => idx !== i) }))}>
-                          <X size={16} color={C.sub} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <button onClick={() => setMarkOffForm((f) => ({ ...f, subs: [...f.subs, { workerId: "", amount: "" }] }))}
-                  className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
-                  <Plus size={13} /> 대신 근무한 사람 추가
-                </button>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 8, lineHeight: 1.6, background: C.tileSoft, padding: 10 }}>
+              여기선 <b>기록만</b> 남기고, 급여는 자동으로 생기지 않아요.
+              대신 근무한 사람이 <b>같은 현장 정규 근무자</b>라면, 본인이 평소보다 늦게 퇴근 버튼을 누르면 늘어난 시간만큼 기존 "연장근무"로 자동 계산돼요.
+              완전히 다른 사람이 왔거나 별도 금액을 주고 싶으면, 근무자 캘린더의 "일회성 근무 추가"를 따로 써주세요.
+            </div>
+            <div className="mt-4">
+              <Eyebrow>대신 근무한 사람 (기록용 · 있으면 추가, 없으면 비워두세요)</Eyebrow>
+              <div className="flex flex-col gap-2 mt-2">
+                {markOffSubs.map((subId, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <select value={subId} onChange={(e) => {
+                      const next = [...markOffSubs]; next[i] = e.target.value;
+                      setMarkOffSubs(next);
+                    }} style={{ ...inputStyle, flex: 1 }}>
+                      <option value="">선택 안 함</option>
+                      {workers.filter((w) => w.id !== markOffFor.id).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                    {markOffSubs.length > 1 && (
+                      <button onClick={() => setMarkOffSubs(markOffSubs.filter((_, idx) => idx !== i))}>
+                        <X size={16} color={C.sub} />
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
+              <button onClick={() => setMarkOffSubs([...markOffSubs, ""])}
+                className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+                <Plus size={13} /> 대신 근무한 사람 추가
+              </button>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setMarkOffFor(null)}>취소</Btn>
@@ -3762,15 +3757,17 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             </div>
             {selRecs.length === 0 ? (
               (() => {
-                const off = (data.transfers || []).find((t) => t.fromWorkerId === workerId && t.date === selDate && t.status === "approved");
+                const offs = (data.transfers || []).filter((t) => t.fromWorkerId === workerId && t.date === selDate && t.status === "approved");
+                const off = offs[0];
                 if (off) {
+                  const subNames = offs.map((t) => t.assignedWorkerName).filter(Boolean);
                   return (
                     <div className="mt-2">
                       <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: off.noRequest ? ST.offNoRequest : ST.offRequested, padding: "2px 7px" }}>
                         {off.noRequest ? "휴무 (사전 요청 없음 · 사후등록)" : "휴무 (양도 요청됨)"}
                       </span>
-                      {off.assignedWorkerName && (
-                        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>{off.assignedWorkerName}님이 대신 근무했어요.</div>
+                      {subNames.length > 0 && (
+                        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 6 }}>{subNames.join("·")}님이 대신 근무했어요.</div>
                       )}
                     </div>
                   );
