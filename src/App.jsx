@@ -678,7 +678,6 @@ export default function App() {
   }, []);
 
   const goTab = (k) => { if (k === "clock") { setUnlocked(false); setRevealAdmin(false); } setTab(k); };
-  useBackClose(tab === "admin", () => goTab("clock"));
 
   if (loading || !data || !dev) {
     return (
@@ -1830,6 +1829,19 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
   const [refreshing, setRefreshing] = useState(false);
 
+  // 관리자 화면 안에서 탭을 옮겨다닌 순서를 기억해뒀다가,
+  // 기기 뒤로가기를 누르면 방문했던 순서 그대로 이전 탭으로 돌아가게 함.
+  // 더 돌아갈 탭이 없으면(맨 처음 들어왔던 시점) 잠그기(onLock)로 넘어감.
+  useEffect(() => {
+    window.history.pushState({ adminView: "records" }, "");
+    const onPopState = (e) => {
+      if (e.state && e.state.adminView) setView(e.state.adminView);
+      else onLock();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
   const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
   const photoBadge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length;
@@ -1839,6 +1851,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
   const noticeBadge = (data.notices || []).filter((n) => n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
 
   const goView = (k) => {
+    if (k !== view) window.history.pushState({ adminView: k }, "");
     setView(k);
     if (k === "photos") { localStorage.setItem("cleanwork:lastSeenPhotos", new Date().toISOString()); setSeenTick((t) => t + 1); }
     if (k === "notices") { localStorage.setItem("cleanwork:lastSeenNotices", new Date().toISOString()); setSeenTick((t) => t + 1); }
