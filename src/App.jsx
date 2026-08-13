@@ -3519,12 +3519,12 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
     <div className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
       <div className="sticky top-0 flex items-center gap-3 px-4 py-3.5" style={{ background: C.bg, borderBottom: `1px solid ${C.lineDark}` }}>
         <button onClick={onClose}><ArrowLeft size={20} color={C.onDark} /></button>
-        <div style={{ flex: 1 }}>
-          <div className="flex items-center gap-1.5">
-            <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900 }}>{worker.name}</span>
-            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span style={{ color: C.onDark, fontSize: 18, fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>{worker.name}</span>
+            {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
           </div>
-          <div style={{ color: C.onDarkSub, fontSize: 11.5 }}>
+          <div style={{ color: C.onDarkSub, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
           </div>
         </div>
