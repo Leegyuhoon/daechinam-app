@@ -905,22 +905,22 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     setPhotoForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
   };
   const submitPhoto = async () => {
-    if (!photoForm.file) { setToast(photoForm.kind === "video" ? "영상을 먼저 촬영해 주세요" : "사진을 먼저 촬영해 주세요"); return; }
+    if (!photoForm.file && !photoForm.note.trim()) { setToast("사진·영상을 첨부하거나, 최소한 내용을 입력해 주세요"); return; }
     const s = sites.find((x) => x.id === photoForm.siteId);
     const authorRole = (worker.leaderSiteIds || []).includes(photoForm.siteId) ? "leader" : "worker";
     setPhotoBusy(true);
     try {
-      const mediaId = photoForm.kind === "video" ? await uploadVideo(photoForm.file) : await uploadPhoto(photoForm.file);
+      const mediaId = photoForm.file ? (photoForm.kind === "video" ? await uploadVideo(photoForm.file) : await uploadPhoto(photoForm.file)) : null;
       update((d) => ({
         ...d,
         siteReports: [...(d.siteReports || []), {
           id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           workerId: worker.id, workerName: worker.name, authorRole,
-          category: photoForm.category, note: photoForm.note.trim(), photoId: mediaId, kind: photoForm.kind,
+          category: photoForm.category, note: photoForm.note.trim(), photoId: mediaId, kind: mediaId ? photoForm.kind : "text",
           createdAt: new Date().toISOString(),
         }],
       }));
-      setToast(photoForm.kind === "video" ? "영상이 등록됐습니다" : "사진이 등록됐습니다");
+      setToast(mediaId ? (photoForm.kind === "video" ? "영상이 등록됐습니다" : "사진이 등록됐습니다") : "내용이 등록됐습니다");
       setPhotoOpen(false);
     } catch (e) {
       setToast(e.message || "업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
@@ -1550,6 +1550,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                         </div>
                       </div>
                     </>
+                  ) : r.kind === "text" ? (
+                    <div style={{ width: "100%", height: "100%", background: C.tileSoft, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 10 }}>
+                      <FileText size={22} color={C.sub} />
+                      <div style={{ fontSize: 11, color: C.sub, marginTop: 6, textAlign: "center", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
+                        {r.note || "내용"}
+                      </div>
+                    </div>
                   ) : (
                     <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   )}
@@ -1571,7 +1578,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           <>
             {galleryViewer.kind === "video" ? (
               <video src={photoUrl(galleryViewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
-            ) : (
+            ) : galleryViewer.kind === "text" ? null : (
               <img src={photoUrl(galleryViewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
             )}
             <div className="flex items-center gap-2 mt-3">
@@ -1655,7 +1662,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               ))}
             </div>
           </Field>
-          <Field label={photoForm.kind === "video" ? "동영상" : "사진"}>
+          <Field label={(photoForm.kind === "video" ? "동영상" : "사진") + " (선택 — 없으면 내용만 등록돼요)"}>
             {photoForm.preview ? (
               <div className="relative">
                 {photoForm.kind === "video" ? (
@@ -2269,6 +2276,13 @@ function PhotoAdminView({ data, update, setToast }) {
                     </div>
                   </div>
                 </>
+              ) : r.kind === "text" ? (
+                <div style={{ width: "100%", height: "100%", background: C.tileSoft, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 10 }}>
+                  <FileText size={22} color={C.sub} />
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 6, textAlign: "center", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
+                    {r.note || "내용"}
+                  </div>
+                </div>
               ) : (
                 <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
               )}
@@ -2287,7 +2301,7 @@ function PhotoAdminView({ data, update, setToast }) {
           <>
             {viewer.kind === "video" ? (
               <video src={photoUrl(viewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
-            ) : (
+            ) : viewer.kind === "text" ? null : (
               <img src={photoUrl(viewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
             )}
             <div className="flex items-center gap-2 mt-3">
