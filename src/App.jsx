@@ -771,6 +771,59 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   const today = dKey(now);
   const transfers = data.transfers || [];
 
+  // 앱을 켜놓고 있는 동안, 근무자 배정 현장 500m 반경 진입/이탈을 감지해서
+  // 출근/퇴근 버튼을 안 눌렀을 수도 있으니 소리+진동+배너로 알려줌
+  const PROX_RADIUS = 500;
+  const [proxAlert, setProxAlert] = useState(null); // { type: "in"|"out", site }
+  const proxStateRef = useRef({}); // siteId -> "near" | "far" (마지막으로 감지된 상태, 중복 알림 방지용)
+  useEffect(() => {
+    if (!worker || !("geolocation" in navigator)) return;
+    const mySites = (worker.siteIds || (worker.siteId ? [worker.siteId] : []))
+      .map((id) => sites.find((s) => s.id === id))
+      .filter((s) => s && s.lat != null && s.lng != null);
+    if (mySites.length === 0) return;
+
+    const openToday = records.find((r) => r.workerId === worker.id && r.date === today && !r.clockOut);
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        mySites.forEach((s) => {
+          const d = haversine(here, s);
+          const near = d <= PROX_RADIUS;
+          const prev = proxStateRef.current[s.id];
+          if (prev === undefined) { proxStateRef.current[s.id] = near ? "near" : "far"; return; } // 첫 위치는 기준으로만 저장, 알림 안 울림
+          if (near && prev === "far") {
+            proxStateRef.current[s.id] = "near";
+            if (!openToday) fireProxAlert("in", s);
+          } else if (!near && prev === "near") {
+            proxStateRef.current[s.id] = "far";
+            if (openToday && openToday.site === s.name) fireProxAlert("out", s);
+          }
+        });
+      },
+      () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+    // eslint-disable-next-line
+  }, [worker?.id, records.length]);
+
+  const fireProxAlert = (type, site) => {
+    setProxAlert({ type, site });
+    try {
+      if (navigator.vibrate) navigator.vibrate(type === "in" ? [200, 100, 200, 100, 200] : [400, 150, 400]);
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach((t) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = type === "in" ? 880 : 660;
+        g.gain.setValueAtTime(0.001, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.22);
+      });
+    } catch (e) {}
+  };
 
   const myAssignedTransfers = worker ? (data.transfers || []).filter((t) => t.status === "assigned" && t.assignedWorkerId === worker.id) : [];
   const respondAssignedTransfer = (t, accept) => {
@@ -1928,6 +1981,29 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
       {calOpen && worker && (
         <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} canAdd={!!worker.canSelfLogOneOff} setToast={setToast} />
+      )}
+
+      {/* 현장 500m 진입/이탈 알림 */}
+      {proxAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-5" style={{ background: "rgba(4,12,18,0.72)" }}>
+          <div className="pressable" style={{
+            width: "100%", maxWidth: 360, background: proxAlert.type === "in" ? C.aquaDeep : C.red,
+            borderRadius: RADIUS_LG, padding: "28px 22px", textAlign: "center", boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+            animation: "modalIn 0.22s cubic-bezier(0.2,0.8,0.3,1)",
+          }}>
+            <div style={{ fontSize: 34 }}>{proxAlert.type === "in" ? "📍" : "🚶"}</div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: "#fff", marginTop: 10 }}>
+              {proxAlert.type === "in" ? `${proxAlert.site.name} 근처예요` : `${proxAlert.site.name}에서 멀어졌어요`}
+            </div>
+            <div style={{ fontSize: 13.5, color: "rgba(255,255,255,0.85)", marginTop: 8, lineHeight: 1.5 }}>
+              {proxAlert.type === "in" ? "출근 버튼을 안 누르셨다면 지금 눌러주세요." : "혹시 퇴근 버튼을 안 누르셨나요? 확인해 주세요."}
+            </div>
+            <button onClick={() => setProxAlert(null)} className="w-full mt-5"
+              style={{ background: "#fff", color: proxAlert.type === "in" ? C.aquaDeep : C.red, fontWeight: 900, fontSize: 14, padding: "12px 0", borderRadius: RADIUS_SM }}>
+              확인했어요
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
