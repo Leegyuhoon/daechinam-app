@@ -842,6 +842,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   };
 
   const [leadNoticeOpen, setLeadNoticeOpen] = useState(false);
+  const [myNoticeViewer, setMyNoticeViewer] = useState(null);
   const [leadNoticeForm, setLeadNoticeForm] = useState({ title: "", message: "", days: "3", audience: "site", siteIds: [], workerIds: [] });
   const myLeaderSiteIds = worker ? (worker.leaderSiteIds || []) : [];
   const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
@@ -1426,18 +1427,45 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               {myLeadNotices.map((n) => {
                 const live = n.active && today >= n.startDate && today <= n.endDate;
                 return (
-                  <div key={n.id} className="flex items-center justify-between" style={{ padding: "7px 2px", borderBottom: `1px solid ${C.lineDark}` }}>
+                  <button key={n.id} onClick={() => setMyNoticeViewer(n)} className="w-full flex items-center justify-between pressable" style={{ padding: "7px 2px", borderBottom: `1px solid ${C.lineDark}`, textAlign: "left" }}>
                     <div style={{ fontSize: 12, color: C.onDark, fontWeight: 700 }}>{n.title}</div>
                     <span style={{ fontSize: 10, fontWeight: 800, color: live ? "#fff" : C.onDarkSub, background: live ? C.blue : "transparent", padding: "2px 6px" }}>
                       {live ? "노출 중" : "종료"}
                     </span>
-                  </div>
+                  </button>
                 );
               })}
             </div>
           )}
         </div>
       )}
+
+      {/* 내가 작성한 공지 확인 (읽기 전용) */}
+      <Modal open={!!myNoticeViewer} onClose={() => setMyNoticeViewer(null)}>
+        {myNoticeViewer && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "2px 6px" }}>내가 작성함</span>
+              {(myNoticeViewer.active && today >= myNoticeViewer.startDate && today <= myNoticeViewer.endDate) && (
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>노출 중</span>
+              )}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{myNoticeViewer.title}</div>
+            {myNoticeViewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{myNoticeViewer.message}</div>}
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+              노출 기간 {myNoticeViewer.startDate} ~ {myNoticeViewer.endDate}
+            </div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+              대상: {myNoticeViewer.audience === "custom"
+                ? `${(myNoticeViewer.workerIds || []).length}명 지정 (${(myNoticeViewer.workerIds || []).map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·")})`
+                : `${myNoticeViewer.siteName || "소속 현장"} 근무자`}
+            </div>
+            <div className="mt-4">
+              <Btn full kind="ghost" onClick={() => setMyNoticeViewer(null)}>닫기</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* 팀장 공지 작성 모달 */}
       <Modal open={leadNoticeOpen} onClose={() => setLeadNoticeOpen(false)}>
@@ -2580,10 +2608,7 @@ function NoticeAdminView({ data, update, setToast }) {
         {notices.map((n) => {
           const live = n.active && today >= n.startDate && today <= n.endDate;
           return (
-            <Tile key={n.id} onClick={() => {
-              if (n.createdBy && n.createdBy !== "admin") { setViewer(n); return; }
-              setEdit({ ...n, mode: "range", leadDays: 7, targetDate: n.endDate, includeTarget: true, workerIds: n.workerIds || [] });
-            }} style={{ padding: "13px 14px" }}>
+            <Tile key={n.id} onClick={() => setViewer(n)} style={{ padding: "13px 14px" }}>
               <div className="flex items-start justify-between gap-2">
                 <div style={{ minWidth: 0 }}>
                   <div className="flex items-center gap-1.5">
@@ -2712,29 +2737,58 @@ function NoticeAdminView({ data, update, setToast }) {
       </Modal>
 
       <Modal open={!!viewer} onClose={() => setViewer(null)}>
-        {viewer && (
-          <>
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "2px 6px" }}>팀장 작성</span>
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.createdByName}</span>
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{viewer.title}</div>
-            {viewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{viewer.message}</div>}
-            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-              노출 기간 {viewer.startDate} ~ {viewer.endDate}
-            </div>
-            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
-              대상: {viewer.siteName || "소속 현장"} 근무자 전체
-            </div>
-            <div className="grid grid-cols-2 gap-2 mt-4">
-              <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
-              <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
-                style={{ background: "transparent", color: C.coral, border: `1px solid ${C.coral}`, fontSize: 14, fontWeight: 700 }}>
-                삭제
-              </button>
-            </div>
-          </>
-        )}
+        {viewer && (() => {
+          const isAdminWritten = !viewer.createdBy || viewer.createdBy === "admin";
+          const audienceLabel = viewer.audience === "all" ? "전체 근무자"
+            : viewer.audience === "site" ? `${viewer.siteName || "소속 현장"} 근무자`
+            : `${(viewer.workerIds || []).length}명 지정 (${(viewer.workerIds || []).map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·")})`;
+          return (
+            <>
+              <div className="flex items-center gap-1.5">
+                <span style={{
+                  fontSize: 9.5, fontWeight: 900, padding: "2px 6px",
+                  color: isAdminWritten ? C.sub : "#7A4E07",
+                  background: isAdminWritten ? "transparent" : C.amber,
+                  border: isAdminWritten ? `1px solid ${C.line}` : "none",
+                }}>
+                  {isAdminWritten ? "관리자 작성" : "팀장 작성"}
+                </span>
+                {!isAdminWritten && <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.createdByName}</span>}
+                {(viewer.active && today >= viewer.startDate && today <= viewer.endDate) && (
+                  <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>노출 중</span>
+                )}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{viewer.title}</div>
+              {viewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{viewer.message}</div>}
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                노출 기간 {viewer.startDate} ~ {viewer.endDate}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+                대상: {audienceLabel}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-4">
+                <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
+                {isAdminWritten ? (
+                  <Btn full onClick={() => {
+                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [] });
+                    setViewer(null);
+                  }}>수정하기</Btn>
+                ) : (
+                  <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
+                    style={{ background: "transparent", color: C.coral, border: `1px solid ${C.coral}`, fontSize: 14, fontWeight: 700 }}>
+                    삭제
+                  </button>
+                )}
+              </div>
+              {isAdminWritten && (
+                <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
+                  className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
+                  이 공지 삭제
+                </button>
+              )}
+            </>
+          );
+        })()}
       </Modal>
     </div>
   );
