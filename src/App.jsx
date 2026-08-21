@@ -213,7 +213,7 @@ function migrate(p) {
   d.transfers = (Array.isArray(d.transfers) ? d.transfers : []).map((t) => ({
     assignedWorkerId: null, assignedWorkerName: null, ...t,
   }));
-  d.notices = Array.isArray(d.notices) ? d.notices : [];
+  d.notices = (Array.isArray(d.notices) ? d.notices : []).map((n) => ({ readBy: [], ...n }));
   d.siteReports = Array.isArray(d.siteReports) ? d.siteReports : [];
   d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
   d.payslipSigns = Array.isArray(d.payslipSigns) ? d.payslipSigns : [];
@@ -1034,6 +1034,17 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         seen[`${noticeShown.id}:${today}`] = true;
         localStorage.setItem(seenKey, JSON.stringify(seen));
       } catch (e) {}
+      // 관리자가 "누가 확인했는지" 볼 수 있도록 공유 데이터에도 기록
+      const noticeId = noticeShown.id;
+      update((d) => ({
+        ...d,
+        notices: (d.notices || []).map((n) => {
+          if (n.id !== noticeId) return n;
+          const readBy = n.readBy || [];
+          if (readBy.some((r) => r.workerId === worker.id)) return n; // 이미 기록됨
+          return { ...n, readBy: [...readBy, { workerId: worker.id, workerName: worker.name, readAt: new Date().toISOString() }] };
+        }),
+      }));
     }
     if (noticeQueue.length > 0) {
       setNoticeShown(noticeQueue[0]);
@@ -1513,6 +1524,38 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                 ? `${(myNoticeViewer.workerIds || []).length}명 지정 (${(myNoticeViewer.workerIds || []).map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·")})`
                 : `${myNoticeViewer.siteName || "소속 현장"} 근무자`}
             </div>
+
+            {(() => {
+              const targetIds = myNoticeViewer.audience === "custom" ? (myNoticeViewer.workerIds || [])
+                : workers.filter((w) => (w.siteIds || (w.siteId ? [w.siteId] : [])).some((id) => (myNoticeViewer.siteIds || []).includes(id))).map((w) => w.id);
+              const readBy = myNoticeViewer.readBy || [];
+              const readIds = readBy.map((r) => r.workerId);
+              const unread = workers.filter((w) => targetIds.includes(w.id) && !readIds.includes(w.id));
+              return (
+                <div className="mt-4" style={{ background: C.tileSoft, padding: 12 }}>
+                  <Eyebrow>확인 현황 · {readBy.length}/{targetIds.length}명</Eyebrow>
+                  {readBy.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {[...readBy].sort((a, b) => a.readAt.localeCompare(b.readAt)).map((r) => (
+                        <span key={r.workerId} style={{ fontSize: 11, fontWeight: 700, color: "#3B6D11", background: "#EAF3DE", padding: "3px 8px" }}>
+                          ✓ {r.workerName}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {unread.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {unread.map((w) => (
+                        <span key={w.id} style={{ fontSize: 11, fontWeight: 700, color: C.sub, background: C.tile, border: `1px solid ${C.line}`, padding: "3px 8px" }}>
+                          {w.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="mt-4">
               <Btn full kind="ghost" onClick={() => setMyNoticeViewer(null)}>닫기</Btn>
             </div>
@@ -2707,6 +2750,7 @@ function NoticeAdminView({ data, update, setToast }) {
                   {n.message && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>{n.message}</div>}
                   <div style={{ fontSize: 13, color: C.sub, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {n.startDate.slice(5)} ~ {n.endDate.slice(5)} · {n.audience === "all" ? "전체 근무자" : n.audience === "site" ? `${n.siteName || "소속 현장"} 근무자` : `${(n.workerIds || []).length}명 지정`}
+                    {(n.readBy || []).length > 0 && <span style={{ color: "#3B6D11" }}> · 확인 {n.readBy.length}명</span>}
                   </div>
                 </div>
                 <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
@@ -2844,12 +2888,48 @@ function NoticeAdminView({ data, update, setToast }) {
               <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
                 대상: {audienceLabel}
               </div>
+
+              {(() => {
+                const targetIds = viewer.audience === "all" ? workers.map((w) => w.id)
+                  : viewer.audience === "site" ? workers.filter((w) => (w.siteIds || (w.siteId ? [w.siteId] : [])).some((id) => (viewer.siteIds || []).includes(id))).map((w) => w.id)
+                  : (viewer.workerIds || []);
+                const readBy = viewer.readBy || [];
+                const readIds = readBy.map((r) => r.workerId);
+                const unread = workers.filter((w) => targetIds.includes(w.id) && !readIds.includes(w.id));
+                return (
+                  <div className="mt-4" style={{ background: C.tileSoft, padding: 12 }}>
+                    <Eyebrow>확인 현황 · {readBy.length}/{targetIds.length}명</Eyebrow>
+                    {readBy.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {[...readBy].sort((a, b) => a.readAt.localeCompare(b.readAt)).map((r) => (
+                          <span key={r.workerId} style={{ fontSize: 11, fontWeight: 700, color: "#3B6D11", background: "#EAF3DE", padding: "3px 8px" }}>
+                            ✓ {r.workerName}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {unread.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {unread.map((w) => (
+                          <span key={w.id} style={{ fontSize: 11, fontWeight: 700, color: C.sub, background: C.tile, border: `1px solid ${C.line}`, padding: "3px 8px" }}>
+                            {w.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {targetIds.length === 0 && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>대상 근무자가 없어요.</div>}
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-2 gap-2 mt-4">
                 <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
                 {isAdminWritten ? (
                   <Btn full onClick={() => {
-                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [] });
+                    const v = viewer;
                     setViewer(null);
+                    setTimeout(() => {
+                      setEdit({ ...v, mode: "range", leadDays: 7, targetDate: v.endDate, includeTarget: true, workerIds: v.workerIds || [] });
+                    }, 80);
                   }}>수정하기</Btn>
                 ) : (
                   <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
