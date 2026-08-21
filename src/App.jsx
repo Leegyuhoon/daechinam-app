@@ -1659,14 +1659,14 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
 
       {/* 현장 사진 등록 작성 */}
       <Modal open={photoOpen} onClose={() => !photoBusy && setPhotoOpen(false)}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 {photoForm.kind === "video" ? "영상" : "사진"} 등록</div>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 {photoForm.kind === "video" ? "영상" : photoForm.kind === "text" ? "기록" : "사진"} 등록</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
           시설 훼손, 작업 전후 등을 기록으로 남기면 관리자가 현장·날짜별로 확인할 수 있어요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
           <Field label="유형">
-            <div className="grid grid-cols-2 gap-1.5">
-              {[["photo", "사진", Camera], ["video", "동영상", ImageIcon]].map(([k, l, Icon]) => (
+            <div className="grid grid-cols-3 gap-1.5">
+              {[["photo", "사진", Camera], ["video", "동영상", ImageIcon], ["text", "글 작성", FileText]].map(([k, l, Icon]) => (
                 <button key={k} onClick={() => setPhotoForm((f) => ({ ...f, kind: k, file: null, preview: "" }))}
                   className="flex items-center justify-center gap-1.5"
                   style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: photoForm.kind === k ? C.aquaDeep : C.tileSoft, color: photoForm.kind === k ? "#fff" : C.sub }}>
@@ -1690,41 +1690,43 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
               ))}
             </div>
           </Field>
-          <Field label={(photoForm.kind === "video" ? "동영상" : "사진") + " (선택 — 없으면 내용만 등록돼요)"}>
-            {photoForm.preview ? (
-              <div className="relative">
-                {photoForm.kind === "video" ? (
-                  <video src={photoForm.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
-                ) : (
-                  <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
-                )}
-                <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
-                  style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
-                  <X size={14} color="#fff" />
-                </button>
-              </div>
-            ) : (
-              <label style={{
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
-              }}>
-                <Camera size={22} color={C.sub} />
-                <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>
-                  눌러서 {photoForm.kind === "video" ? "영상 촬영 또는 선택" : "사진 촬영 또는 선택"}
+          {photoForm.kind !== "text" && (
+            <Field label={photoForm.kind === "video" ? "동영상" : "사진"}>
+              {photoForm.preview ? (
+                <div className="relative">
+                  {photoForm.kind === "video" ? (
+                    <video src={photoForm.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+                  ) : (
+                    <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                  )}
+                  <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
+                    style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
+                    <X size={14} color="#fff" />
+                  </button>
                 </div>
-                <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
-                  onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
-              </label>
-            )}
-            {photoForm.kind === "video" && (
-              <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
-                가능하면 15초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸리거나 실패할 수 있어요 (최대 25MB).
-              </div>
-            )}
-          </Field>
-          <Field label="메모 (선택)">
+              ) : (
+                <label style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
+                }}>
+                  <Camera size={22} color={C.sub} />
+                  <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>
+                    눌러서 {photoForm.kind === "video" ? "영상 촬영 또는 선택" : "사진 촬영 또는 선택"}
+                  </div>
+                  <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
+                    onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
+                </label>
+              )}
+              {photoForm.kind === "video" && (
+                <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
+                  가능하면 15초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸리거나 실패할 수 있어요 (최대 25MB).
+                </div>
+              )}
+            </Field>
+          )}
+          <Field label={photoForm.kind === "text" ? "내용" : "메모 (선택)"}>
             <textarea value={photoForm.note} onChange={(e) => setPhotoForm((f) => ({ ...f, note: e.target.value }))}
-              placeholder="예: 3층 창틀 파손 확인" rows={2} style={{ ...inputStyle, resize: "none" }} />
+              placeholder="예: 3층 창틀 파손 확인" rows={photoForm.kind === "text" ? 5 : 2} style={{ ...inputStyle, resize: "none" }} />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-2 mt-4">
