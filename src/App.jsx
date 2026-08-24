@@ -163,6 +163,16 @@ const tstr = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${
 const uid = () => Math.random().toString(36).slice(2, 10);
 const dist = (m) => (m == null ? "—" : m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`);
 
+/* 현장 필터 칩 정렬: 미확인이 있는 현장 먼저, 그다음 전체 개수 많은 순 */
+function sortSitesByActivity(sites, countFn, unconfirmedFn) {
+  return [...sites].sort((a, b) => {
+    const au = unconfirmedFn(a.id) > 0 ? 1 : 0;
+    const bu = unconfirmedFn(b.id) > 0 ? 1 : 0;
+    if (au !== bu) return bu - au;
+    return countFn(b.id) - countFn(a.id);
+  });
+}
+
 function haversine(a, b) {
   const R = 6371000, rad = (x) => (x * Math.PI) / 180;
   const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
@@ -2335,29 +2345,40 @@ function PhotoAdminView({ data, update, setToast }) {
 
   // 1단계: 현장 폴더 목록
   if (!siteId) {
+    const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
     const bySite = {};
     reports.forEach((r) => { (bySite[r.siteId || "none"] ||= { name: r.siteName, items: [] }).items.push(r); });
+    const entries = Object.entries(bySite).sort(([, a], [, b]) => {
+      const aUn = a.items.filter((r) => r.createdAt > lastSeenPhotos).length > 0 ? 1 : 0;
+      const bUn = b.items.filter((r) => r.createdAt > lastSeenPhotos).length > 0 ? 1 : 0;
+      if (aUn !== bUn) return bUn - aUn;
+      return b.items.length - a.items.length;
+    });
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <Btn full onClick={() => openUpload()}>
           <span className="flex items-center justify-center gap-2"><Camera size={15} /> 사진·영상 등록 (관리자)</span>
         </Btn>
-        <div className="mt-4"><Eyebrow dark>현장별로 묶어서 보여드려요 · 눌러서 열기</Eyebrow></div>
+        <div className="mt-4"><Eyebrow dark>현장별로 묶어서 보여드려요 · 미확인 있는 현장이 먼저 나와요</Eyebrow></div>
         <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
-          {Object.entries(bySite).map(([sid, g]) => (
-            <Tile key={sid} onClick={() => setSiteId(sid)} style={{ padding: "14px 16px" }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Folder size={18} color={C.aquaDeep} />
-                  <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{g.name}</div>
+          {entries.map(([sid, g]) => {
+            const unCnt = g.items.filter((r) => r.createdAt > lastSeenPhotos).length;
+            return (
+              <Tile key={sid} onClick={() => setSiteId(sid)} style={{ padding: "14px 16px" }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Folder size={18} color={C.aquaDeep} />
+                    <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{g.name}</div>
+                    {unCnt > 0 && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 6px" }}>미확인 {unCnt}</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
+                    <ChevronRight size={16} color={C.sub} />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
-                  <ChevronRight size={16} color={C.sub} />
-                </div>
-              </div>
-            </Tile>
-          ))}
+              </Tile>
+            );
+          })}
         </div>
         <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
           sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFile={pickUploadFile} />
@@ -2474,9 +2495,18 @@ function PhotoAdminView({ data, update, setToast }) {
 
 /* ─────────────────────────  용품 요청 관리(관리자)  ───────────────────────── */
 function SupplyAdminView({ data, update, setToast }) {
+  const sites = data.sites || [];
   const [filter, setFilter] = useState("all");
+  const [siteFilter, setSiteFilter] = useState(null);
   const list = [...(data.supplyRequests || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const shown = filter === "all" ? list : list.filter((x) => x.status === filter);
+  const bySite = filter === "all" ? list : list.filter((x) => x.status === filter);
+  const shown = siteFilter ? bySite.filter((r) => r.siteId === siteFilter) : bySite;
+
+  const siteChips = sortSitesByActivity(
+    sites,
+    (sid) => list.filter((r) => r.siteId === sid).length,
+    (sid) => list.filter((r) => r.siteId === sid && r.status === "requested").length
+  );
 
   const setStatus = (id, status) => {
     update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString() } : x)) }));
@@ -2497,11 +2527,29 @@ function SupplyAdminView({ data, update, setToast }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+      <div className="flex gap-1.5 mb-2" style={{ overflowX: "auto" }}>
         {[["all", "전체"], ["requested", "요청"], ["approved", "승인"], ["delivered", "전달완료"], ["declined", "거절"]].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
             style={{ fontSize: 12, fontWeight: 800, padding: "6px 11px", flexShrink: 0, background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub }}>{l}</button>
         ))}
+      </div>
+      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+        <button onClick={() => setSiteFilter(null)}
+          style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: siteFilter === null ? C.text : C.tileSoft, color: siteFilter === null ? "#fff" : C.sub }}>
+          전체 현장
+        </button>
+        {siteChips.map((s) => {
+          const cnt = list.filter((r) => r.siteId === s.id).length;
+          const unCnt = list.filter((r) => r.siteId === s.id && r.status === "requested").length;
+          if (cnt === 0) return null;
+          return (
+            <button key={s.id} onClick={() => setSiteFilter(s.id)}
+              className="flex items-center gap-1" style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: siteFilter === s.id ? C.text : C.tileSoft, color: siteFilter === s.id ? "#fff" : C.sub }}>
+              {unCnt > 0 && <span style={{ width: 6, height: 6, borderRadius: 999, background: C.red }} />}
+              {s.name} ({cnt})
+            </button>
+          );
+        })}
       </div>
 
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>용품 요청 내역이 없습니다.</div>}
@@ -2543,10 +2591,19 @@ function SupplyAdminView({ data, update, setToast }) {
 
 /* ─────────────────────────  근무 양도 관리(관리자)  ───────────────────────── */
 function TransferAdminView({ data, update, setToast }) {
+  const sites = data.sites || [];
   const [filter, setFilter] = useState("all");
+  const [siteFilter, setSiteFilter] = useState(null);
   const [assignPick, setAssignPick] = useState(null); // 지정 중인 transfer id
   const transfers = [...(data.transfers || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const shown = filter === "all" ? transfers : filter === "needAction" ? transfers.filter((t) => t.status === "pending") : transfers.filter((t) => t.status === filter);
+  const byStatus = filter === "all" ? transfers : filter === "needAction" ? transfers.filter((t) => t.status === "pending") : transfers.filter((t) => t.status === filter);
+  const shown = siteFilter ? byStatus.filter((t) => t.siteId === siteFilter) : byStatus;
+
+  const siteChips = sortSitesByActivity(
+    sites,
+    (sid) => transfers.filter((t) => t.siteId === sid).length,
+    (sid) => transfers.filter((t) => t.siteId === sid && t.status === "pending").length
+  );
 
   const assignWorker = (id, w) => {
     update((d) => ({
@@ -2587,11 +2644,29 @@ function TransferAdminView({ data, update, setToast }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+      <div className="flex gap-1.5 mb-2" style={{ overflowX: "auto" }}>
         {[["all", "전체"], ["pending", "확인 필요"], ["assigned", "승인 대기"], ["approved", "완료"], ["declined", "거절"]].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
             style={{ fontSize: 12, fontWeight: 800, padding: "6px 11px", flexShrink: 0, background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub }}>{l}</button>
         ))}
+      </div>
+      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+        <button onClick={() => setSiteFilter(null)}
+          style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: siteFilter === null ? C.text : C.tileSoft, color: siteFilter === null ? "#fff" : C.sub }}>
+          전체 현장
+        </button>
+        {siteChips.map((s) => {
+          const cnt = transfers.filter((t) => t.siteId === s.id).length;
+          const unCnt = transfers.filter((t) => t.siteId === s.id && t.status === "pending").length;
+          if (cnt === 0) return null;
+          return (
+            <button key={s.id} onClick={() => setSiteFilter(s.id)}
+              className="flex items-center gap-1" style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: siteFilter === s.id ? C.text : C.tileSoft, color: siteFilter === s.id ? "#fff" : C.sub }}>
+              {unCnt > 0 && <span style={{ width: 6, height: 6, borderRadius: 999, background: C.red }} />}
+              {s.name} ({cnt})
+            </button>
+          );
+        })}
       </div>
 
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>양도 요청 내역이 없습니다.</div>}
@@ -2742,12 +2817,23 @@ function NoticeAdminView({ data, update, setToast }) {
           style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteFilter === null ? C.aquaDeep : C.tileSoft, color: siteFilter === null ? "#fff" : C.sub }}>
           전체
         </button>
-        {sites.map((s) => {
+        {sortSitesByActivity(
+          sites,
+          (sid) => notices.filter((n) => noticeMatchesSite(n, sid)).length,
+          (sid) => {
+            const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
+            return notices.filter((n) => noticeMatchesSite(n, sid) && n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
+          }
+        ).map((s) => {
           const cnt = notices.filter((n) => noticeMatchesSite(n, s.id)).length;
+          const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
+          const unCnt = notices.filter((n) => noticeMatchesSite(n, s.id) && n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
+          if (cnt === 0) return null;
           return (
             <button key={s.id} onClick={() => setSiteFilter(s.id)}
-              style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteFilter === s.id ? C.aquaDeep : C.tileSoft, color: siteFilter === s.id ? "#fff" : C.sub }}>
-              {s.name}{cnt > 0 ? ` (${cnt})` : ""}
+              className="flex items-center gap-1" style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteFilter === s.id ? C.aquaDeep : C.tileSoft, color: siteFilter === s.id ? "#fff" : C.sub }}>
+              {unCnt > 0 && <span style={{ width: 6, height: 6, borderRadius: 999, background: C.red }} />}
+              {s.name} ({cnt})
             </button>
           );
         })}
