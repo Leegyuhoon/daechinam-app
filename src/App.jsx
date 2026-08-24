@@ -2682,8 +2682,21 @@ function NoticeAdminView({ data, update, setToast }) {
   const { workers, sites } = data;
   const [edit, setEdit] = useState(null);
   const [viewer, setViewer] = useState(null);
+  const [siteFilter, setSiteFilter] = useState(null); // null = 전체, 아니면 siteId
   const notices = [...(data.notices || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const today = dKey(new Date());
+
+  const noticeMatchesSite = (n, siteId) => {
+    if (n.audience === "all") return true;
+    if (n.audience === "site") return (n.siteIds || []).includes(siteId);
+    if (n.audience === "custom") return (n.workerIds || []).some((wid) => {
+      const w = workers.find((x) => x.id === wid);
+      const wSites = w?.siteIds || (w?.siteId ? [w.siteId] : []);
+      return wSites.includes(siteId);
+    });
+    return false;
+  };
+  const shown = siteFilter ? notices.filter((n) => noticeMatchesSite(n, siteFilter)) : notices;
 
   const openNew = () => setEdit({
     id: null, title: "", message: "", audience: "all", workerIds: [],
@@ -2724,9 +2737,25 @@ function NoticeAdminView({ data, update, setToast }) {
         <span className="flex items-center justify-center gap-2"><Plus size={15} /> 새 공지 작성</span>
       </Btn>
 
+      <div className="flex gap-1.5 mt-3" style={{ overflowX: "auto" }}>
+        <button onClick={() => setSiteFilter(null)}
+          style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteFilter === null ? C.aquaDeep : C.tileSoft, color: siteFilter === null ? "#fff" : C.sub }}>
+          전체
+        </button>
+        {sites.map((s) => {
+          const cnt = notices.filter((n) => noticeMatchesSite(n, s.id)).length;
+          return (
+            <button key={s.id} onClick={() => setSiteFilter(s.id)}
+              style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteFilter === s.id ? C.aquaDeep : C.tileSoft, color: siteFilter === s.id ? "#fff" : C.sub }}>
+              {s.name}{cnt > 0 ? ` (${cnt})` : ""}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="flex flex-col gap-0.5 mt-3" style={{ background: C.grout }}>
-        {notices.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 공지가 없습니다.</div></Tile>}
-        {notices.map((n) => {
+        {shown.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>{siteFilter ? "이 현장에 해당하는 공지가 없습니다." : "등록된 공지가 없습니다."}</div></Tile>}
+        {shown.map((n) => {
           const live = n.active && today >= n.startDate && today <= n.endDate;
           return (
             <Tile key={n.id} onClick={() => setViewer(n)} style={{ padding: "13px 14px" }}>
