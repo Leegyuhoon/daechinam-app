@@ -119,6 +119,8 @@ async function uploadVideo(file) {
   return data.id;
 }
 const photoUrl = (id) => `/api/photo?id=${id}`;
+// 기존 데이터(photoId 단수)와 신규 데이터(photoIds 배열)를 둘 다 지원
+const photoIdsOf = (r) => (Array.isArray(r.photoIds) && r.photoIds.length > 0 ? r.photoIds : (r.photoId ? [r.photoId] : []));
 
 /* 화면에 보이지 않는 HTML 조각을 즉시 PDF 파일로 캡처·다운로드 */
 async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
@@ -958,33 +960,62 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
   };
 
   const [photoOpen, setPhotoOpen] = useState(false);
-  const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+  const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", files: [], previews: [], file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
   const openPhoto = () => {
-    setPhotoForm({ siteId: worker?.siteId || myWorkerSiteIds2[0] || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+    setPhotoForm({ siteId: worker?.siteId || myWorkerSiteIds2[0] || "", category: "작업 후", note: "", files: [], previews: [], file: null, preview: "", kind: "photo" });
     setPhotoOpen(true);
   };
-  const pickPhotoFile = (f) => {
-    if (!f) return;
-    setPhotoForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
+  const pickPhotoFiles = (fileList) => {
+    const arr = Array.from(fileList || []).filter(Boolean);
+    if (arr.length === 0) return;
+    if (photoForm.kind === "video") {
+      // 영상은 1개만
+      setPhotoForm((p) => ({ ...p, file: arr[0], preview: URL.createObjectURL(arr[0]) }));
+    } else {
+      // 사진은 여러 장 계속 추가 가능 (최대 10장)
+      setPhotoForm((p) => {
+        const nextFiles = [...p.files, ...arr].slice(0, 10);
+        const nextPreviews = nextFiles.map((f) => URL.createObjectURL(f));
+        return { ...p, files: nextFiles, previews: nextPreviews };
+      });
+    }
+  };
+  const removePhotoAt = (idx) => {
+    setPhotoForm((p) => {
+      const nextFiles = p.files.filter((_, i) => i !== idx);
+      const nextPreviews = p.previews.filter((_, i) => i !== idx);
+      return { ...p, files: nextFiles, previews: nextPreviews };
+    });
   };
   const submitPhoto = async () => {
-    if (!photoForm.file && !photoForm.note.trim()) { setToast("사진·영상을 첨부하거나, 최소한 내용을 입력해 주세요"); return; }
+    const hasMedia = photoForm.kind === "video" ? !!photoForm.file : photoForm.files.length > 0;
+    if (!hasMedia && !photoForm.note.trim()) { setToast("사진·영상을 첨부하거나, 최소한 내용을 입력해 주세요"); return; }
     const s = sites.find((x) => x.id === photoForm.siteId);
     const authorRole = (worker.leaderSiteIds || []).includes(photoForm.siteId) ? "leader" : "worker";
     setPhotoBusy(true);
     try {
-      const mediaId = photoForm.file ? (photoForm.kind === "video" ? await uploadVideo(photoForm.file) : await uploadPhoto(photoForm.file)) : null;
+      let mediaIds = [];
+      if (photoForm.kind === "video" && photoForm.file) {
+        mediaIds = [await uploadVideo(photoForm.file)];
+      } else if (photoForm.kind === "photo" && photoForm.files.length > 0) {
+        // 여러 장을 순서대로 업로드
+        for (const f of photoForm.files) {
+          mediaIds.push(await uploadPhoto(f));
+        }
+      }
       update((d) => ({
         ...d,
         siteReports: [...(d.siteReports || []), {
           id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           workerId: worker.id, workerName: worker.name, authorRole,
-          category: photoForm.category, note: photoForm.note.trim(), photoId: mediaId, kind: mediaId ? photoForm.kind : "text",
+          category: photoForm.category, note: photoForm.note.trim(),
+          photoIds: mediaIds, photoId: mediaIds[0] || null, // photoId는 하위호환용
+          kind: mediaIds.length > 0 ? photoForm.kind : "text",
           createdAt: new Date().toISOString(),
         }],
       }));
-      setToast(mediaId ? (photoForm.kind === "video" ? "영상이 등록됐습니다" : "사진이 등록됐습니다") : "내용이 등록됐습니다");
+      setToast(mediaIds.length > 1 ? `사진 ${mediaIds.length}장이 등록됐습니다` : mediaIds.length === 1 ? (photoForm.kind === "video" ? "영상이 등록됐습니다" : "사진이 등록됐습니다") : "내용이 등록됐습니다");
       setPhotoOpen(false);
     } catch (e) {
       setToast(e.message || "업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
@@ -1677,7 +1708,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                 <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1", background: "#000" }}>
                   {r.kind === "video" ? (
                     <>
-                      <video src={photoUrl(r.photoId)} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      <video src={photoUrl(photoIdsOf(r)[0])} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                       <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.25)" }}>
                         <div style={{ width: 30, height: 30, borderRadius: 999, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <div style={{ width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: "10px solid #fff", marginLeft: 2 }} />
@@ -1692,7 +1723,12 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
                       </div>
                     </div>
                   ) : (
-                    <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    <img src={photoUrl(photoIdsOf(r)[0])} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  )}
+                  {photoIdsOf(r).length > 1 && (
+                    <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px" }}>
+                      {photoIdsOf(r).length}장
+                    </span>
                   )}
                   {r.authorRole === "leader" && (
                     <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>
@@ -1711,9 +1747,13 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         {galleryViewer && (
           <>
             {galleryViewer.kind === "video" ? (
-              <video src={photoUrl(galleryViewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+              <video src={photoUrl(photoIdsOf(galleryViewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
             ) : galleryViewer.kind === "text" ? null : (
-              <img src={photoUrl(galleryViewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+              <div className="flex flex-col gap-2">
+                {photoIdsOf(galleryViewer).map((pid, i) => (
+                  <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                ))}
+              </div>
             )}
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>{galleryViewer.category}</span>
@@ -1773,7 +1813,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
           <Field label="유형">
             <div className="grid grid-cols-3 gap-1.5">
               {[["photo", "사진", Camera], ["video", "동영상", ImageIcon], ["text", "글 작성", FileText]].map(([k, l, Icon]) => (
-                <button key={k} onClick={() => setPhotoForm((f) => ({ ...f, kind: k, file: null, preview: "" }))}
+                <button key={k} onClick={() => setPhotoForm((f) => ({ ...f, kind: k, file: null, preview: "", files: [], previews: [] }))}
                   className="flex items-center justify-center gap-1.5"
                   style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: photoForm.kind === k ? C.aquaDeep : C.tileSoft, color: photoForm.kind === k ? "#fff" : C.sub }}>
                   <Icon size={13} />{l}
@@ -1797,31 +1837,50 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             </div>
           </Field>
           {photoForm.kind !== "text" && (
-            <Field label={photoForm.kind === "video" ? "동영상" : "사진"}>
-              {photoForm.preview ? (
-                <div className="relative">
-                  {photoForm.kind === "video" ? (
+            <Field label={photoForm.kind === "video" ? "동영상" : `사진 (여러 장 가능, 최대 10장)${photoForm.files.length ? ` · ${photoForm.files.length}장 선택됨` : ""}`}>
+              {photoForm.kind === "video" ? (
+                photoForm.preview ? (
+                  <div className="relative">
                     <video src={photoForm.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
-                  ) : (
-                    <img src={photoForm.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
-                  )}
-                  <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
-                    style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
-                    <X size={14} color="#fff" />
-                  </button>
-                </div>
-              ) : (
-                <label style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                  border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
-                }}>
-                  <Camera size={22} color={C.sub} />
-                  <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>
-                    눌러서 {photoForm.kind === "video" ? "영상 촬영 또는 선택" : "사진 촬영 또는 선택"}
+                    <button onClick={() => setPhotoForm((f) => ({ ...f, file: null, preview: "" }))}
+                      style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
+                      <X size={14} color="#fff" />
+                    </button>
                   </div>
-                  <input type="file" accept={photoForm.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
-                    onChange={(e) => pickPhotoFile(e.target.files?.[0])} />
-                </label>
+                ) : (
+                  <label style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
+                  }}>
+                    <Camera size={22} color={C.sub} />
+                    <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 영상 촬영 또는 선택</div>
+                    <input type="file" accept="video/*" style={{ display: "none" }}
+                      onChange={(e) => pickPhotoFiles(e.target.files)} />
+                  </label>
+                )
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {photoForm.previews.map((src, i) => (
+                    <div key={i} className="relative" style={{ aspectRatio: "1" }}>
+                      <img src={src} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: RADIUS_SM, display: "block" }} />
+                      <button onClick={() => removePhotoAt(i)}
+                        style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 4 }}>
+                        <X size={11} color="#fff" />
+                      </button>
+                    </div>
+                  ))}
+                  {photoForm.files.length < 10 && (
+                    <label style={{
+                      aspectRatio: "1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, cursor: "pointer", background: C.tileSoft,
+                    }}>
+                      <Camera size={18} color={C.sub} />
+                      <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 4 }}>{photoForm.files.length > 0 ? "추가" : "촬영/선택"}</div>
+                      <input type="file" accept="image/*" multiple style={{ display: "none" }}
+                        onChange={(e) => { pickPhotoFiles(e.target.files); e.target.value = ""; }} />
+                    </label>
+                  )}
+                </div>
               )}
               {photoForm.kind === "video" && (
                 <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
@@ -2216,7 +2275,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
 
 /* ─────────────────────────  현장 사진 관리(관리자, 폴더 구조)  ───────────────────────── */
 /* 관리자가 현장 검수 중 사진·영상을 직접 등록하는 모달 */
-function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit, onPickFile }) {
+function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit, onPickFiles, onRemovePhotoAt }) {
   return (
     <Modal open={open} onClose={() => !busy && onClose()}>
       <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>현장 {form.kind === "video" ? "영상" : "사진"} 등록</div>
@@ -2227,7 +2286,7 @@ function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit,
         <Field label="유형">
           <div className="grid grid-cols-2 gap-1.5">
             {[["photo", "사진", Camera], ["video", "동영상", ImageIcon]].map(([k, l, Icon]) => (
-              <button key={k} onClick={() => setForm((f) => ({ ...f, kind: k, file: null, preview: "" }))}
+              <button key={k} onClick={() => setForm((f) => ({ ...f, kind: k, file: null, preview: "", files: [], previews: [] }))}
                 className="flex items-center justify-center gap-1.5"
                 style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: form.kind === k ? C.aquaDeep : C.tileSoft, color: form.kind === k ? "#fff" : C.sub }}>
                 <Icon size={13} />{l}
@@ -2249,29 +2308,50 @@ function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit,
             ))}
           </div>
         </Field>
-        <Field label={form.kind === "video" ? "동영상" : "사진"}>
-          {form.preview ? (
-            <div className="relative">
-              {form.kind === "video" ? (
+        <Field label={form.kind === "video" ? "동영상" : `사진 (여러 장 가능, 최대 10장)${form.files?.length ? ` · ${form.files.length}장 선택됨` : ""}`}>
+          {form.kind === "video" ? (
+            form.preview ? (
+              <div className="relative">
                 <video src={form.preview} controls style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
-              ) : (
-                <img src={form.preview} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
-              )}
-              <button onClick={() => setForm((f) => ({ ...f, file: null, preview: "" }))}
-                style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
-                <X size={14} color="#fff" />
-              </button>
-            </div>
+                <button onClick={() => setForm((f) => ({ ...f, file: null, preview: "" }))}
+                  style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}>
+                  <X size={14} color="#fff" />
+                </button>
+              </div>
+            ) : (
+              <label style={{
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
+              }}>
+                <Camera size={22} color={C.sub} />
+                <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 영상 선택</div>
+                <input type="file" accept="video/*" style={{ display: "none" }}
+                  onChange={(e) => onPickFiles(e.target.files)} />
+              </label>
+            )
           ) : (
-            <label style={{
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "28px 0", cursor: "pointer", background: C.tileSoft,
-            }}>
-              <Camera size={22} color={C.sub} />
-              <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginTop: 8 }}>눌러서 {form.kind === "video" ? "영상 선택" : "사진 선택"}</div>
-              <input type="file" accept={form.kind === "video" ? "video/*" : "image/*"} style={{ display: "none" }}
-                onChange={(e) => onPickFile(e.target.files?.[0])} />
-            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {(form.previews || []).map((src, i) => (
+                <div key={i} className="relative" style={{ aspectRatio: "1" }}>
+                  <img src={src} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: RADIUS_SM, display: "block" }} />
+                  <button onClick={() => onRemovePhotoAt(i)}
+                    style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 4 }}>
+                    <X size={11} color="#fff" />
+                  </button>
+                </div>
+              ))}
+              {(form.files || []).length < 10 && (
+                <label style={{
+                  aspectRatio: "1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, cursor: "pointer", background: C.tileSoft,
+                }}>
+                  <Camera size={18} color={C.sub} />
+                  <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 4 }}>{(form.files || []).length > 0 ? "추가" : "선택"}</div>
+                  <input type="file" accept="image/*" multiple style={{ display: "none" }}
+                    onChange={(e) => { onPickFiles(e.target.files); e.target.value = ""; }} />
+                </label>
+              )}
+            </div>
           )}
         </Field>
         <Field label="메모 (선택)">
@@ -2293,35 +2373,54 @@ function PhotoAdminView({ data, update, setToast }) {
   const [workerId, setWorkerId] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [uploadForm, setUploadForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+  const [uploadForm, setUploadForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", files: [], previews: [], kind: "photo" });
   const [uploadBusy, setUploadBusy] = useState(false);
 
   const catColor = { "시설 훼손": C.red, "작업 전": C.blue, "작업 후": C.aquaDeep, "기타": C.sub };
 
   const openUpload = (presetSiteId) => {
-    setUploadForm({ siteId: presetSiteId || data.sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "", kind: "photo" });
+    setUploadForm({ siteId: presetSiteId || data.sites[0]?.id || "", category: "작업 후", note: "", file: null, preview: "", files: [], previews: [], kind: "photo" });
     setUploadOpen(true);
   };
-  const pickUploadFile = (f) => {
-    if (!f) return;
-    setUploadForm((p) => ({ ...p, file: f, preview: URL.createObjectURL(f) }));
+  const pickUploadFiles = (fileList) => {
+    const arr = Array.from(fileList || []).filter(Boolean);
+    if (arr.length === 0) return;
+    if (uploadForm.kind === "video") {
+      setUploadForm((p) => ({ ...p, file: arr[0], preview: URL.createObjectURL(arr[0]) }));
+    } else {
+      setUploadForm((p) => {
+        const nextFiles = [...p.files, ...arr].slice(0, 10);
+        const nextPreviews = nextFiles.map((f) => URL.createObjectURL(f));
+        return { ...p, files: nextFiles, previews: nextPreviews };
+      });
+    }
+  };
+  const removeUploadPhotoAt = (idx) => {
+    setUploadForm((p) => ({ ...p, files: p.files.filter((_, i) => i !== idx), previews: p.previews.filter((_, i) => i !== idx) }));
   };
   const submitAdminUpload = async () => {
-    if (!uploadForm.file) { setToast(uploadForm.kind === "video" ? "영상을 먼저 선택해 주세요" : "사진을 먼저 선택해 주세요"); return; }
+    const hasMedia = uploadForm.kind === "video" ? !!uploadForm.file : uploadForm.files.length > 0;
+    if (!hasMedia) { setToast(uploadForm.kind === "video" ? "영상을 먼저 선택해 주세요" : "사진을 먼저 선택해 주세요"); return; }
     const s = data.sites.find((x) => x.id === uploadForm.siteId);
     setUploadBusy(true);
     try {
-      const mediaId = uploadForm.kind === "video" ? await uploadVideo(uploadForm.file) : await uploadPhoto(uploadForm.file);
+      let mediaIds = [];
+      if (uploadForm.kind === "video") {
+        mediaIds = [await uploadVideo(uploadForm.file)];
+      } else {
+        for (const f of uploadForm.files) mediaIds.push(await uploadPhoto(f));
+      }
       update((d) => ({
         ...d,
         siteReports: [...(d.siteReports || []), {
           id: uid(), date: dKey(new Date()), siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           workerId: null, workerName: "관리자", authorRole: "admin",
-          category: uploadForm.category, note: uploadForm.note.trim(), photoId: mediaId, kind: uploadForm.kind,
+          category: uploadForm.category, note: uploadForm.note.trim(),
+          photoIds: mediaIds, photoId: mediaIds[0] || null, kind: uploadForm.kind,
           createdAt: new Date().toISOString(),
         }],
       }));
-      setToast(uploadForm.kind === "video" ? "영상을 등록했습니다" : "사진을 등록했습니다");
+      setToast(mediaIds.length > 1 ? `사진 ${mediaIds.length}장을 등록했습니다` : uploadForm.kind === "video" ? "영상을 등록했습니다" : "사진을 등록했습니다");
       setUploadOpen(false);
     } catch (e) {
       setToast(e.message || "업로드에 실패했습니다 — 인터넷 연결을 확인해 주세요");
@@ -2338,7 +2437,7 @@ function PhotoAdminView({ data, update, setToast }) {
         </Btn>
         <Tile style={{ marginTop: 10 }}><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장 사진이 없습니다.</div></Tile>
         <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
-          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFile={pickUploadFile} />
+          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFiles={pickUploadFiles} onRemovePhotoAt={removeUploadPhotoAt} />
       </div>
     );
   }
@@ -2381,7 +2480,7 @@ function PhotoAdminView({ data, update, setToast }) {
           })}
         </div>
         <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
-          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFile={pickUploadFile} />
+          sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFiles={pickUploadFiles} onRemovePhotoAt={removeUploadPhotoAt} />
       </div>
     );
   }
@@ -2436,7 +2535,7 @@ function PhotoAdminView({ data, update, setToast }) {
             <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1", background: "#000" }}>
               {r.kind === "video" ? (
                 <>
-                  <video src={photoUrl(r.photoId)} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <video src={photoUrl(photoIdsOf(r)[0])} muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   <div style={{
                     position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
                     background: "rgba(0,0,0,0.25)",
@@ -2454,7 +2553,12 @@ function PhotoAdminView({ data, update, setToast }) {
                   </div>
                 </div>
               ) : (
-                <img src={photoUrl(r.photoId)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                <img src={photoUrl(photoIdsOf(r)[0])} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              )}
+              {photoIdsOf(r).length > 1 && (
+                <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px" }}>
+                  {photoIdsOf(r).length}장
+                </span>
               )}
               <span style={{
                 position: "absolute", top: 6, left: 6, fontSize: 9.5, fontWeight: 800, color: "#fff",
@@ -2470,9 +2574,13 @@ function PhotoAdminView({ data, update, setToast }) {
         {viewer && (
           <>
             {viewer.kind === "video" ? (
-              <video src={photoUrl(viewer.photoId)} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+              <video src={photoUrl(photoIdsOf(viewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
             ) : viewer.kind === "text" ? null : (
-              <img src={photoUrl(viewer.photoId)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+              <div className="flex flex-col gap-2">
+                {photoIdsOf(viewer).map((pid) => (
+                  <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                ))}
+              </div>
             )}
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: catColor[viewer.category] || C.sub, padding: "3px 8px" }}>{viewer.category}</span>
