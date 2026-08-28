@@ -527,21 +527,54 @@ function Tile({ children, style, onClick, soft }) {
 }
 // 기기 뒤로가기(안드로이드 물리/제스처 버튼, 아이폰 스와이프)를 누르면
 // 앱이 꺼지는 대신 지금 열려있는 화면/팝업만 닫히도록 만드는 공용 훅.
-// open===true인 동안 히스토리를 하나 쌓아뒀다가, 뒤로가기가 오면 onClose를 호출함.
+//
+// 여러 팝업이 동시에 열려있을 수 있어서(모달 안에 모달 등), 전역으로 "지금 열려있는 것들"을
+// 하나의 스택으로 관리함. 버튼으로 닫을 때는 스택에서만 빼고 브라우저 히스토리는 절대 안 건드림 —
+// 이렇게 해야 "X 버튼 눌렀는데 엉뚱하게 관리자 잠금까지 풀리는" 것 같은 충돌이 안 생김.
+// 실제 기기 뒤로가기가 눌렸을 때만 스택 맨 위(가장 최근에 연 것) 하나를 닫음.
+const __backStack = [];
+let __backListenerReady = false;
+function __ensureBackListener() {
+  if (__backListenerReady) return;
+  __backListenerReady = true;
+  window.addEventListener("popstate", () => {
+    const top = __backStack.pop();
+    if (!top) return; // 더 닫을 게 없으면 실제 뒤로가기/앱 종료가 그대로 일어나게 둠
+    top.onBack();
+    if (__backStack.length > 0) {
+      // 아직 열려있는 게 남아있으면, 다음 뒤로가기도 또 잡아채도록 가드를 다시 쌓아둠
+      window.history.pushState({ __guard: true }, "");
+    }
+  });
+}
 function useBackClose(open, onClose) {
   useEffect(() => {
     if (!open) return;
-    let closedByBack = false;
-    window.history.pushState({ modal: true }, "");
-    const onPopState = () => { closedByBack = true; onClose(); };
-    window.addEventListener("popstate", onPopState);
+    __ensureBackListener();
+    const entry = { onBack: onClose };
+    const wasEmpty = __backStack.length === 0;
+    __backStack.push(entry);
+    if (wasEmpty) window.history.pushState({ __guard: true }, "");
     return () => {
-      window.removeEventListener("popstate", onPopState);
-      // 뒤로가기가 아니라 버튼 등으로 닫힌 경우엔, 아까 쌓아둔 히스토리를 다시 빼줘야
-      // 다음 번 뒤로가기가 엉뚱한 데서 한 번 더 소모되지 않음
-      if (!closedByBack) window.history.back();
+      const idx = __backStack.indexOf(entry);
+      if (idx >= 0) __backStack.splice(idx, 1);
     };
   }, [open]);
+}
+// 값이 바뀔 때마다(예: 관리자 화면 안에서 탭을 옮길 때) "이전 값으로" 되돌아갈 수 있게
+// 같은 전역 스택에 단계를 쌓아주는 훅. 뒤로가기를 누르면 바로 전 단계로 돌아감.
+function useBackHistoryValue(value, onBack) {
+  const prevRef = useRef(value);
+  useEffect(() => {
+    if (prevRef.current === value) return;
+    __ensureBackListener();
+    const fromValue = prevRef.current;
+    const entry = { onBack: () => onBack(fromValue) };
+    const wasEmpty = __backStack.length === 0;
+    __backStack.push(entry);
+    if (wasEmpty) window.history.pushState({ __guard: true }, "");
+    prevRef.current = value;
+  }, [value]);
 }
 
 function Modal({ open, onClose, children, title }) {
@@ -2202,14 +2235,19 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
   // 관리자 화면 안에서 탭을 옮겨다닌 순서를 기억해뒀다가,
   // 기기 뒤로가기를 누르면 방문했던 순서 그대로 이전 탭으로 돌아가게 함.
   // 더 돌아갈 탭이 없으면(맨 처음 들어왔던 시점) 잠그기(onLock)로 넘어감.
+  useBackHistoryValue(view, (prevView) => setView(prevView));
+  const onLockRef = useRef(onLock);
+  onLockRef.current = onLock;
   useEffect(() => {
-    window.history.pushState({ adminView: "records" }, "");
-    const onPopState = (e) => {
-      if (e.state && e.state.adminView) setView(e.state.adminView);
-      else onLock();
+    __ensureBackListener();
+    const entry = { onBack: () => onLockRef.current() };
+    const wasEmpty = __backStack.length === 0;
+    __backStack.push(entry);
+    if (wasEmpty) window.history.pushState({ __guard: true }, "");
+    return () => {
+      const idx = __backStack.indexOf(entry);
+      if (idx >= 0) __backStack.splice(idx, 1);
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
@@ -2221,7 +2259,6 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
   const noticeBadge = (data.notices || []).filter((n) => n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
 
   const goView = (k) => {
-    if (k !== view) window.history.pushState({ adminView: k }, "");
     setView(k);
     if (k === "photos") { localStorage.setItem("cleanwork:lastSeenPhotos", new Date().toISOString()); setSeenTick((t) => t + 1); }
     if (k === "notices") { localStorage.setItem("cleanwork:lastSeenNotices", new Date().toISOString()); setSeenTick((t) => t + 1); }
@@ -3148,11 +3185,8 @@ function NoticeAdminView({ data, update, setToast }) {
                 <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
                 {isAdminWritten ? (
                   <Btn full onClick={() => {
-                    const v = viewer;
+                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [] });
                     setViewer(null);
-                    setTimeout(() => {
-                      setEdit({ ...v, mode: "range", leadDays: 7, targetDate: v.endDate, includeTarget: true, workerIds: v.workerIds || [] });
-                    }, 80);
                   }}>수정하기</Btn>
                 ) : (
                   <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
@@ -3185,6 +3219,7 @@ function RecordsView({ data, update, setToast }) {
   const [slip, setSlip] = useState(null);   // { workerId, ym }
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
+  const [statDetail, setStatDetail] = useState(null); // "times" | "pay" | "ot" | "short" | "outside"
   const [siteBrowse, setSiteBrowse] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
   const [boardDate, setBoardDate] = useState(dKey(new Date()));
@@ -3386,7 +3421,7 @@ function RecordsView({ data, update, setToast }) {
     .filter((r) => !qNorm || r.times > 0 || r.days > 0 || workers.find((w) => w.id === r.w.id)?.name.toLowerCase().includes(qNorm))
     .sort((a, b) => b.net - a.net), [workers, inRange, settings, qNorm]);
 
-  const shift = settings.payMode === "shift";
+  const isShiftMode = settings.payMode === "shift";
   const tot = rows.reduce((a, r) => ({
     net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
     blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
@@ -3394,7 +3429,7 @@ function RecordsView({ data, update, setToast }) {
   const maxNet = Math.max(1, ...rows.map((r) => r.net));
 
   const downloadCsv = () => {
-    const head = shift
+    const head = isShiftMode
       ? "이름,날짜,요일,현장,출근,퇴근,근무(분),기준(분),증감(분),추가인정,기본급,추가수당,금액,현장밖퇴근,비고"
       : "이름,날짜,요일,현장,출근,퇴근,휴게(분),근무시간,시급,금액,현장밖퇴근,비고";
     const lines = inRange.slice().sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
@@ -3403,7 +3438,7 @@ function RecordsView({ data, update, setToast }) {
       const d = parseKey(r.date);
       const common = [w?.name || "?", r.date, WD[d.getDay()], r.site || "", tstr(r.clockIn), r.clockOut ? tstr(r.clockOut) : ""];
       const tail = [r.outFlag ? "Y" : "", (r.note || "").replace(/,/g, " ")];
-      return shift
+      return isShiftMode
         ? [...common, Math.round(p.net * 60), Math.round((p.target || 0) * 60), p.diffMin ?? "", p.blocks ?? 0,
            Math.round(p.base || 0), Math.round(p.otPay || 0), Math.round(p.pay || 0), ...tail].join(",")
         : [...common, Math.round((p.brk || 0) * 60), (p.net || 0).toFixed(2), w?.wage ?? settings.wage,
@@ -3428,7 +3463,7 @@ function RecordsView({ data, update, setToast }) {
       const rowsHtml = rows.map(({ w, net, days, times, pay, blocks }) => `
         <tr>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}</td>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${shift ? `${times}타임` : `${days}일`}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${isShiftMode ? `${times}타임` : `${days}일`}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net)}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${blocks || "—"}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${money(pay)}원</td>
@@ -3442,7 +3477,7 @@ function RecordsView({ data, update, setToast }) {
             <thead>
               <tr style="border-bottom:2px solid #1D232A;">
                 <th style="padding:8px 6px; text-align:left;">이름</th>
-                <th style="padding:8px 6px; text-align:right;">${shift ? "타임" : "일수"}</th>
+                <th style="padding:8px 6px; text-align:right;">${isShiftMode ? "타임" : "일수"}</th>
                 <th style="padding:8px 6px; text-align:right;">근무시간</th>
                 <th style="padding:8px 6px; text-align:right;">추가</th>
                 <th style="padding:8px 6px; text-align:right;">지급액</th>
@@ -3452,7 +3487,7 @@ function RecordsView({ data, update, setToast }) {
             <tfoot>
               <tr style="border-top:2px solid #1D232A;">
                 <td style="padding:10px 6px; font-weight:900;">합계 (${rows.length}명)</td>
-                <td style="padding:10px 6px; text-align:right; font-weight:900;">${shift ? `${tot.times}타임` : `${tot.days}일`}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${isShiftMode ? `${tot.times}타임` : `${tot.days}일`}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${hmc(tot.net)}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${tot.blocks || "—"}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900; color:#D8503F;">${money(tot.pay)}원</td>
@@ -3491,32 +3526,98 @@ function RecordsView({ data, update, setToast }) {
       </div>
 
       <div className="mx-4 grid grid-cols-3 gap-0.5" style={{ background: C.grout }}>
-        <Tile style={{ padding: 12 }}>
-          <Eyebrow>{shift ? "총 타임" : "총 근무시간"}</Eyebrow>
-          <div className="mt-1"><Num size={19}>{shift ? `${tot.times}회` : hmc(tot.net)}</Num></div>
-        </Tile>
-        <Tile style={{ padding: 12 }}>
-          <Eyebrow>{shift ? "총 근무시간" : "총 근무일수"}</Eyebrow>
-          <div className="mt-1"><Num size={19}>{shift ? hmc(tot.net) : `${tot.days}일`}</Num></div>
-        </Tile>
-        <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.coral}>{money(tot.pay)}</Num></div></Tile>
+        <button onClick={() => setStatDetail("times")} className="pressable text-left">
+          <Tile style={{ padding: 12 }}>
+            <Eyebrow>{isShiftMode ? "총 타임" : "총 근무시간"}</Eyebrow>
+            <div className="mt-1"><Num size={19}>{isShiftMode ? `${tot.times}회` : hmc(tot.net)}</Num></div>
+          </Tile>
+        </button>
+        <button onClick={() => setStatDetail("times")} className="pressable text-left">
+          <Tile style={{ padding: 12 }}>
+            <Eyebrow>{isShiftMode ? "총 근무시간" : "총 근무일수"}</Eyebrow>
+            <div className="mt-1"><Num size={19}>{isShiftMode ? hmc(tot.net) : `${tot.days}일`}</Num></div>
+          </Tile>
+        </button>
+        <button onClick={() => setStatDetail("pay")} className="pressable text-left">
+          <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.coral}>{money(tot.pay)}</Num></div></Tile>
+        </button>
       </div>
       <div className="mx-4 mt-0.5 grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
-        <Tile soft style={{ padding: 12 }}>
-          <Eyebrow>{shift ? `추가 인정 (${tot.blocks}회)` : "추가근무"}</Eyebrow>
-          <div className="mt-1"><Num size={17} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
-        </Tile>
-        <Tile soft style={{ padding: 12 }}>
-          <Eyebrow>부족시간 누계</Eyebrow>
-          <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
-        </Tile>
+        <button onClick={() => setStatDetail("ot")} className="pressable text-left">
+          <Tile soft style={{ padding: 12 }}>
+            <Eyebrow>{isShiftMode ? `추가 인정 (${tot.blocks}회)` : "추가근무"}</Eyebrow>
+            <div className="mt-1"><Num size={17} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
+          </Tile>
+        </button>
+        <button onClick={() => setStatDetail("short")} className="pressable text-left">
+          <Tile soft style={{ padding: 12 }}>
+            <Eyebrow>부족시간 누계</Eyebrow>
+            <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
+          </Tile>
+        </button>
       </div>
       {tot.flags > 0 && (
-        <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
-          <ShieldAlert size={15} color={C.amber} />
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>현장 밖에서 퇴근한 기록 {tot.flags}건</span>
-        </div>
+        <button onClick={() => setStatDetail("outside")} className="pressable w-full text-left">
+          <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
+            <ShieldAlert size={15} color={C.amber} />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>현장 밖에서 퇴근한 기록 {tot.flags}건</span>
+            <ChevronRight size={14} color={C.sub} style={{ marginLeft: "auto" }} />
+          </div>
+        </button>
       )}
+
+      {/* 통계 상세보기 */}
+      <Modal open={!!statDetail} onClose={() => setStatDetail(null)}>
+        {statDetail && (() => {
+          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록" };
+          return (
+            <>
+              <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{titles[statDetail]}</div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>{labelOf(mode, anchor)} 기준</div>
+
+              {statDetail === "outside" ? (
+                <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+                  {inRange.filter((r) => r.outFlag).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                    const w = workers.find((x) => x.id === r.workerId);
+                    return (
+                      <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{w?.name || "알 수 없음"}</span>
+                          <span style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>{r.date}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>{r.site || "현장 미지정"} · {tstr(r.clockIn)} → {r.clockOut ? tstr(r.clockOut) : "근무 중"}</div>
+                      </div>
+                    );
+                  })}
+                  {tot.flags === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
+                  {rows
+                    .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true)
+                    .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : b.net - a.net)
+                    .map((r) => (
+                      <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
+                            {statDetail === "pay" ? `${money(r.pay)}원`
+                              : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
+                              : statDetail === "short" ? `−${minStr(r.shortMin)}`
+                              : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
+                          </span>
+                        </div>
+                      </Tile>
+                    ))}
+                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true).length === 0 && (
+                    <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "8px 0" }}>해당 근무자가 없어요.</div></Tile>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </Modal>
 
       <div className="px-4 mt-5">
         <button onClick={() => setBoardOpen((v) => !v)} className="w-full flex items-center justify-center gap-2 mb-3"
@@ -3702,7 +3803,7 @@ function RecordsView({ data, update, setToast }) {
                       {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
-                      {shift ? `${times}타임 · ${days}일` : `${days}일 근무`}
+                      {isShiftMode ? `${times}타임 · ${days}일` : `${days}일 근무`}
                     </div>
                   </div>
                 </div>
