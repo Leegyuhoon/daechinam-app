@@ -707,6 +707,21 @@ export default function App() {
     catch (e) { setToast("저장 실패 — 인터넷 연결을 확인해 주세요"); }
   }, []);
 
+  // 출근·퇴근처럼 "실제로 저장됐는지"가 중요한 동작 전용 — 저장이 서버에 확인된 뒤에만 화면을 바꿈.
+  // (일반 update는 화면부터 먼저 바꾸고 나중에 저장하는 방식이라 반응은 빠르지만,
+  //  신호가 약할 때 저장이 조용히 실패하면 나중에 앱이 되돌리면서 "다시 눌러라"처럼 보일 수 있음)
+  const saveConfirmed = useCallback(async (mut) => {
+    const next = typeof mut === "function" ? mut(dataRef.current) : mut;
+    try {
+      await saveShared(next);
+      dataRef.current = next; setData(next);
+      return true;
+    } catch (e) {
+      setToast("저장에 실패했어요 — 인터넷 연결을 확인하고 다시 눌러주세요");
+      return false;
+    }
+  }, []);
+
   // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
   const refreshShared = useCallback(async () => {
     try {
@@ -752,7 +767,7 @@ export default function App() {
         background: `radial-gradient(120% 60% at 50% 0%, ${C.bgSoft} 0%, ${C.bg} 55%)`,
       }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {tab === "clock" && <ClockTab data={data} update={update} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
+          {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
           {tab === "admin" && (
             unlocked
               ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
@@ -804,7 +819,7 @@ export default function App() {
 }
 
 /* ─────────────────────────  근무자 화면  ───────────────────────── */
-function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, inviteInfo }) {
+function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRevealAdmin, inviteInfo }) {
   const { workers, sites, records, settings } = data;
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
@@ -1219,13 +1234,15 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     }
   };
 
-  const doClockIn = () => {
+  const [clockBusy, setClockBusy] = useState(false);
+  const doClockIn = async () => {
+    setClockBusy(true);
     const ts = new Date();
     const s = chk.state === "inside" ? chk.site : sites.find((x) => x.name === manualSite);
     const dateKey = dKey(ts);
     const cover = transfers.find((t) => t.status === "approved" && t.toWorkerId === worker.id && t.date === dateKey && t.siteId === s?.id && !t.fulfilledRecordId);
     const recId = uid();
-    update((d) => ({
+    const ok = await saveConfirmed((d) => ({
       ...d,
       records: [...d.records, {
         id: recId, workerId: worker.id, date: dateKey,
@@ -1239,17 +1256,22 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
       }],
       transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
     }));
+    setClockBusy(false);
+    if (!ok) return; // 실패하면 확인 팝업을 그대로 열어둬서 다시 시도할 수 있게 함
     setConfirm(null);
     setToast(cover ? `출근 처리됐습니다 · ${cover.fromWorkerName}님 대신 근무` : `출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
-  const doClockOut = () => {
+  const doClockOut = async () => {
+    setClockBusy(true);
     const ts = new Date();
-    update((d) => ({
+    const ok = await saveConfirmed((d) => ({
       ...d, records: d.records.map((r) => (r.id === open.id ? {
         ...r, clockOut: ts.toISOString(), outLoc: chk.loc || null,
         outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: !!chk.outside,
       } : r)),
     }));
+    setClockBusy(false);
+    if (!ok) return;
     setConfirm(null);
     setToast(chk.outside ? "퇴근 처리됐습니다 · 현장 밖으로 기록됨" : `퇴근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
@@ -2178,9 +2200,9 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         </div>
 
         <div className="grid grid-cols-2 gap-2 mt-4">
-          <Btn kind="ghost" full onClick={() => setConfirm(null)}>{canGo ? "취소" : "닫기"}</Btn>
-          <Btn full disabled={!canGo} onClick={confirm === "in" ? doClockIn : doClockOut}>
-            {confirm === "in" ? "출근하기" : "퇴근하기"}
+          <Btn kind="ghost" full disabled={clockBusy} onClick={() => setConfirm(null)}>{canGo ? "취소" : "닫기"}</Btn>
+          <Btn full disabled={!canGo || clockBusy} onClick={confirm === "in" ? doClockIn : doClockOut}>
+            {clockBusy ? "저장 중…" : confirm === "in" ? "출근하기" : "퇴근하기"}
           </Btn>
         </div>
       </Modal>
