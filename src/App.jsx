@@ -189,7 +189,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -230,6 +230,7 @@ function migrate(p) {
   d.supplyRequests = Array.isArray(d.supplyRequests) ? d.supplyRequests : [];
   d.payslipSigns = Array.isArray(d.payslipSigns) ? d.payslipSigns : [];
   d.siteManuals = Array.isArray(d.siteManuals) ? d.siteManuals : [];
+  d.closurePeriods = Array.isArray(d.closurePeriods) ? d.closurePeriods : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -262,6 +263,15 @@ const minStr = (m) => {
 
 function isHoliday(date, settings) {
   return !!(settings.holidays && settings.holidays.includes(date));
+}
+
+// 공휴일과는 별개로, "방학 기간"처럼 특정 현장이 통째로 쉬는 기간을 관리자가 미리 설정해둘 수 있음.
+// 1.5배 같은 급여 배율은 없고, 그냥 "이 기간엔 원래 안 나와도 되는 날"이라는 안내용.
+function closureLabelFor(date, siteId, closurePeriods) {
+  const hit = (closurePeriods || []).find((c) =>
+    date >= c.startDate && date <= c.endDate && (!c.siteIds || c.siteIds.length === 0 || (siteId && c.siteIds.includes(siteId)))
+  );
+  return hit ? hit.label : null;
 }
 
 // 추가근무 시간을 "N회 + M분" 형태로 표시 (1회 = 120분 기준). 실제 급여는 otMin(30분 단위) 그대로 계산되고, 이건 표시용.
@@ -3427,6 +3437,11 @@ function RecordsView({ data, update, setToast }) {
       let status = "absent";
       if (recs.length > 0) status = recs.some((r) => !r.clockOut) ? "incomplete" : "complete";
       let offInfo = null;
+      let closureLabel = null;
+      if (status === "absent") {
+        closureLabel = closureLabelFor(boardDate, w.siteId, data.closurePeriods);
+        if (closureLabel) status = "closure";
+      }
       if (status === "absent") {
         const matches = (transfers || []).filter((x) => x.fromWorkerId === w.id && x.date === boardDate && x.status === "approved");
         if (matches.length > 0) {
@@ -3436,12 +3451,12 @@ function RecordsView({ data, update, setToast }) {
         }
       }
       const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
-      return { w, recs, status, siteNames, offInfo };
+      return { w, recs, status, siteNames, offInfo, closureLabel };
     }).sort((a, b) => {
-      const order = { incomplete: 0, offNoRequest: 1, complete: 2, offRequested: 3, absent: 4 };
+      const order = { incomplete: 0, offNoRequest: 1, complete: 2, offRequested: 3, closure: 4, absent: 5 };
       return order[a.status] - order[b.status] || a.w.name.localeCompare(b.w.name);
     });
-  }, [boardOpen, boardDate, workers, records, transfers]);
+  }, [boardOpen, boardDate, workers, records, transfers, data.closurePeriods]);
 
   const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
   const [markOffSubs, setMarkOffSubs] = useState([""]); // 대신 근무한 사람 workerId 목록
@@ -3780,11 +3795,12 @@ function RecordsView({ data, update, setToast }) {
               </button>
             </div>
 
-            <div className="grid grid-cols-4 gap-1.5 mb-3">
+            <div className="grid gap-1.5 mb-3" style={{ gridTemplateColumns: `repeat(${boardRows.some((r) => r.status === "closure") ? 5 : 4}, 1fr)` }}>
               {[
                 ["complete", "정상 완료", ST.complete, boardRows.filter((r) => r.status === "complete").length],
                 ["incomplete", "퇴근 안 함", ST.incomplete, boardRows.filter((r) => r.status === "incomplete").length],
                 ["off", "휴무", ST.offRequested, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest").length],
+                ...(boardRows.some((r) => r.status === "closure") ? [["closure", "휴무기간", "#0369A1", boardRows.filter((r) => r.status === "closure").length]] : []),
                 ["absent", "결근/미출근", ST.absent, boardRows.filter((r) => r.status === "absent").length],
               ].map(([k, l, col, n]) => (
                 <div key={k} style={{ background: C.tile, padding: "10px 6px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
@@ -3796,13 +3812,14 @@ function RecordsView({ data, update, setToast }) {
 
             {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {boardRows.map(({ w, recs, status, siteNames, offInfo }) => {
+              {boardRows.map(({ w, recs, status, siteNames, offInfo, closureLabel }) => {
                 const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
                   complete: { color: ST.complete, label: "정상 완료" },
                   incomplete: { color: ST.incomplete, label: "퇴근 안 함" },
                   offRequested: { color: ST.offRequested, label: "휴무(양도 요청됨)" },
                   offNoRequest: { color: ST.offNoRequest, label: "휴무(요청 없음 · 사후등록)" },
+                  closure: { color: "#0369A1", label: "휴무 기간" },
                   absent: { color: ST.absent, label: "결근/미출근" },
                 };
                 return (
@@ -3820,6 +3837,11 @@ function RecordsView({ data, update, setToast }) {
                         {offInfo?.assignedWorkerNames?.length > 0 && (
                           <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{offInfo.assignedWorkerNames.join("·")}님이 대신 근무</div>
                         )}
+                      </div>
+                    ) : status === "closure" ? (
+                      <div style={{ marginLeft: 17 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: statusInfo[status].color }}>🏫 {closureLabel} 기간</div>
+                        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>이 기간엔 원래 쉬는 날이라 결근으로 잡히지 않아요.</div>
                       </div>
                     ) : recs.length === 0 ? (
                       <div style={{ marginLeft: 17 }}>
@@ -4656,6 +4678,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             const dateKey = `${y}-${pad(m + 1)}-${pad(d)}`;
             const status = cellStatus(dateKey);
             const holiday = isHoliday(dateKey, settings);
+            const closureLabel = closureLabelFor(dateKey, worker.siteId, data.closurePeriods);
             const isToday = dateKey === todayKey;
             const isSel = dateKey === selDate;
             const bg = cellColors[status] || C.tile;
@@ -4671,6 +4694,9 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                 {holiday && (
                   <div style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: 999, background: status === "none" ? C.red : "#fff" }} />
                 )}
+                {closureLabel && (
+                  <div style={{ position: "absolute", top: 1, right: 2, fontSize: 8 }}>🏫</div>
+                )}
               </button>
             );
           })}
@@ -4682,6 +4708,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.incomplete, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>퇴근 안 누름</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: C.tile, border: `1px solid ${C.line}`, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>기록 없음</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 8, height: 8, borderRadius: 999, background: ST.holiday }} /><span style={{ fontSize: 11, color: C.sub }}>공휴일(1.5배)</span></div>
+          <div className="flex items-center gap-1"><span style={{ fontSize: 11 }}>🏫</span><span style={{ fontSize: 11, color: C.sub }}>휴무 기간(방학 등)</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.pending, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>승인 대기</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offRequested, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(양도)</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offNoRequest, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(사후등록)</span></div>
@@ -4695,6 +4722,11 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
               {isHoliday(selDate, settings) && (
                 <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: ST.holiday, padding: "2px 6px" }}>
                   공휴일 · {settings.holidayMultiplier || 1.5}배
+                </span>
+              )}
+              {closureLabelFor(selDate, worker.siteId, data.closurePeriods) && (
+                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "2px 6px" }}>
+                  🏫 {closureLabelFor(selDate, worker.siteId, data.closurePeriods)}
                 </span>
               )}
             </div>
@@ -5369,6 +5401,26 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [addrState, setAddrState] = useState("idle"); // idle | loading | done | fail
   const [addrResults, setAddrResults] = useState([]);
   const [manualBusy, setManualBusy] = useState(false);
+  const [closureEdit, setClosureEdit] = useState(null);
+  const openNewClosure = () => setClosureEdit({ id: null, label: "", startDate: dKey(new Date()), endDate: dKey(new Date()), siteIds: [] });
+  const saveClosure = () => {
+    if (!closureEdit.label.trim()) { setToast("이름을 입력해 주세요 (예: 겨울방학)"); return; }
+    if (!closureEdit.startDate || !closureEdit.endDate) { setToast("기간을 입력해 주세요"); return; }
+    if (closureEdit.startDate > closureEdit.endDate) { setToast("종료일이 시작일보다 늦어야 해요"); return; }
+    const c = { id: closureEdit.id || uid(), label: closureEdit.label.trim(), startDate: closureEdit.startDate, endDate: closureEdit.endDate, siteIds: closureEdit.siteIds };
+    update((d) => ({
+      ...d,
+      closurePeriods: closureEdit.id ? (d.closurePeriods || []).map((x) => (x.id === c.id ? c : x)) : [...(d.closurePeriods || []), c],
+    }));
+    setToast("휴무 기간을 저장했습니다");
+    setClosureEdit(null);
+  };
+  const removeClosure = (id) => {
+    if (!window.confirm("이 휴무 기간을 삭제할까요?")) return;
+    update((d) => ({ ...d, closurePeriods: (d.closurePeriods || []).filter((x) => x.id !== id) }));
+    setClosureEdit(null);
+    setToast("삭제했습니다");
+  };
   const uploadManualFile = async (siteId, siteName, file) => {
     if (!file) return;
     if (file.size > 15 * 1024 * 1024) { setToast("파일이 너무 커요 (최대 15MB)"); return; }
@@ -5705,6 +5757,73 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           )}
         </Tile>
       </Sec>
+
+      {/* 휴무 기간(방학 등) 관리 */}
+      <Sec title="휴무 기간 · 방학 등" right={
+        <button onClick={openNewClosure} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
+        <Tile>
+          <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+            공휴일과는 별개로, 학원 방학처럼 <b style={{ color: C.text }}>특정 현장(또는 전체)이 통째로 쉬는 기간</b>을 미리 등록해두면, 그 기간엔 캘린더와 출근 현황판에 "휴무 기간"으로 표시되고 결근으로 잡히지 않아요. 급여 배율은 붙지 않아요.
+          </div>
+        </Tile>
+        {(data.closurePeriods || []).length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 휴무 기간이 없습니다.</div></Tile>}
+        {(data.closurePeriods || []).map((c) => (
+          <Tile key={c.id} onClick={() => setClosureEdit({ ...c })} style={{ padding: "12px 14px" }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.label}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 2, fontFamily: MONO }}>
+                  {c.startDate} ~ {c.endDate} · {(!c.siteIds || c.siteIds.length === 0) ? "전체 현장" : c.siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}
+                </div>
+              </div>
+              <Pencil size={14} color={C.sub} />
+            </div>
+          </Tile>
+        ))}
+      </Sec>
+
+      <Modal open={!!closureEdit} onClose={() => setClosureEdit(null)}>
+        {closureEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무 기간 {closureEdit.id ? "수정" : "추가"}</div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="이름">
+                <input value={closureEdit.label} onChange={(e) => setClosureEdit((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="예: 겨울방학" style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="시작일">
+                  <input type="date" value={closureEdit.startDate} onChange={(e) => setClosureEdit((f) => ({ ...f, startDate: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="종료일">
+                  <input type="date" value={closureEdit.endDate} onChange={(e) => setClosureEdit((f) => ({ ...f, endDate: e.target.value }))} style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="적용 현장 (비워두면 전체 현장)">
+                <div className="flex flex-wrap gap-1.5">
+                  {sites.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>등록된 현장이 없습니다.</div>}
+                  {sites.map((s) => {
+                    const on = (closureEdit.siteIds || []).includes(s.id);
+                    return (
+                      <button key={s.id} onClick={() => setClosureEdit((f) => ({
+                        ...f, siteIds: on ? f.siteIds.filter((x) => x !== s.id) : [...(f.siteIds || []), s.id],
+                      }))}
+                        style={{ padding: "7px 11px", fontSize: 12.5, fontWeight: 800, background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub }}>
+                        {s.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              {closureEdit.id ? <Btn kind="danger" full onClick={() => removeClosure(closureEdit.id)}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
+                : <Btn kind="ghost" full onClick={() => setClosureEdit(null)}>취소</Btn>}
+              <Btn full onClick={saveClosure}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* 공휴일 관리 */}
       <Sec title="공휴일 · 휴일수당">
