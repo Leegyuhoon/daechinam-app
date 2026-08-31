@@ -1100,6 +1100,21 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
     }
     // eslint-disable-next-line
   }, [worker?.id, today]);
+  // 지금 나에게 해당되는(노출 기간 중인) 공지 전체 — 팝업을 한번 닫아도 언제든 다시 볼 수 있게
+  const myActiveNotices = useMemo(() => {
+    if (!worker) return [];
+    const myWorkerSiteIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
+    return (data.notices || []).filter((n) => {
+      if (!n.active) return false;
+      if (today < n.startDate || today > n.endDate) return false;
+      if (n.audience === "custom" && !(n.workerIds || []).includes(worker.id)) return false;
+      if (n.audience === "site" && !(n.siteIds || []).some((id) => myWorkerSiteIds.includes(id))) return false;
+      return true;
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [worker, data.notices, today]);
+  const [noticeListOpen, setNoticeListOpen] = useState(false);
+  const [noticeReadViewer, setNoticeReadViewer] = useState(null);
+
   const dismissNotice = () => {
     if (noticeShown) {
       try {
@@ -1381,8 +1396,18 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         )}
       </div>
 
+      {/* 공지사항 다시 보기 */}
+      {myActiveNotices.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
+          <button onClick={() => setNoticeListOpen(true)} className="w-full flex items-center justify-center gap-2 relative"
+            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
+            <Bell size={15} /> 공지사항 ({myActiveNotices.length})
+          </button>
+        </div>
+      )}
+
       {/* 내 출퇴근 캘린더 */}
-      <div className="w-full" style={{ maxWidth: 320, marginTop: 22 }}>
+      <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
         <button onClick={() => setCalOpen(true)} className="w-full flex items-center justify-center gap-2"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
           <CalendarDays size={15} /> 내 출퇴근 캘린더
@@ -2020,7 +2045,7 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
         {noticeShown && (
           <>
             <div className="flex items-center gap-2" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
-              <Bell size={13} /> 공지사항
+              <Bell size={13} /> 공지사항 · {noticeShown.createdByName || "관리자"}
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 8, lineHeight: 1.35 }}>{noticeShown.title}</div>
             {noticeShown.message && (
@@ -2028,6 +2053,42 @@ function ClockTab({ data, update, dev, now, setToast, goTab, onRevealAdmin, invi
             )}
             <div className="mt-5">
               <Btn full onClick={dismissNotice}>확인했어요{noticeQueue.length > 0 ? ` (다음 공지 ${noticeQueue.length}건)` : ""}</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 공지사항 목록 (언제든 다시 보기) */}
+      <Modal open={noticeListOpen} onClose={() => setNoticeListOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>공지사항</div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>지금 나에게 해당되는 공지예요.</div>
+        <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
+          {myActiveNotices.map((n) => (
+            <Tile key={n.id} onClick={() => { setNoticeListOpen(false); setNoticeReadViewer(n); }} style={{ padding: "12px 14px" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{n.title}</div>
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{n.createdByName || "관리자"} · {n.createdAt.slice(0, 10)}</div>
+            </Tile>
+          ))}
+          {myActiveNotices.length === 0 && <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "10px 0" }}>지금 해당되는 공지가 없어요.</div></Tile>}
+        </div>
+      </Modal>
+
+      {/* 공지사항 상세 (다시 보기용) */}
+      <Modal open={!!noticeReadViewer} onClose={() => setNoticeReadViewer(null)}>
+        {noticeReadViewer && (
+          <>
+            <div className="flex items-center gap-2" style={{ color: C.blue, fontSize: 11.5, fontWeight: 800 }}>
+              <Bell size={13} /> 공지사항 · {noticeReadViewer.createdByName || "관리자"}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 8, lineHeight: 1.35 }}>{noticeReadViewer.title}</div>
+            {noticeReadViewer.message && (
+              <div style={{ fontSize: 14, color: C.sub, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{noticeReadViewer.message}</div>
+            )}
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 14, fontFamily: MONO }}>
+              노출 기간 {noticeReadViewer.startDate} ~ {noticeReadViewer.endDate}
+            </div>
+            <div className="mt-5">
+              <Btn full kind="ghost" onClick={() => setNoticeReadViewer(null)}>닫기</Btn>
             </div>
           </>
         )}
