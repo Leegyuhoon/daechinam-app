@@ -267,10 +267,19 @@ function isHoliday(date, settings) {
 
 // 공휴일과는 별개로, "방학 기간"처럼 특정 현장이 통째로 쉬는 기간을 관리자가 미리 설정해둘 수 있음.
 // 1.5배 같은 급여 배율은 없고, 그냥 "이 기간엔 원래 안 나와도 되는 날"이라는 안내용.
+// recurringDays가 있으면 "이 기간 동안, 지정한 요일마다 반복" 방식으로 판정함 (예: 매주 화요일 휴무).
 function closureLabelFor(date, siteId, closurePeriods) {
-  const hit = (closurePeriods || []).find((c) =>
-    date >= c.startDate && date <= c.endDate && (!c.siteIds || c.siteIds.length === 0 || (siteId && c.siteIds.includes(siteId)))
-  );
+  const hit = (closurePeriods || []).find((c) => {
+    if (date < c.startDate || date > c.endDate) return false;
+    if (!c.siteIds || c.siteIds.length === 0 || (siteId && c.siteIds.includes(siteId))) {
+      if (c.recurringDays && c.recurringDays.length > 0) {
+        const dow = parseKey(date).getDay();
+        return c.recurringDays.includes(dow);
+      }
+      return true;
+    }
+    return false;
+  });
   return hit ? hit.label : null;
 }
 
@@ -5406,20 +5415,32 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const dayBefore = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() - 86400000));
   const dayAfter = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() + 86400000));
   const mdLabel = (dateStr) => `${Number(dateStr.slice(5, 7))}월 ${Number(dateStr.slice(8, 10))}일`;
-  const defaultClosureNotice = (label, startDate, endDate) => ({
-    title: `${label} 안내`,
-    message: `${mdLabel(startDate)}부터 ${mdLabel(endDate)}까지 ${label} 기간입니다.\n${mdLabel(dayBefore(startDate))}까지 정상 근무해 주시고, ${mdLabel(dayAfter(endDate))}부터 다시 근무를 시작해 주세요.`,
-  });
+  const defaultClosureNotice = (label, startDate, endDate, recurringDays) => {
+    if (recurringDays && recurringDays.length > 0) {
+      const dayNames = recurringDays.slice().sort().map((d) => WD[d]).join("·");
+      return {
+        title: `${label} 안내`,
+        message: `매주 ${dayNames}요일은 ${label}(으)로 쉽니다.\n적용 기간: ${mdLabel(startDate)} ~ ${mdLabel(endDate)}`,
+      };
+    }
+    return {
+      title: `${label} 안내`,
+      message: `${mdLabel(startDate)}부터 ${mdLabel(endDate)}까지 ${label} 기간입니다.\n${mdLabel(dayBefore(startDate))}까지 정상 근무해 주시고, ${mdLabel(dayAfter(endDate))}부터 다시 근무를 시작해 주세요.`,
+    };
+  };
   const openNewClosure = () => {
     const startDate = dKey(new Date()), endDate = dKey(new Date());
-    setClosureEdit({ id: null, label: "", startDate, endDate, siteIds: [], sendNotice: true, ...defaultClosureNotice("", startDate, endDate) });
+    setClosureEdit({ id: null, label: "", startDate, endDate, siteIds: [], recurringDays: [], sendNotice: true, ...defaultClosureNotice("", startDate, endDate, []) });
   };
   const saveClosure = () => {
     if (!closureEdit.label.trim()) { setToast("이름을 입력해 주세요 (예: 겨울방학)"); return; }
     if (!closureEdit.startDate || !closureEdit.endDate) { setToast("기간을 입력해 주세요"); return; }
     if (closureEdit.startDate > closureEdit.endDate) { setToast("종료일이 시작일보다 늦어야 해요"); return; }
     if (closureEdit.sendNotice && !closureEdit.title.trim()) { setToast("공지 제목을 입력해 주세요"); return; }
-    const c = { id: closureEdit.id || uid(), label: closureEdit.label.trim(), startDate: closureEdit.startDate, endDate: closureEdit.endDate, siteIds: closureEdit.siteIds };
+    const c = {
+      id: closureEdit.id || uid(), label: closureEdit.label.trim(), startDate: closureEdit.startDate, endDate: closureEdit.endDate,
+      siteIds: closureEdit.siteIds, recurringDays: closureEdit.recurringDays || [],
+    };
     update((d) => {
       let next = {
         ...d,
@@ -5431,7 +5452,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           id: uid(), title: closureEdit.title.trim(), message: closureEdit.message.trim(),
           audience: (c.siteIds && c.siteIds.length > 0) ? "site" : "all",
           siteIds: c.siteIds || [], siteName: siteNames.join("·"), workerIds: [],
-          startDate: dKey(new Date()), endDate: c.startDate,
+          startDate: dKey(new Date()), endDate: c.recurringDays?.length > 0 ? c.endDate : c.startDate,
           active: true, createdAt: new Date().toISOString(), createdBy: "admin", createdByName: "관리자",
         }];
       }
@@ -5793,10 +5814,17 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         </Tile>
         {(data.closurePeriods || []).length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 휴무 기간이 없습니다.</div></Tile>}
         {(data.closurePeriods || []).map((c) => (
-          <Tile key={c.id} onClick={() => setClosureEdit({ ...c })} style={{ padding: "12px 14px" }}>
+          <Tile key={c.id} onClick={() => setClosureEdit({ ...c, recurringDays: c.recurringDays || [] })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between">
               <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.label}</div>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.label}</span>
+                  {c.recurringDays?.length > 0 && (
+                    <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "1px 5px" }}>
+                      매주 {c.recurringDays.slice().sort().map((d) => WD[d]).join("·")}
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: 12, color: C.sub, marginTop: 2, fontFamily: MONO }}>
                   {c.startDate} ~ {c.endDate} · {(!c.siteIds || c.siteIds.length === 0) ? "전체 현장" : c.siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}
                 </div>
@@ -5815,23 +5843,62 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Field label="이름">
                 <input value={closureEdit.label} onChange={(e) => {
                   const label = e.target.value;
-                  setClosureEdit((f) => ({ ...f, label, ...(f.sendNotice ? defaultClosureNotice(label, f.startDate, f.endDate) : {}) }));
-                }} placeholder="예: 겨울방학" style={inputStyle} />
+                  setClosureEdit((f) => ({ ...f, label, ...(f.sendNotice ? defaultClosureNotice(label, f.startDate, f.endDate, f.recurringDays) : {}) }));
+                }} placeholder="예: 겨울방학, 화요일 휴진" style={inputStyle} />
               </Field>
+
+              <Field label="휴무 방식">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[["range", "특정 기간 전체"], ["weekly", "매주 반복 요일"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setClosureEdit((f) => {
+                      const recurringDays = k === "weekly" ? (f.recurringDays?.length ? f.recurringDays : [2]) : [];
+                      return { ...f, recurringDays, ...(f.sendNotice ? defaultClosureNotice(f.label, f.startDate, f.endDate, recurringDays) : {}) };
+                    })}
+                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: (k === "weekly" ? (closureEdit.recurringDays?.length > 0) : !(closureEdit.recurringDays?.length > 0)) ? C.aquaDeep : C.tileSoft, color: (k === "weekly" ? (closureEdit.recurringDays?.length > 0) : !(closureEdit.recurringDays?.length > 0)) ? "#fff" : C.sub }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              {closureEdit.recurringDays?.length > 0 && (
+                <Field label="반복 요일 (여러 개 선택 가능)">
+                  <div className="grid grid-cols-7 gap-1">
+                    {WD.map((wd, i) => {
+                      const on = closureEdit.recurringDays.includes(i);
+                      return (
+                        <button key={i} onClick={() => setClosureEdit((f) => {
+                          const recurringDays = on ? f.recurringDays.filter((x) => x !== i) : [...f.recurringDays, i];
+                          return { ...f, recurringDays, ...(f.sendNotice ? defaultClosureNotice(f.label, f.startDate, f.endDate, recurringDays) : {}) };
+                        })}
+                          style={{ padding: "8px 0", fontSize: 12.5, fontWeight: 800, background: on ? C.aquaDeep : C.tileSoft, color: on ? "#fff" : C.sub }}>
+                          {wd}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
-                <Field label="시작일">
+                <Field label={closureEdit.recurringDays?.length > 0 ? "적용 시작일" : "시작일"}>
                   <input type="date" value={closureEdit.startDate} onChange={(e) => {
                     const startDate = e.target.value;
-                    setClosureEdit((f) => ({ ...f, startDate, ...(f.sendNotice ? defaultClosureNotice(f.label, startDate, f.endDate) : {}) }));
+                    setClosureEdit((f) => ({ ...f, startDate, ...(f.sendNotice ? defaultClosureNotice(f.label, startDate, f.endDate, f.recurringDays) : {}) }));
                   }} style={inputStyle} />
                 </Field>
-                <Field label="종료일">
+                <Field label={closureEdit.recurringDays?.length > 0 ? "적용 종료일" : "종료일"}>
                   <input type="date" value={closureEdit.endDate} onChange={(e) => {
                     const endDate = e.target.value;
-                    setClosureEdit((f) => ({ ...f, endDate, ...(f.sendNotice ? defaultClosureNotice(f.label, f.startDate, endDate) : {}) }));
+                    setClosureEdit((f) => ({ ...f, endDate, ...(f.sendNotice ? defaultClosureNotice(f.label, f.startDate, endDate, f.recurringDays) : {}) }));
                   }} style={inputStyle} />
                 </Field>
               </div>
+              {closureEdit.recurringDays?.length > 0 && (
+                <div style={{ fontSize: 11, color: C.sub, marginTop: -6 }}>
+                  이 기간 안에서, 위에서 고른 요일마다 매번 반복 적용돼요. 계속 반복하고 싶으면 종료일을 넉넉히(예: 1년 뒤) 잡아두세요.
+                </div>
+              )}
               <Field label="적용 현장 (비워두면 전체 현장)">
                 <div className="flex flex-wrap gap-1.5">
                   {sites.length === 0 && <div style={{ fontSize: 12.5, color: C.sub }}>등록된 현장이 없습니다.</div>}
@@ -5853,7 +5920,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <input type="checkbox" checked={closureEdit.sendNotice}
                   onChange={(e) => setClosureEdit((f) => ({
                     ...f, sendNotice: e.target.checked,
-                    ...(e.target.checked && !f.title ? defaultClosureNotice(f.label, f.startDate, f.endDate) : {}),
+                    ...(e.target.checked && !f.title ? defaultClosureNotice(f.label, f.startDate, f.endDate, f.recurringDays) : {}),
                   }))} />
                 <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>저장하면서 근무자들에게 공지도 함께 보내기</span>
               </label>
