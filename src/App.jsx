@@ -3281,6 +3281,17 @@ function RecordsView({ data, update, setToast }) {
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
   const [statDetail, setStatDetail] = useState(null); // "times" | "pay" | "ot" | "short" | "outside"
+  const [flagEdit, setFlagEdit] = useState(null); // 현장 밖 퇴근 기록 처리용
+  const saveFlagEdit = () => {
+    if (!flagEdit.inT || !flagEdit.outT) { setToast("출근·퇴근 시간을 입력해 주세요"); return; }
+    const mk = (t) => { const d = parseKey(flagEdit.date); const [h, mi] = t.split(":").map(Number); d.setHours(h, mi, 0, 0); return d.toISOString(); };
+    update((d) => ({
+      ...d,
+      records: d.records.map((r) => (r.id === flagEdit.id ? { ...r, clockIn: mk(flagEdit.inT), clockOut: mk(flagEdit.outT), outFlag: false } : r)),
+    }));
+    setToast("확인 처리했습니다 — 현장 밖 표시가 해제됐어요");
+    setFlagEdit(null);
+  };
   const [siteBrowse, setSiteBrowse] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
   const [boardDate, setBoardDate] = useState(dKey(new Date()));
@@ -3641,13 +3652,17 @@ function RecordsView({ data, update, setToast }) {
                   {inRange.filter((r) => r.outFlag).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                     const w = workers.find((x) => x.id === r.workerId);
                     return (
-                      <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
+                      <button key={r.id} onClick={() => setFlagEdit({ ...r, workerName: w?.name || "알 수 없음", inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "" })}
+                        className="pressable text-left w-full" style={{ background: C.tileSoft, padding: 10 }}>
                         <div className="flex items-center justify-between">
                           <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{w?.name || "알 수 없음"}</span>
                           <span style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>{r.date}</span>
                         </div>
-                        <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>{r.site || "현장 미지정"} · {tstr(r.clockIn)} → {r.clockOut ? tstr(r.clockOut) : "근무 중"}</div>
-                      </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span style={{ fontSize: 12, color: C.sub }}>{r.site || "현장 미지정"} · {tstr(r.clockIn)} → {r.clockOut ? tstr(r.clockOut) : "근무 중"}</span>
+                          <ChevronRight size={14} color={C.sub} />
+                        </div>
+                      </button>
                     );
                   })}
                   {tot.flags === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
@@ -3678,6 +3693,37 @@ function RecordsView({ data, update, setToast }) {
             </>
           );
         })()}
+      </Modal>
+
+      {/* 현장 밖 퇴근 기록 처리 */}
+      <Modal open={!!flagEdit} onClose={() => setFlagEdit(null)}>
+        {flagEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>현장 밖 퇴근 기록 처리</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+              {flagEdit.workerName} · {flagEdit.date} · {flagEdit.site || "현장 미지정"}
+            </div>
+            <div style={{ fontSize: 11.5, color: C.amber, marginTop: 8, lineHeight: 1.5, background: "#FFF4E0", padding: 10 }}>
+              이 근무자는 현장 반경 밖에서 출근 또는 퇴근 버튼을 눌렀어요. 실제 시간을 확인하고 필요하면 수정한 뒤, 아래에서 확인 처리해 주세요.
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <Field label="출근 시간">
+                <input type="time" value={flagEdit.inT} onChange={(e) => setFlagEdit((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} />
+              </Field>
+              <Field label="퇴근 시간">
+                <input type="time" value={flagEdit.outT} onChange={(e) => setFlagEdit((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setFlagEdit(null)}>나중에</Btn>
+              <Btn full onClick={saveFlagEdit}>확인 처리하기</Btn>
+            </div>
+            <button onClick={() => { setStatDetail(null); setFlagEdit(null); setDetail(workers.find((w) => w.name === flagEdit.workerName)?.id); }}
+              className="w-full mt-3" style={{ fontSize: 12, color: C.sub, fontWeight: 700, textAlign: "center" }}>
+              이 근무자의 전체 기록 보러가기
+            </button>
+          </>
+        )}
       </Modal>
 
       <div className="px-4 mt-5">
