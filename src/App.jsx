@@ -719,21 +719,40 @@ export default function App() {
     })();
   }, []);
 
+  const lastLocalWriteRef = useRef(0);
   const update = useCallback(async (mut) => {
-    const next = typeof mut === "function" ? mut(dataRef.current) : mut;
-    dataRef.current = next; setData(next);
-    try { await saveShared(next); }
-    catch (e) { setToast("저장 실패 — 인터넷 연결을 확인해 주세요"); }
+    // 화면은 일단 즉시 반응하도록 지금 알고 있는 내용 기준으로 먼저 반영(빠른 반응)
+    const optimistic = typeof mut === "function" ? mut(dataRef.current) : mut;
+    dataRef.current = optimistic; setData(optimistic);
+    lastLocalWriteRef.current = Date.now();
+    // 실제 서버에 쓰기 직전엔, 다른 기기(근무자 폰 등)가 그 사이에 저장했을 수 있는 최신 내용을
+    // 다시 받아와서 그 위에 내 변경사항을 다시 적용함 — 이렇게 해야 서로 덮어쓰기로 사라지는 걸 막을 수 있음.
+    try {
+      let base = optimistic;
+      try {
+        const latest = await loadShared();
+        if (latest) base = migrate(latest);
+      } catch (e) {}
+      const finalNext = typeof mut === "function" ? mut(base) : mut;
+      dataRef.current = finalNext; setData(finalNext);
+      await saveShared(finalNext);
+    } catch (e) {
+      setToast("저장 실패 — 인터넷 연결을 확인해 주세요");
+    }
   }, []);
 
   // 출근·퇴근처럼 "실제로 저장됐는지"가 중요한 동작 전용 — 저장이 서버에 확인된 뒤에만 화면을 바꿈.
-  // (일반 update는 화면부터 먼저 바꾸고 나중에 저장하는 방식이라 반응은 빠르지만,
-  //  신호가 약할 때 저장이 조용히 실패하면 나중에 앱이 되돌리면서 "다시 눌러라"처럼 보일 수 있음)
   const saveConfirmed = useCallback(async (mut) => {
-    const next = typeof mut === "function" ? mut(dataRef.current) : mut;
     try {
+      let base = dataRef.current;
+      try {
+        const latest = await loadShared();
+        if (latest) base = migrate(latest);
+      } catch (e) {}
+      const next = typeof mut === "function" ? mut(base) : mut;
       await saveShared(next);
       dataRef.current = next; setData(next);
+      lastLocalWriteRef.current = Date.now();
       return true;
     } catch (e) {
       setToast("저장에 실패했어요 — 인터넷 연결을 확인하고 다시 눌러주세요");
@@ -742,7 +761,10 @@ export default function App() {
   }, []);
 
   // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
+  // 단, 방금 이 화면에서 직접 저장한 지 얼마 안 됐으면 건너뜀 — 저장이 서버에 완전히 반영되기 전에
+  // 자동 새로고침이 옛날 버전으로 덮어써서 방금 등록한 내용이 사라지는 문제를 막기 위함.
   const refreshShared = useCallback(async () => {
+    if (Date.now() - lastLocalWriteRef.current < 15000) return;
     try {
       const r = await loadShared();
       if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
