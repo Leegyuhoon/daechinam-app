@@ -5402,17 +5402,42 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [addrResults, setAddrResults] = useState([]);
   const [manualBusy, setManualBusy] = useState(false);
   const [closureEdit, setClosureEdit] = useState(null);
-  const openNewClosure = () => setClosureEdit({ id: null, label: "", startDate: dKey(new Date()), endDate: dKey(new Date()), siteIds: [] });
+  // 시작일 하루 전 / 종료일 하루 뒤 날짜 계산 (며칠까지 근무, 며칠부터 재개 문구용)
+  const dayBefore = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() - 86400000));
+  const dayAfter = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() + 86400000));
+  const mdLabel = (dateStr) => `${Number(dateStr.slice(5, 7))}월 ${Number(dateStr.slice(8, 10))}일`;
+  const defaultClosureNotice = (label, startDate, endDate) => ({
+    title: `${label} 안내`,
+    message: `${mdLabel(startDate)}부터 ${mdLabel(endDate)}까지 ${label} 기간입니다.\n${mdLabel(dayBefore(startDate))}까지 정상 근무해 주시고, ${mdLabel(dayAfter(endDate))}부터 다시 근무를 시작해 주세요.`,
+  });
+  const openNewClosure = () => {
+    const startDate = dKey(new Date()), endDate = dKey(new Date());
+    setClosureEdit({ id: null, label: "", startDate, endDate, siteIds: [], sendNotice: true, ...defaultClosureNotice("", startDate, endDate) });
+  };
   const saveClosure = () => {
     if (!closureEdit.label.trim()) { setToast("이름을 입력해 주세요 (예: 겨울방학)"); return; }
     if (!closureEdit.startDate || !closureEdit.endDate) { setToast("기간을 입력해 주세요"); return; }
     if (closureEdit.startDate > closureEdit.endDate) { setToast("종료일이 시작일보다 늦어야 해요"); return; }
+    if (closureEdit.sendNotice && !closureEdit.title.trim()) { setToast("공지 제목을 입력해 주세요"); return; }
     const c = { id: closureEdit.id || uid(), label: closureEdit.label.trim(), startDate: closureEdit.startDate, endDate: closureEdit.endDate, siteIds: closureEdit.siteIds };
-    update((d) => ({
-      ...d,
-      closurePeriods: closureEdit.id ? (d.closurePeriods || []).map((x) => (x.id === c.id ? c : x)) : [...(d.closurePeriods || []), c],
-    }));
-    setToast("휴무 기간을 저장했습니다");
+    update((d) => {
+      let next = {
+        ...d,
+        closurePeriods: closureEdit.id ? (d.closurePeriods || []).map((x) => (x.id === c.id ? c : x)) : [...(d.closurePeriods || []), c],
+      };
+      if (closureEdit.sendNotice) {
+        const siteNames = (c.siteIds && c.siteIds.length > 0) ? c.siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
+        next.notices = [...(d.notices || []), {
+          id: uid(), title: closureEdit.title.trim(), message: closureEdit.message.trim(),
+          audience: (c.siteIds && c.siteIds.length > 0) ? "site" : "all",
+          siteIds: c.siteIds || [], siteName: siteNames.join("·"), workerIds: [],
+          startDate: dKey(new Date()), endDate: c.startDate,
+          active: true, createdAt: new Date().toISOString(), createdBy: "admin", createdByName: "관리자",
+        }];
+      }
+      return next;
+    });
+    setToast(closureEdit.sendNotice ? "휴무 기간을 저장하고 공지도 보냈습니다" : "휴무 기간을 저장했습니다");
     setClosureEdit(null);
   };
   const removeClosure = (id) => {
@@ -5788,15 +5813,23 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>휴무 기간 {closureEdit.id ? "수정" : "추가"}</div>
             <div className="mt-4 flex flex-col gap-2.5">
               <Field label="이름">
-                <input value={closureEdit.label} onChange={(e) => setClosureEdit((f) => ({ ...f, label: e.target.value }))}
-                  placeholder="예: 겨울방학" style={inputStyle} />
+                <input value={closureEdit.label} onChange={(e) => {
+                  const label = e.target.value;
+                  setClosureEdit((f) => ({ ...f, label, ...(f.sendNotice ? defaultClosureNotice(label, f.startDate, f.endDate) : {}) }));
+                }} placeholder="예: 겨울방학" style={inputStyle} />
               </Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="시작일">
-                  <input type="date" value={closureEdit.startDate} onChange={(e) => setClosureEdit((f) => ({ ...f, startDate: e.target.value }))} style={inputStyle} />
+                  <input type="date" value={closureEdit.startDate} onChange={(e) => {
+                    const startDate = e.target.value;
+                    setClosureEdit((f) => ({ ...f, startDate, ...(f.sendNotice ? defaultClosureNotice(f.label, startDate, f.endDate) : {}) }));
+                  }} style={inputStyle} />
                 </Field>
                 <Field label="종료일">
-                  <input type="date" value={closureEdit.endDate} onChange={(e) => setClosureEdit((f) => ({ ...f, endDate: e.target.value }))} style={inputStyle} />
+                  <input type="date" value={closureEdit.endDate} onChange={(e) => {
+                    const endDate = e.target.value;
+                    setClosureEdit((f) => ({ ...f, endDate, ...(f.sendNotice ? defaultClosureNotice(f.label, f.startDate, endDate) : {}) }));
+                  }} style={inputStyle} />
                 </Field>
               </div>
               <Field label="적용 현장 (비워두면 전체 현장)">
@@ -5815,11 +5848,39 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   })}
                 </div>
               </Field>
+
+              <label className="flex items-center gap-2 mt-1" style={{ cursor: "pointer" }}>
+                <input type="checkbox" checked={closureEdit.sendNotice}
+                  onChange={(e) => setClosureEdit((f) => ({
+                    ...f, sendNotice: e.target.checked,
+                    ...(e.target.checked && !f.title ? defaultClosureNotice(f.label, f.startDate, f.endDate) : {}),
+                  }))} />
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>저장하면서 근무자들에게 공지도 함께 보내기</span>
+              </label>
+
+              {closureEdit.sendNotice && (
+                <div style={{ background: C.tileSoft, padding: 12 }}>
+                  <Field label="공지 제목">
+                    <input value={closureEdit.title} onChange={(e) => setClosureEdit((f) => ({ ...f, title: e.target.value }))} style={{ ...inputStyle, background: C.tile }} />
+                  </Field>
+                  <div className="mt-2.5">
+                    <Field label="공지 내용 (자동으로 채워드렸어요, 자유롭게 수정하세요)">
+                      <textarea value={closureEdit.message} onChange={(e) => setClosureEdit((f) => ({ ...f, message: e.target.value }))}
+                        rows={4} style={{ ...inputStyle, background: C.tile, resize: "none" }} />
+                    </Field>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>
+                    {(closureEdit.siteIds && closureEdit.siteIds.length > 0)
+                      ? `적용 현장(${closureEdit.siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}) 근무자에게만 전달돼요.`
+                      : "전체 근무자에게 전달돼요."}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               {closureEdit.id ? <Btn kind="danger" full onClick={() => removeClosure(closureEdit.id)}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
                 : <Btn kind="ghost" full onClick={() => setClosureEdit(null)}>취소</Btn>}
-              <Btn full onClick={saveClosure}>저장</Btn>
+              <Btn full onClick={saveClosure}>{closureEdit.sendNotice ? "저장하고 공지 보내기" : "저장"}</Btn>
             </div>
           </>
         )}
