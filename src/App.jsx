@@ -3894,7 +3894,9 @@ function RecordsView({ data, update, setToast }) {
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
                                 {r.flatPay != null ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>
+                                ) : r.coverForName ? (
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>대신 근무</span>
                                 ) : r.clockOut ? (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 4px" }}>정상 완료</span>
                                 ) : null}
@@ -4465,7 +4467,12 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
-                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신 근무{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
+                      {r.flatPay != null && (
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: p.pending ? ST.pending : ST.extra, padding: "1px 4px" }}>
+                          {p.pending ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}
+                        </span>
+                      )}
+                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: ST.outside, border: `1px solid ${ST.outside}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.text, fontWeight: 700 }}>
@@ -4479,25 +4486,37 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                     {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
                   </div>
                   <div className="text-right" style={{ flexShrink: 0 }}>
-                    <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
-                    {!p.open && agg.shift && (
+                    {r.flatPay != null ? (
                       <>
-                        <div style={{ marginTop: 3 }}>
-                          {p.blocks > 0 ? (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 5px" }}>추가 {otLabel(p.otMin)}</span>
-                          ) : shortish ? (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.red, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
-                          ) : (
-                            <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>
-                              {p.diffMin === 0 ? "정확" : p.diffMin > 0 ? `+${minStr(p.diffMin)}` : `−${minStr(p.shortMin)}`}
-                            </span>
-                          )}
+                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 1회</div>
+                        <div style={{ marginTop: 4 }}>
+                          <Num size={17} color={p.pending ? "#8B5CF6" : C.coral} weight={900}>{money(r.flatPay)}원</Num>
                         </div>
-                        <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                        {p.pending && <div style={{ fontSize: 9.5, color: "#8B5CF6", fontWeight: 700, marginTop: 2 }}>승인 전(정산 미반영)</div>}
                       </>
-                    )}
-                    {!p.open && !agg.shift && (
-                      <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                    ) : (
+                      <>
+                        <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
+                        {!p.open && agg.shift && (
+                          <>
+                            <div style={{ marginTop: 3 }}>
+                              {p.blocks > 0 ? (
+                                <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 5px" }}>추가 {otLabel(p.otMin)}</span>
+                              ) : shortish ? (
+                                <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.red, padding: "2px 5px" }}>부족 −{minStr(p.shortMin)}</span>
+                              ) : (
+                                <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>
+                                  {p.diffMin === 0 ? "정확" : p.diffMin > 0 ? `+${minStr(p.diffMin)}` : `−${minStr(p.shortMin)}`}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                          </>
+                        )}
+                        {!p.open && !agg.shift && (
+                          <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                        )}
+                      </>
                     )}
                     <Pencil size={12} color={C.line} style={{ marginLeft: "auto", marginTop: 6 }} />
                   </div>
@@ -4803,9 +4822,10 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>{r.isExtra ? "대체 추가분" : "일회성"}</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>}
                             {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
-                            {!p.flat && r.clockOut && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 5px" }}>정상 완료</span>}
+                            {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>대신 근무</span>}
+                            {!p.flat && !r.coverForName && r.clockOut && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 5px" }}>정상 완료</span>}
                           </div>
                           {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
