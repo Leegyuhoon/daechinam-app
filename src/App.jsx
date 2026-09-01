@@ -3799,32 +3799,47 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                   })}
                   {tot.flags === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
                 </div>
+              ) : statDetail === "cover" ? (
+                <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+                  {inRange.filter((r) => r.flatPay != null || !!r.coverForName).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                    const w = workers.find((x) => x.id === r.workerId);
+                    const p = calcPay(r, w, settings);
+                    const amt = r.flatPay != null ? r.flatPay : p.pay;
+                    return (
+                      <button key={r.id} onClick={() => { setStatDetail(null); setDetail(r.workerId); }}
+                        className="pressable text-left w-full" style={{ background: C.tileSoft, padding: 10 }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{w?.name || "알 수 없음"}</span>
+                          <span style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>{r.date}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span style={{ fontSize: 12, color: C.sub }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</span>
+                          <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{money(amt)}원</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {tot.coverCount === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
+                </div>
               ) : (
                 <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
                   {rows
-                    .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : statDetail === "cover" ? r.coverCount > 0 : true)
-                    .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : statDetail === "cover" ? b.coverPay - a.coverPay : b.net - a.net)
+                    .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true)
+                    .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : b.net - a.net)
                     .map((r) => (
                       <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
                         <div className="flex items-center justify-between">
                           <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
-                          {statDetail === "cover" ? (
-                            <div className="flex items-center gap-2">
-                              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{r.coverCount}회 · {minStr(r.coverMin)}</span>
-                              <span style={{ fontSize: 17, fontWeight: 900, color: C.coral }}>{money(r.coverPay)}원</span>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
-                              {statDetail === "pay" ? `${money(r.pay)}원`
-                                : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
-                                : statDetail === "short" ? `−${minStr(r.shortMin)}`
-                                : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
-                            </span>
-                          )}
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
+                            {statDetail === "pay" ? `${money(r.pay)}원`
+                              : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
+                              : statDetail === "short" ? `−${minStr(r.shortMin)}`
+                              : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
+                          </span>
                         </div>
                       </Tile>
                     ))}
-                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : statDetail === "cover" ? r.coverCount > 0 : true).length === 0 && (
+                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true).length === 0 && (
                     <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "8px 0" }}>해당 근무자가 없어요.</div></Tile>
                   )}
                 </div>
@@ -4045,7 +4060,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>{q ? "검색 결과가 없습니다." : "등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요."}</div></Tile>
             )}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags }) => (
+              {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags, coverCount, coverMin, coverPay }) => (
                 <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
@@ -4057,6 +4072,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                       {records.some((r) => r.workerId === w.id && r.flatPay != null && r.oneOffStatus === "pending") && (
                         <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px" }}>승인 대기</span>
                       )}
+                      {coverCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무 {coverCount}</span>}
                       {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -4076,6 +4092,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                 {blocks > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>추가 {blocks}회</span>}
                 {shortMin > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.red, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>−{minStr(shortMin)}</span>}
               </div>
+              {coverCount > 0 && (
+                <div className="mt-1.5" style={{ fontSize: 11, color: C.text, fontWeight: 700, background: C.tileSoft, padding: "4px 8px" }}>
+                  대신 근무 {coverCount}회 · {minStr(coverMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(coverPay)}원</span> (실근무시간과 별도)
+                </div>
+              )}
             </Tile>
           ))}
             </div>
