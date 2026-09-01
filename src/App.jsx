@@ -3432,6 +3432,21 @@ function RecordsView({ data, update, setToast }) {
     const offNames = coverForm.offWorkerIds.map((id) => workers.find((w) => w.id === id)?.name).filter(Boolean).join("·");
     const noteBase = offNames ? `${offNames}님 휴무 대체 근무분` : "휴무 대체 근무분";
 
+    // "덮어쓰기(순수 대체근무만)"를 고른 사람이 있으면, 지금 사라질 기존 금액을 보여주고 한 번 더 확인받음 (실수 방지)
+    const overwriteTargets = [];
+    coverValidParts.forEach((p) => {
+      if (!p.pure) return;
+      const existing = data.records.find((r) => r.workerId === p.workerId && r.date === boardDate && r.flatPay == null && r.clockOut);
+      if (existing) {
+        const w = workers.find((x) => x.id === p.workerId);
+        overwriteTargets.push({ name: w?.name || "?", amount: calcPay(existing, w, settings).pay });
+      }
+    });
+    if (overwriteTargets.length > 0) {
+      const msg = overwriteTargets.map((t) => `${t.name}님의 기존 ${money(t.amount)}원`).join(", ");
+      if (!window.confirm(`⚠ "순수 대체근무만"으로 체크된 사람 중 ${msg}이(가) 이 배분액으로 완전히 대체돼요.\n\n원래 정상 근무분도 같이 남기고 싶으면 취소한 뒤 체크를 해제해 주세요.\n\n정말 이대로 진행할까요?`)) return;
+    }
+
     const mkTime = () => { const d = parseKey(boardDate); d.setHours(9, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
     let overwrittenCount = 0;
     update((d) => {
@@ -3445,7 +3460,7 @@ function RecordsView({ data, update, setToast }) {
             overwrittenCount++;
             recs[existingIdx] = {
               ...recs[existingIdx],
-              flatPay: coverShares[i], oneOffStatus: "approved",
+              flatPay: coverShares[i], oneOffStatus: "approved", isExtra: true,
               note: (recs[existingIdx].note ? recs[existingIdx].note + " · " : "") + `${noteBase}(정상 계산 대신 이 금액으로 확정)`,
             };
             return;
@@ -3457,7 +3472,7 @@ function RecordsView({ data, update, setToast }) {
           id: uid(), workerId: p.workerId, date: boardDate, site: site.name, siteId: site.id,
           clockIn: t.in, clockOut: t.out,
           flatPay: coverShares[i], oneOffStatus: "approved",
-          breakMinutes: null, note: noteBase, manual: true, isExtra: !p.pure,
+          breakMinutes: null, note: noteBase, manual: true, isExtra: true,
           inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
         });
       });
@@ -3713,7 +3728,7 @@ function RecordsView({ data, update, setToast }) {
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center gap-3 mt-1">
-              <Num size={19} color={ST.cover}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <Num size={19} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
               <span style={{ fontSize: 14, fontWeight: 800, color: C.coral }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
@@ -3767,7 +3782,7 @@ function RecordsView({ data, update, setToast }) {
                       <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
                         <div className="flex items-center justify-between">
                           <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
-                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : statDetail === "cover" ? ST.cover : C.text }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
                             {statDetail === "pay" ? `${money(r.pay)}원`
                               : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
                               : statDetail === "short" ? `−${minStr(r.shortMin)}`
