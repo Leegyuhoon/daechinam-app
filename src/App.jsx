@@ -574,6 +574,29 @@ function __ensureBackListener() {
     }
   });
 }
+// 화면(전체화면 오버레이) 자체의 스크롤뿐 아니라, 그 위로 실제로 스크롤되고 있는
+// 상위 컨테이너들까지 전부 맨 위로 되돌림. position:absolute 오버레이는 CSS상
+// "가장 가까운 position 지정된 조상" 기준으로 배치되는데, 그 조상이 스크롤된 상태였다면
+// 오버레이 자신의 스크롤만 0으로 만들어도 화면엔 스크롤된 위치가 그대로 보일 수 있어서 필요함.
+function resetScrollChain(el) {
+  if (!el) return;
+  let node = el;
+  let depth = 0;
+  while (node && depth < 8) {
+    if (node.scrollTop > 0) node.scrollTop = 0;
+    node = node.parentElement;
+    depth++;
+  }
+  window.scrollTo(0, 0);
+}
+function useScrollTop(ref, deps) {
+  useEffect(() => {
+    resetScrollChain(ref.current);
+    const raf = requestAnimationFrame(() => resetScrollChain(ref.current));
+    // eslint-disable-next-line
+  }, deps);
+}
+
 function useBackClose(open, onClose) {
   useEffect(() => {
     if (!open) return;
@@ -4375,7 +4398,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   };
 
   const scrollRef = useRef(null);
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [workerId, mode, anchor]);
+  useScrollTop(scrollRef, [workerId, mode, anchor]);
 
   return (
     <div ref={scrollRef} className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
@@ -4763,7 +4786,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
   };
 
   const calScrollRef = useRef(null);
-  useEffect(() => { if (calScrollRef.current) calScrollRef.current.scrollTop = 0; }, [workerId]);
+  useScrollTop(calScrollRef, [workerId]);
 
   if (!worker) return null;
 
@@ -5024,7 +5047,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
 
 const PaperShell = ({ title, onClose, actions, children }) => {
   const scrollRef = useRef(null);
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, []);
+  useScrollTop(scrollRef, []);
   return (
     <div ref={scrollRef} className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.tileSoft }}>
       <style>{PRINT_CSS}</style>
