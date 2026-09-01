@@ -840,7 +840,7 @@ export default function App() {
         background: `radial-gradient(120% 60% at 50% 0%, ${C.bgSoft} 0%, ${C.bg} 55%)`,
       }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
+          {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} onRefresh={refreshShared} />}
           {tab === "admin" && (
             unlocked
               ? <AdminArea data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
@@ -892,7 +892,7 @@ export default function App() {
 }
 
 /* ─────────────────────────  근무자 화면  ───────────────────────── */
-function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRevealAdmin, inviteInfo }) {
+function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRevealAdmin, inviteInfo, onRefresh }) {
   const { workers, sites, records, settings } = data;
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
@@ -1429,9 +1429,18 @@ function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRe
   const R = 112, CIRC = 2 * Math.PI * R;
   const canGo = confirm === "out" || chk.state === "inside" || chk.state === "nogeo";
 
+  const [wRefreshing, setWRefreshing] = useState(false);
+
   return (
     <div className="flex flex-col items-center px-5" style={{ flex: 1, paddingTop: 40, paddingBottom: 32 }}>
-      <Eyebrow dark>{now.getFullYear()}년 {now.getMonth() + 1}월 {now.getDate()}일 {WD[now.getDay()]}요일</Eyebrow>
+      <div className="w-full flex items-center justify-between" style={{ maxWidth: 320 }}>
+        <div style={{ width: 30 }} />
+        <Eyebrow dark>{now.getFullYear()}년 {now.getMonth() + 1}월 {now.getDate()}일 {WD[now.getDay()]}요일</Eyebrow>
+        <button onClick={async () => { setWRefreshing(true); await onRefresh(true); setWRefreshing(false); setToast("최신 내용으로 새로고침했습니다"); }}
+          title="새로고침" style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <RefreshCw size={15} color={C.onDarkSub} className={wRefreshing ? "animate-spin" : ""} />
+        </button>
+      </div>
       <div className="mt-1.5"><Num size={40} color={C.onDark} weight={800}>{pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}</Num></div>
       <div onClick={() => {
         const now2 = Date.now();
