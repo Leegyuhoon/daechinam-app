@@ -4533,7 +4533,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <>
                         <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 1회</div>
                         <div style={{ marginTop: 4 }}>
-                          <Num size={17} color={p.pending ? "#8B5CF6" : C.coral} weight={900}>{money(r.flatPay)}원</Num>
+                          <Num size={13.5} color={p.pending ? "#8B5CF6" : C.coral} weight={800}>{money(r.flatPay)}원</Num>
                         </div>
                         {p.pending && <div style={{ fontSize: 9.5, color: "#8B5CF6", fontWeight: 700, marginTop: 2 }}>승인 전(정산 미반영)</div>}
                       </>
@@ -4541,7 +4541,7 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <>
                         <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 · {hmc(p.net)}</div>
                         <div style={{ marginTop: 4 }}>
-                          <Num size={17} color={C.coral} weight={900}>{money(p.pay)}원</Num>
+                          <Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num>
                         </div>
                       </>
                     ) : (
