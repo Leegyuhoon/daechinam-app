@@ -4787,6 +4787,42 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     setOneOffOpen(false);
   };
 
+  const [calEdit, setCalEdit] = useState(null);
+  const openCalEdit = (r) => setCalEdit({
+    id: r.id, date: r.date, siteId: r.siteId || "",
+    inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
+    breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
+    flatPay: r.flatPay != null ? String(r.flatPay) : "", isFlat: r.flatPay != null,
+  });
+  const [calEditBusy, setCalEditBusy] = useState(false);
+  const saveCalEdit = async () => {
+    setCalEditBusy(true);
+    const mk = (t) => { if (!t) return null; const [h, mi] = t.split(":").map(Number); const d = parseKey(calEdit.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
+    const site = data.sites.find((x) => x.id === calEdit.siteId);
+    const ok = await saveConfirmed((d) => ({
+      ...d,
+      records: d.records.map((r) => (r.id === calEdit.id ? {
+        ...r,
+        site: site?.name || r.site, siteId: site?.id || r.siteId,
+        clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
+        breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
+        note: calEdit.note,
+        ...(calEdit.isFlat ? { flatPay: Number(calEdit.flatPay) || 0 } : {}),
+      } : r)),
+    }));
+    setCalEditBusy(false);
+    if (!ok) return;
+    setCalEdit(null); setToast("기록을 수정했습니다");
+  };
+  const removeCalEdit = async () => {
+    setCalEditBusy(true);
+    const targetId = calEdit.id;
+    const ok = await saveConfirmed((d) => ({ ...d, records: d.records.filter((r) => r.id !== targetId) }));
+    setCalEditBusy(false);
+    if (!ok) return;
+    setCalEdit(null); setToast("기록을 삭제했습니다");
+  };
+
   const [reviewRec, setReviewRec] = useState(null);
   const [reviewForm, setReviewForm] = useState({ siteName: "", inT: "", outT: "", amount: "" });
   const openReview = (r) => {
@@ -4970,7 +5006,12 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                             {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
                             {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 5px" }}>대신 근무</span>}
                           </div>
-                          {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
+                          <div className="flex items-center gap-2">
+                            {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
+                            {isAdmin && (
+                              <button onClick={() => openCalEdit(r)} style={{ flexShrink: 0 }}><Pencil size={13} color={C.sub} /></button>
+                            )}
+                          </div>
                         </div>
                         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
@@ -5042,6 +5083,48 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           <Btn kind="ghost" full disabled={oneOffBusy} onClick={() => setOneOffOpen(false)}>취소</Btn>
           <Btn full disabled={oneOffBusy} onClick={submitOneOff}>{oneOffBusy ? "저장 중…" : "추가하기"}</Btn>
         </div>
+      </Modal>
+
+      {/* 관리자용 - 캘린더 안에서 바로 기록 수정 */}
+      <Modal open={!!calEdit} onClose={() => setCalEdit(null)}>
+        {calEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>기록 수정</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{calEdit.date}</div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="현장">
+                <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                  <option value="">현장 미지정</option>
+                  {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="출근 시간">
+                  <input type="time" value={calEdit.inT} onChange={(e) => setCalEdit((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="퇴근 시간">
+                  <input type="time" value={calEdit.outT} onChange={(e) => setCalEdit((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} />
+                </Field>
+              </div>
+              {calEdit.isFlat ? (
+                <Field label="지급액 (원) — 일회성/대신근무 고정 금액">
+                  <input type="number" value={calEdit.flatPay} onChange={(e) => setCalEdit((f) => ({ ...f, flatPay: e.target.value }))} style={inputStyle} />
+                </Field>
+              ) : (
+                <Field label="휴게시간 (분)">
+                  <input type="number" value={calEdit.breakMinutes} onChange={(e) => setCalEdit((f) => ({ ...f, breakMinutes: e.target.value }))} style={inputStyle} />
+                </Field>
+              )}
+              <Field label="비고">
+                <textarea value={calEdit.note} onChange={(e) => setCalEdit((f) => ({ ...f, note: e.target.value }))} style={{ ...inputStyle, height: 70 }} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="danger" full disabled={calEditBusy} onClick={removeCalEdit}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> {calEditBusy ? "처리 중…" : "삭제"}</span></Btn>
+              <Btn full disabled={calEditBusy} onClick={saveCalEdit}>{calEditBusy ? "저장 중…" : "저장"}</Btn>
+            </div>
+          </>
+        )}
       </Modal>
 
       <Modal open={!!reviewRec} onClose={() => setReviewRec(null)}>
