@@ -4757,11 +4757,21 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
             <div className="mt-1"><Num size={18}>{hmc(weekAgg.net)}</Num></div>
             <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(weekAgg.pay)}원</div>
+            {weekAgg.coverCount > 0 && (
+              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
+                대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}
+              </div>
+            )}
           </div>
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
             <div className="mt-1"><Num size={18}>{hmc(monthAgg.net)}</Num></div>
             <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(monthAgg.pay)}원</div>
+            {monthAgg.coverCount > 0 && (
+              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
+                대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}
+              </div>
+            )}
           </div>
         </div>
 
