@@ -3360,9 +3360,9 @@ function RecordsView({ data, update, setToast }) {
   const [boardDate, setBoardDate] = useState(dKey(new Date()));
 
   const [coverOpen, setCoverOpen] = useState(false);
-  const [coverForm, setCoverForm] = useState({ siteId: "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: true, weight: 1 }] });
+  const [coverForm, setCoverForm] = useState({ siteId: "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: false, weight: 1 }] });
   const openCover = () => {
-    setCoverForm({ siteId: sites[0]?.id || "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: true, weight: 1 }, { workerId: "", pure: true, weight: 1 }] });
+    setCoverForm({ siteId: sites[0]?.id || "", offWorkerIds: [], totalAmount: "200000", participants: [{ workerId: "", pure: false, weight: 1 }, { workerId: "", pure: false, weight: 1 }] });
     setCoverOpen(true);
   };
   // 휴무자를 선택하면 그 사람들의 평소 1일 급여 합계를 총액으로 자동 제안
@@ -3893,7 +3893,11 @@ function RecordsView({ data, update, setToast }) {
                               <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
-                                {r.flatPay != null && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>}
+                                {r.flatPay != null ? (
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : r.isExtra ? "대체 추가분" : r.coverForName ? "대체근무" : "일회성"}</span>
+                                ) : r.clockOut ? (
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 4px" }}>정상 완료</span>
+                                ) : null}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
@@ -4086,7 +4090,10 @@ function RecordsView({ data, update, setToast }) {
                             }} />
                           <span style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.5 }}>
                             이날 <b style={{ color: C.text }}>순수하게 대체근무만</b> 했어요 (본인 정규 근무는 없었음)
-                            <br />체크하면 이미 자동 계산된 출퇴근 금액을 이 배분액으로 바꿔요(이중 지급 방지). 체크 해제하면 본인 정규 근무 금액에 이 배분액을 추가로 더해요.
+                            <br />
+                            <b style={{ color: p.pure ? C.red : C.sub }}>
+                              {p.pure ? "⚠ 체크함: 이미 출퇴근 찍힌 금액이 이 배분액으로 통째로 바뀌어요 (기존 금액은 사라져요)" : "기본값: 본인 정규 근무 금액은 그대로 두고, 이 배분액이 추가로 더해져요"}
+                            </b>
                           </span>
                         </label>
                         {!p.pure && (
@@ -4105,7 +4112,7 @@ function RecordsView({ data, update, setToast }) {
                 );
               })}
             </div>
-            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, { workerId: "", pure: true, weight: 1 }] }))}
+            <button onClick={() => setCoverForm((f) => ({ ...f, participants: [...f.participants, { workerId: "", pure: false, weight: 1 }] }))}
               className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
               <Plus size={13} /> 사람 추가
             </button>
@@ -4782,6 +4789,12 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
               })()
             ) : (
               <>
+                {selRecs.length > 1 && (
+                  <div className="flex items-center justify-between mt-2.5" style={{ background: C.tileSoft, padding: "8px 10px" }}>
+                    <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>이날 총 {selRecs.length}건 합계</span>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{money(selRecs.reduce((sum, r) => sum + calcPay(r, worker, settings).pay, 0))}원</span>
+                  </div>
+                )}
                 <div className="flex flex-col gap-2 mt-2.5">
                   {selRecs.map((r) => {
                     const p = calcPay(r, worker, settings);
@@ -4792,6 +4805,7 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
                             {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>{r.isExtra ? "대체 추가분" : "일회성"}</span>}
                             {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
+                            {!p.flat && r.clockOut && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 5px" }}>정상 완료</span>}
                           </div>
                           {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
