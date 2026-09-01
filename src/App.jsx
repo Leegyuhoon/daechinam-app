@@ -3514,8 +3514,10 @@ function RecordsView({ data, update, setToast }) {
 
   const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
   const [markOffSubs, setMarkOffSubs] = useState([""]); // 대신 근무한 사람 workerId 목록
+  const [markOffReason, setMarkOffReason] = useState("");
   const openMarkOff = (w) => {
     setMarkOffSubs([""]);
+    setMarkOffReason("");
     setMarkOffFor(w);
   };
   const submitMarkOff = () => {
@@ -3538,7 +3540,7 @@ function RecordsView({ data, update, setToast }) {
                 fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
                 toWorkerId: sub?.id || null, toWorkerName: sub?.name || "",
                 toRegistered: true, assignedWorkerId: sub?.id || null, assignedWorkerName: sub?.name || null,
-                startTime: null, endTime: null, message: "",
+                startTime: null, endTime: null, message: markOffReason.trim(),
                 status: "approved", noRequest: true,
                 createdAt: at, respondedAt: at, fulfilledRecordId: null,
               };
@@ -3548,7 +3550,7 @@ function RecordsView({ data, update, setToast }) {
               fromWorkerId: markOffFor.id, fromWorkerName: markOffFor.name,
               toWorkerId: null, toWorkerName: "", toRegistered: false,
               assignedWorkerId: null, assignedWorkerName: null,
-              startTime: null, endTime: null, message: "",
+              startTime: null, endTime: null, message: markOffReason.trim(),
               status: "approved", noRequest: true,
               createdAt: at, respondedAt: at, fulfilledRecordId: null,
             }]),
@@ -4186,6 +4188,11 @@ function RecordsView({ data, update, setToast }) {
               완전히 다른 사람이 왔거나 별도 금액을 주고 싶으면, 근무자 캘린더의 "일회성 근무 추가"를 따로 써주세요.
             </div>
             <div className="mt-4">
+              <Eyebrow>휴무 사유 (선택)</Eyebrow>
+              <textarea value={markOffReason} onChange={(e) => setMarkOffReason(e.target.value)}
+                placeholder="예: 몸살로 인한 갑작스러운 결근" rows={2} className="mt-1.5" style={{ ...inputStyle, resize: "none" }} />
+            </div>
+            <div className="mt-4">
               <Eyebrow>대신 근무한 사람 (기록용 · 있으면 추가, 없으면 비워두세요)</Eyebrow>
               <div className="flex flex-col gap-2 mt-2">
                 {markOffSubs.map((subId, i) => (
@@ -4482,11 +4489,20 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
                         {t.date.slice(5).replace("-", "/")} ({WD[d.getDay()]}) · {t.siteName}{partial ? ` · ${t.startTime}–${t.endTime}` : ""}
                       </div>
-                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 6px" }}>{partial ? "부분 양도" : "휴무 · 양도"}</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: t.noRequest ? ST.offNoRequest : C.blue, padding: "2px 6px" }}>
+                        {partial ? "부분 양도" : t.noRequest ? "휴무 · 사후등록" : "휴무 · 양도"}
+                      </span>
                     </div>
-                    <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
-                      {t.toWorkerName}님이 {partial ? "그 시간대만 " : ""}대신 근무{t.fulfilledRecordId ? " (완료)" : " (예정)"}
-                    </div>
+                    {t.toWorkerName && (
+                      <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
+                        {t.toWorkerName}님이 {partial ? "그 시간대만 " : ""}대신 근무{t.fulfilledRecordId ? " (완료)" : " (예정)"}
+                      </div>
+                    )}
+                    {t.message && (
+                      <div style={{ fontSize: 12, color: C.text, marginTop: 4, background: C.tile, padding: "5px 8px" }}>
+                        사유: {t.message}
+                      </div>
+                    )}
                   </Tile>
                 );
               })}
@@ -5313,9 +5329,12 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             <Eyebrow>이 달 중 양도한 휴무 ({offDays.length}건)</Eyebrow>
             <div style={{ marginTop: 6 }}>
               {offDays.map((t) => (
-                <div key={t.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                  <span>{t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ""}</span>
-                  <span style={{ fontWeight: 700, color: C.blue }}>{t.toWorkerName}님이 대신 근무</span>
+                <div key={t.id} style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                  <div className="flex items-center justify-between">
+                    <span>{t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ""}</span>
+                    <span style={{ fontWeight: 700, color: C.blue }}>{t.toWorkerName ? `${t.toWorkerName}님이 대신 근무` : "휴무"}</span>
+                  </div>
+                  {t.message && <div style={{ fontSize: 11, color: C.text, marginTop: 1 }}>사유: {t.message}</div>}
                 </div>
               ))}
             </div>
