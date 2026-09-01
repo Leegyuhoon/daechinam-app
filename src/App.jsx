@@ -819,7 +819,7 @@ export default function App() {
           {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} />}
           {tab === "admin" && (
             unlocked
-              ? <AdminArea data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
+              ? <AdminArea data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
               : <AdminGate data={data} update={update} setToast={setToast} onPass={() => setUnlocked(true)} />
           )}
         </div>
@@ -2257,7 +2257,7 @@ function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRe
       </Modal>
 
       {calOpen && worker && (
-        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} canAdd={!!worker.canSelfLogOneOff} setToast={setToast} />
+        <AttendanceCalendar data={data} workerId={worker.id} onClose={() => setCalOpen(false)} update={update} saveConfirmed={saveConfirmed} canAdd={!!worker.canSelfLogOneOff} setToast={setToast} />
       )}
 
       {/* 현장 500m 진입/이탈 알림 */}
@@ -2359,7 +2359,7 @@ function AdminGate({ data, update, setToast, onPass }) {
 }
 
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
-function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }) {
+function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLock, onRefresh }) {
   const [view, setView] = useState("records");
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
   const [refreshing, setRefreshing] = useState(false);
@@ -2432,7 +2432,7 @@ function AdminArea({ data, update, dev, updateDev, setToast, onLock, onRefresh }
           <Lock size={16} color={C.onDarkSub} />
         </button>
       </div>
-      {view === "records" && <RecordsView data={data} update={update} setToast={setToast} />}
+      {view === "records" && <RecordsView data={data} update={update} saveConfirmed={saveConfirmed} setToast={setToast} />}
       {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
       {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
       {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
@@ -3343,7 +3343,7 @@ function NoticeAdminView({ data, update, setToast }) {
 
 
 /* ─────────────────────────  근무 기록  ───────────────────────── */
-function RecordsView({ data, update, setToast }) {
+function RecordsView({ data, update, saveConfirmed, setToast }) {
   const { workers, sites, records, settings, transfers } = data;
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
@@ -4226,7 +4226,7 @@ function RecordsView({ data, update, setToast }) {
       </Modal>
 
       {detail && (
-        <WorkerDetail data={data} update={update} workerId={detail} mode={mode} anchor={anchor}
+        <WorkerDetail data={data} update={update} saveConfirmed={saveConfirmed} workerId={detail} mode={mode} anchor={anchor}
           onClose={() => setDetail(null)} setToast={setToast}
           onPayslip={() => setSlip({ workerId: detail, ym: dKey(s).slice(0, 7) })} />
       )}
@@ -4238,7 +4238,7 @@ function RecordsView({ data, update, setToast }) {
 }
 
 /* ─────────────────────────  개인 상세  ───────────────────────── */
-function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast, onPayslip }) {
+function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onClose, setToast, onPayslip }) {
   useBackClose(true, onClose);
   const { records, settings } = data;
   const worker = data.workers.find((w) => w.id === workerId);
@@ -4341,10 +4341,13 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
   });
-  const saveEdit = () => {
+  const [editBusy, setEditBusy] = useState(false);
+  const saveEdit = async () => {
+    setEditBusy(true);
     const mk = (t) => { if (!t) return null; const [h, m] = t.split(":").map(Number); const d = parseKey(edit.date); d.setHours(h, m, 0, 0); return d.toISOString(); };
     const site = data.sites.find((x) => x.id === edit.siteId);
-    update((d) => {
+    const newId = edit.id || uid(); // 저장 재시도 시에도 같은 id를 쓰도록 미리 한 번만 생성
+    const ok = await saveConfirmed((d) => {
       const base = {
         workerId, date: edit.date, site: site?.name || "현장 미지정", siteId: site?.id || null,
         clockIn: mk(edit.inT), clockOut: mk(edit.outT),
@@ -4354,13 +4357,19 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
         ...d,
         records: edit.id
           ? d.records.map((r) => (r.id === edit.id ? { ...r, ...base } : r))
-          : [...d.records, { id: uid(), ...base, inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false, manual: true }],
+          : [...d.records, { id: newId, ...base, inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false, manual: true }],
       };
     });
+    setEditBusy(false);
+    if (!ok) return; // 저장 실패 시 입력창을 그대로 열어둬서 다시 시도할 수 있게 함
     setEdit(null); setToast("기록을 저장했습니다");
   };
-  const removeRec = () => {
-    update((d) => ({ ...d, records: d.records.filter((r) => r.id !== edit.id) }));
+  const removeRec = async () => {
+    setEditBusy(true);
+    const targetId = edit.id;
+    const ok = await saveConfirmed((d) => ({ ...d, records: d.records.filter((r) => r.id !== targetId) }));
+    setEditBusy(false);
+    if (!ok) return;
     setEdit(null); setToast("기록을 삭제했습니다");
   };
 
@@ -4614,16 +4623,16 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
               <textarea value={edit.note} placeholder="추가 작업, 지각 사유, 위치 오류로 인한 수기 입력 등" onChange={(ev) => setEdit({ ...edit, note: ev.target.value })} style={{ ...inputStyle, height: 74 }} />
             </Field>
             <div className="grid grid-cols-2 gap-2 mt-1">
-              {edit.id ? <Btn kind="danger" full onClick={removeRec}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
-                : <Btn kind="ghost" full onClick={() => setEdit(null)}>취소</Btn>}
-              <Btn full onClick={saveEdit}>저장</Btn>
+              {edit.id ? <Btn kind="danger" full disabled={editBusy} onClick={removeRec}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> {editBusy ? "처리 중…" : "삭제"}</span></Btn>
+                : <Btn kind="ghost" full disabled={editBusy} onClick={() => setEdit(null)}>취소</Btn>}
+              <Btn full disabled={editBusy} onClick={saveEdit}>{editBusy ? "저장 중…" : "저장"}</Btn>
             </div>
           </>
         )}
       </Modal>
 
       {calOpen && (
-        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} canAdd isAdmin setToast={setToast} />
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} saveConfirmed={saveConfirmed} canAdd isAdmin setToast={setToast} />
       )}
     </div>
   );
@@ -4638,7 +4647,7 @@ const PRINT_CSS = `@media print {
 }`;
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
-function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, setToast }) {
+function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, canAdd, isAdmin, setToast }) {
   useBackClose(true, onClose);
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
@@ -4700,14 +4709,17 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
     setOneOffForm({ siteName: worker.siteId ? (data.sites.find((s) => s.id === worker.siteId)?.name || "") : "", inT: "09:00", outT: "18:00", amount: "150000" });
     setOneOffOpen(true);
   };
-  const submitOneOff = () => {
+  const [oneOffBusy, setOneOffBusy] = useState(false);
+  const submitOneOff = async () => {
     if (!selDate) return;
     if (!oneOffForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
+    setOneOffBusy(true);
     const mk = (t) => { const [h, mi] = t.split(":").map(Number); const d = parseKey(selDate); d.setHours(h, mi, 0, 0); return d.toISOString(); };
-    update((d) => ({
+    const newId = uid();
+    const ok = await saveConfirmed((d) => ({
       ...d,
       records: [...d.records, {
-        id: uid(), workerId, date: selDate, site: oneOffForm.siteName.trim(), siteId: null,
+        id: newId, workerId, date: selDate, site: oneOffForm.siteName.trim(), siteId: null,
         clockIn: mk(oneOffForm.inT), clockOut: mk(oneOffForm.outT),
         flatPay: Number(oneOffForm.amount) || 0,
         oneOffStatus: isAdmin ? "approved" : "pending",
@@ -4715,6 +4727,8 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
         inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
       }],
     }));
+    setOneOffBusy(false);
+    if (!ok) return;
     setToast(isAdmin ? "일회성 근무를 추가했습니다" : "등록됐어요 — 관리자 승인 후 정산에 반영돼요");
     setOneOffOpen(false);
   };
@@ -4971,8 +4985,8 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
           )}
         </div>
         <div className="grid grid-cols-2 gap-2 mt-4">
-          <Btn kind="ghost" full onClick={() => setOneOffOpen(false)}>취소</Btn>
-          <Btn full onClick={submitOneOff}>추가하기</Btn>
+          <Btn kind="ghost" full disabled={oneOffBusy} onClick={() => setOneOffOpen(false)}>취소</Btn>
+          <Btn full disabled={oneOffBusy} onClick={submitOneOff}>{oneOffBusy ? "저장 중…" : "추가하기"}</Btn>
         </div>
       </Modal>
 
