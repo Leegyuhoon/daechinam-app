@@ -771,8 +771,9 @@ export default function App() {
   // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
   // 단, 방금 이 화면에서 직접 저장한 지 얼마 안 됐으면 건너뜀 — 저장이 서버에 완전히 반영되기 전에
   // 자동 새로고침이 옛날 버전으로 덮어써서 방금 등록한 내용이 사라지는 문제를 막기 위함.
-  const refreshShared = useCallback(async () => {
-    if (Date.now() - lastLocalWriteRef.current < 15000) return;
+  // (force=true면 이 보호장치를 무시하고 무조건 새로고침함 — 사람이 직접 누르는 새로고침 버튼용)
+  const refreshShared = useCallback(async (force) => {
+    if (!force && Date.now() - lastLocalWriteRef.current < 15000) return;
     try {
       const r = await loadShared();
       if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
@@ -2422,7 +2423,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
             </button>
           ))}
         </div>
-        <button onClick={async () => { setRefreshing(true); await onRefresh(); setRefreshing(false); setToast("최신 내용으로 새로고침했습니다"); }}
+        <button onClick={async () => { setRefreshing(true); await onRefresh(true); setRefreshing(false); setToast("최신 내용으로 새로고침했습니다"); }}
           className="flex items-center justify-center" title="새로고침"
           style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, width: 42, height: 40, flexShrink: 0 }}>
           <RefreshCw size={16} color={C.onDarkSub} className={refreshing ? "animate-spin" : ""} />
@@ -4230,8 +4231,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
           onClose={() => setDetail(null)} setToast={setToast}
           onPayslip={() => setSlip({ workerId: detail, ym: dKey(s).slice(0, 7) })} />
       )}
-      {slip && <PayslipView data={data} update={update} {...slip} onClose={() => setSlip(null)} setToast={setToast} />}
-      {book && <PayrollBook data={data} ym={book} onClose={() => setBook(null)} setToast={setToast}
+      {slip && <PayslipView key={`${slip.workerId}:${slip.ym}`} data={data} update={update} {...slip} onClose={() => setSlip(null)} setToast={setToast} />}
+      {book && <PayrollBook key={book} data={data} ym={book} onClose={() => setBook(null)} setToast={setToast}
         onOpenSlip={(wid) => { setBook(null); setSlip({ workerId: wid, ym: book }); }} />}
     </div>
   );
@@ -4374,7 +4375,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   };
 
   const scrollRef = useRef(null);
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, []);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [workerId, mode, anchor]);
 
   return (
     <div ref={scrollRef} className="absolute inset-0 z-40 overflow-y-auto" style={{ background: C.bg }}>
@@ -4762,7 +4763,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
   };
 
   const calScrollRef = useRef(null);
-  useEffect(() => { if (calScrollRef.current) calScrollRef.current.scrollTop = 0; }, []);
+  useEffect(() => { if (calScrollRef.current) calScrollRef.current.scrollTop = 0; }, [workerId]);
 
   if (!worker) return null;
 
