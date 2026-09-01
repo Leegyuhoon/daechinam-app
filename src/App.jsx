@@ -28,7 +28,8 @@ const ST = {
   offRequested: "#2563EB",  // 휴무(양도 요청됨) — 파랑
   offNoRequest: "#7C3AED",  // 휴무(사후등록) — 보라
   pending: "#DB2777",       // 일회성 근무 승인 대기 — 핑크
-  extra: "#0D9488",         // 확정된 일회성·대체근무 — 청록
+  extra: "#0D9488",         // 순수 일회성 근무 — 청록
+  cover: "#DC2626",         // 대신 근무(휴무자 대체) — 붉은 주황
   holiday: "#E5372B",       // 공휴일 — 빨강
   outside: "#CA8A04",       // 현장 밖에서 처리됨 — 카키(다른 주황류와 구분되게)
 };
@@ -395,11 +396,17 @@ function aggregate(records, worker, settings) {
   let otMin = 0, shortMin = 0, overMin = 0, flags = 0;
   let holidayNet = 0, holidayPay = 0, holidayDays = 0;
   let flatTotal = 0; // 일회성/고정금액 합계 — 공휴일 배율 미적용, 있는 그대로
+  let coverCount = 0, coverMin = 0, coverPay = 0; // 대신 근무(휴무자 대체) 전용 집계 — 실제 근무시간과 분리
 
   records.forEach((r) => {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
     if (p.open) return;
+    const isCover = r.flatPay != null || !!r.coverForName; // 대신 근무 여부 — 정상 1타임과 분리 집계
+    if (isCover) {
+      coverCount++; coverMin += p.net * 60; coverPay += p.pay; pay += p.pay;
+      return; // 실제 근무시간(net/times)에는 포함하지 않음
+    }
     const rp = resolvePay(worker, r.siteId, settings);
     times++; net += p.net; pay += p.pay;
     const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
@@ -436,7 +443,7 @@ function aggregate(records, worker, settings) {
       base += dayReg * avgWage;
       otPay += settings.otPremium ? dayOt * avgWage * 1.5 : dayOt * avgWage;
     });
-    pay = base + otPay + holidayPay + flatTotal;
+    pay = base + otPay + holidayPay + flatTotal + coverPay;
     overMin = otMin;
   } else {
     Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
@@ -447,6 +454,7 @@ function aggregate(records, worker, settings) {
     otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
     holidayNet, holidayPay, holidayDays, holidayMultiplier: settings.holidayMultiplier || 1.5,
     byDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
+    coverCount, coverMin, coverPay,
   };
 }
 
@@ -3565,7 +3573,8 @@ function RecordsView({ data, update, setToast }) {
   const tot = rows.reduce((a, r) => ({
     net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
     blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
-  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0 });
+    coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
+  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0 });
   const maxNet = Math.max(1, ...rows.map((r) => r.net));
 
   const downloadCsv = () => {
@@ -3696,6 +3705,20 @@ function RecordsView({ data, update, setToast }) {
           </Tile>
         </button>
       </div>
+      {tot.coverCount > 0 && (
+        <button onClick={() => setStatDetail("cover")} className="pressable w-full text-left">
+          <div className="mx-4 mt-0.5" style={{ background: C.tile, padding: "12px 13px" }}>
+            <div className="flex items-center justify-between">
+              <Eyebrow>대신 근무 (정상 근무시간과 별도 집계)</Eyebrow>
+              <ChevronRight size={14} color={C.sub} />
+            </div>
+            <div className="flex items-center gap-3 mt-1">
+              <Num size={19} color={ST.cover}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.coral }}>{money(tot.coverPay)}원</span>
+            </div>
+          </div>
+        </button>
+      )}
       {tot.flags > 0 && (
         <button onClick={() => setStatDetail("outside")} className="pressable w-full text-left">
           <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
@@ -3709,7 +3732,7 @@ function RecordsView({ data, update, setToast }) {
       {/* 통계 상세보기 */}
       <Modal open={!!statDetail} onClose={() => setStatDetail(null)}>
         {statDetail && (() => {
-          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록" };
+          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록", cover: "대신 근무 상세" };
           return (
             <>
               <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{titles[statDetail]}</div>
@@ -3738,22 +3761,23 @@ function RecordsView({ data, update, setToast }) {
               ) : (
                 <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
                   {rows
-                    .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true)
-                    .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : b.net - a.net)
+                    .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : statDetail === "cover" ? r.coverCount > 0 : true)
+                    .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : statDetail === "cover" ? b.coverPay - a.coverPay : b.net - a.net)
                     .map((r) => (
                       <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
                         <div className="flex items-center justify-between">
                           <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
-                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : statDetail === "cover" ? ST.cover : C.text }}>
                             {statDetail === "pay" ? `${money(r.pay)}원`
                               : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
                               : statDetail === "short" ? `−${minStr(r.shortMin)}`
+                              : statDetail === "cover" ? `${r.coverCount}회 · ${minStr(r.coverMin)} · ${money(r.coverPay)}원`
                               : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
                           </span>
                         </div>
                       </Tile>
                     ))}
-                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true).length === 0 && (
+                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : statDetail === "cover" ? r.coverCount > 0 : true).length === 0 && (
                     <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "8px 0" }}>해당 근무자가 없어요.</div></Tile>
                   )}
                 </div>
@@ -3894,11 +3918,9 @@ function RecordsView({ data, update, setToast }) {
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
                                 {r.flatPay != null ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ST.extra, padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>
                                 ) : r.coverForName ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>대신 근무</span>
-                                ) : r.clockOut ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 4px" }}>정상 완료</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무</span>
                                 ) : null}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
@@ -4468,11 +4490,11 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                       {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
                       {r.flatPay != null && (
-                        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: p.pending ? ST.pending : ST.extra, padding: "1px 4px" }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: p.pending ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>
                           {p.pending ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}
                         </span>
                       )}
-                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 4px" }}>{r.coverForName}님 대신{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
+                      {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: ST.cover, padding: "1px 4px" }}>{r.coverForName}님 대신{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
                       {r.outFlag && <span style={{ fontSize: 9.5, fontWeight: 800, color: ST.outside, border: `1px solid ${ST.outside}`, padding: "1px 4px" }}>현장 밖 퇴근</span>}
                     </div>
                     <div style={{ marginTop: 4, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.text, fontWeight: 700 }}>
@@ -4493,6 +4515,13 @@ function WorkerDetail({ data, update, workerId, mode, anchor, onClose, setToast,
                           <Num size={17} color={p.pending ? "#8B5CF6" : C.coral} weight={900}>{money(r.flatPay)}원</Num>
                         </div>
                         {p.pending && <div style={{ fontSize: 9.5, color: "#8B5CF6", fontWeight: 700, marginTop: 2 }}>승인 전(정산 미반영)</div>}
+                      </>
+                    ) : r.coverForName ? (
+                      <>
+                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 · {hmc(p.net)}</div>
+                        <div style={{ marginTop: 4 }}>
+                          <Num size={17} color={C.coral} weight={900}>{money(p.pay)}원</Num>
+                        </div>
                       </>
                     ) : (
                       <>
@@ -4822,10 +4851,9 @@ function AttendanceCalendar({ data, update, workerId, onClose, canAdd, isAdmin, 
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: (r.isExtra || r.coverForName) ? ST.cover : ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>}
                             {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
-                            {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 5px" }}>대신 근무</span>}
-                            {!p.flat && !r.coverForName && r.clockOut && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.complete, padding: "1px 5px" }}>정상 완료</span>}
+                            {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 5px" }}>대신 근무</span>}
                           </div>
                           {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
                         </div>
