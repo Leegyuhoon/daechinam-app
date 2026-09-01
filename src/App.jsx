@@ -3729,7 +3729,7 @@ function RecordsView({ data, update, setToast }) {
             </div>
             <div className="flex items-center gap-3 mt-1">
               <Num size={19} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
-              <span style={{ fontSize: 14, fontWeight: 800, color: C.coral }}>{money(tot.coverPay)}원</span>
+              <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
         </button>
@@ -3782,13 +3782,19 @@ function RecordsView({ data, update, setToast }) {
                       <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
                         <div className="flex items-center justify-between">
                           <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
-                          <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
-                            {statDetail === "pay" ? `${money(r.pay)}원`
-                              : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
-                              : statDetail === "short" ? `−${minStr(r.shortMin)}`
-                              : statDetail === "cover" ? `${r.coverCount}회 · ${minStr(r.coverMin)} · ${money(r.coverPay)}원`
-                              : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
-                          </span>
+                          {statDetail === "cover" ? (
+                            <div className="flex items-center gap-2">
+                              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{r.coverCount}회 · {minStr(r.coverMin)}</span>
+                              <span style={{ fontSize: 17, fontWeight: 900, color: C.coral }}>{money(r.coverPay)}원</span>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 13.5, fontWeight: 800, color: statDetail === "pay" ? C.coral : statDetail === "ot" ? C.blue : statDetail === "short" ? C.red : C.text }}>
+                              {statDetail === "pay" ? `${money(r.pay)}원`
+                                : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
+                                : statDetail === "short" ? `−${minStr(r.shortMin)}`
+                                : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
+                            </span>
+                          )}
                         </div>
                       </Tile>
                     ))}
