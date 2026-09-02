@@ -402,7 +402,7 @@ function aggregate(records, worker, settings) {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
     if (p.open) return;
-    const isCover = r.flatPay != null || !!r.coverForName; // 대신 근무 여부 — 정상 1타임과 분리 집계
+    const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부(순수 일회성 현장 근무는 제외) — 정상 1타임과 분리 집계
     if (isCover) {
       coverCount++; coverMin += p.net * 60; coverPay += p.pay; pay += p.pay;
       return; // 실제 근무시간(net/times)에는 포함하지 않음
@@ -3957,7 +3957,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                 </div>
               ) : statDetail === "cover" ? (
                 <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
-                  {inRange.filter((r) => r.flatPay != null || !!r.coverForName).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                  {inRange.filter((r) => r.isExtra || !!r.coverForName).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                     const w = workers.find((x) => x.id === r.workerId);
                     const p = calcPay(r, w, settings);
                     const amt = r.flatPay != null ? r.flatPay : p.pay;
@@ -4166,14 +4166,14 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                         {recs.map((r) => {
                           const st = recStatus(r);
                           return (
-                            <div key={r.id} className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
+                            <div key={r.id} className="flex items-start justify-between flex-wrap" style={{ rowGap: 4 }}>
+                              <div className="flex items-center gap-1.5 flex-wrap" style={{ flex: 1, minWidth: 120 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
                                 {r.flatPay != null ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px", flexShrink: 0 }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>
                                 ) : r.coverForName ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", flexShrink: 0 }}>대신 근무</span>
                                 ) : null}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
