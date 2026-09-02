@@ -4305,7 +4305,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                         <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px" }}>승인 대기</span>
                       )}
                       {coverCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무 {coverCount}</span>}
-                      {oneOffCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>일회성 현장 근무 {oneOffCount}</span>}
+                      {oneOffCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>일회성 현장 근무{oneOffCount}</span>}
                       {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -4617,12 +4617,13 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
 
   const addManual = () => setEdit({
     id: null, workerId, date: dKey(new Date()),
-    siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
+    siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "", isFlat: false, siteName: "", flatPay: "",
   });
   const openEdit = (r) => setEdit({
     id: r.id, workerId, date: r.date, siteId: r.siteId || "",
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
+    isFlat: r.flatPay != null, siteName: r.site || "", flatPay: r.flatPay != null ? String(r.flatPay) : "",
   });
   const [editBusy, setEditBusy] = useState(false);
   const saveEdit = async () => {
@@ -4631,7 +4632,11 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
     const site = data.sites.find((x) => x.id === edit.siteId);
     const newId = edit.id || uid(); // 저장 재시도 시에도 같은 id를 쓰도록 미리 한 번만 생성
     const ok = await saveConfirmed((d) => {
-      const base = {
+      const base = edit.isFlat ? {
+        workerId, date: edit.date, site: edit.siteName.trim() || "현장 미지정", siteId: null,
+        clockIn: mk(edit.inT), clockOut: mk(edit.outT),
+        flatPay: Number(edit.flatPay) || 0, note: edit.note,
+      } : {
         workerId, date: edit.date, site: site?.name || "현장 미지정", siteId: site?.id || null,
         clockIn: mk(edit.inT), clockOut: mk(edit.outT),
         breakMinutes: edit.breakMinutes === "" ? null : Number(edit.breakMinutes), note: edit.note,
@@ -4893,15 +4898,27 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               <Field label="출근"><input type="time" value={edit.inT} onChange={(ev) => setEdit({ ...edit, inT: ev.target.value })} style={inputStyle} /></Field>
               <Field label="퇴근"><input type="time" value={edit.outT} onChange={(ev) => setEdit({ ...edit, outT: ev.target.value })} style={inputStyle} /></Field>
             </div>
-            <Field label="현장">
-              <select value={edit.siteId} onChange={(ev) => setEdit({ ...edit, siteId: ev.target.value })} style={inputStyle}>
-                <option value="">현장 미지정</option>
-                {data.sites.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
-              </select>
-            </Field>
-            <Field label="휴게시간 (분) · 비우면 자동 계산">
-              <input type="number" inputMode="numeric" placeholder="자동" value={edit.breakMinutes} onChange={(ev) => setEdit({ ...edit, breakMinutes: ev.target.value })} style={inputStyle} />
-            </Field>
+            {edit.isFlat ? (
+              <Field label="현장 (직접 입력)">
+                <input value={edit.siteName} onChange={(ev) => setEdit({ ...edit, siteName: ev.target.value })} placeholder="예: 강남현장" style={inputStyle} />
+              </Field>
+            ) : (
+              <Field label="현장">
+                <select value={edit.siteId} onChange={(ev) => setEdit({ ...edit, siteId: ev.target.value })} style={inputStyle}>
+                  <option value="">현장 미지정</option>
+                  {data.sites.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
+                </select>
+              </Field>
+            )}
+            {edit.isFlat ? (
+              <Field label="지급액 (원)">
+                <input type="number" value={edit.flatPay} onChange={(ev) => setEdit({ ...edit, flatPay: ev.target.value })} style={inputStyle} />
+              </Field>
+            ) : (
+              <Field label="휴게시간 (분) · 비우면 자동 계산">
+                <input type="number" inputMode="numeric" placeholder="자동" value={edit.breakMinutes} onChange={(ev) => setEdit({ ...edit, breakMinutes: ev.target.value })} style={inputStyle} />
+              </Field>
+            )}
             <Field label="비고">
               <textarea value={edit.note} placeholder="추가 작업, 지각 사유, 위치 오류로 인한 수기 입력 등" onChange={(ev) => setEdit({ ...edit, note: ev.target.value })} style={{ ...inputStyle, height: 74 }} />
             </Field>
@@ -5018,7 +5035,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
 
   const [calEdit, setCalEdit] = useState(null);
   const openCalEdit = (r) => setCalEdit({
-    id: r.id, date: r.date, siteId: r.siteId || "",
+    id: r.id, date: r.date, siteId: r.siteId || "", siteName: r.site || "",
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     flatPay: r.flatPay != null ? String(r.flatPay) : "", isFlat: r.flatPay != null,
@@ -5032,7 +5049,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
       ...d,
       records: d.records.map((r) => (r.id === calEdit.id ? {
         ...r,
-        site: site?.name || r.site, siteId: site?.id || r.siteId,
+        ...(calEdit.isFlat
+          ? { site: calEdit.siteName.trim() || "현장 미지정", siteId: null }
+          : { site: site?.name || r.site, siteId: site?.id || r.siteId }),
         clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
         breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
         note: calEdit.note,
@@ -5321,12 +5340,18 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>기록 수정</div>
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{calEdit.date}</div>
             <div className="mt-4 flex flex-col gap-2.5">
-              <Field label="현장">
-                <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                  <option value="">현장 미지정</option>
-                  {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </Field>
+              {calEdit.isFlat ? (
+                <Field label="현장 (직접 입력)">
+                  <input value={calEdit.siteName} onChange={(e) => setCalEdit((f) => ({ ...f, siteName: e.target.value }))} placeholder="예: 강남현장" style={inputStyle} />
+                </Field>
+              ) : (
+                <Field label="현장">
+                  <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                    <option value="">현장 미지정</option>
+                    {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <Field label="출근 시간">
                   <input type="time" value={calEdit.inT} onChange={(e) => setCalEdit((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} />
