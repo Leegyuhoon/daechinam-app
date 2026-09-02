@@ -4536,6 +4536,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
     [records, workerId, sk, ek]
   );
   const agg = aggregate(recs, worker, settings);
+  const [wdStatDetail, setWdStatDetail] = useState(null); // "cover" | "oneOff"
   const dayList = Object.entries(agg.byDate).sort((a, b) => a[0].localeCompare(b[0]));
   const maxDay = Math.max(agg.sh, ...dayList.map((d) => d[1].net), 1);
   const offDays = (data.transfers || [])
@@ -4728,6 +4729,52 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
           </Tile>
         </div>
+
+        {agg.coverCount > 0 && (
+          <button onClick={() => setWdStatDetail("cover")} className="pressable w-full text-left mt-0.5">
+            <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
+              <div className="flex items-center justify-between">
+                <Eyebrow>대신 근무 (별도 집계 · 아래 지급액에 미포함)</Eyebrow>
+                <ChevronRight size={14} color={C.sub} />
+              </div>
+              <div className="flex items-center gap-3 mt-1">
+                <Num size={19} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
+                <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(agg.coverPay)}원</span>
+              </div>
+            </div>
+          </button>
+        )}
+        {agg.oneOffCount > 0 && (
+          <button onClick={() => setWdStatDetail("oneOff")} className="pressable w-full text-left mt-2">
+            <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
+              <div className="flex items-center justify-between">
+                <Eyebrow>일회성 현장 근무 (별도 집계 · 아래 지급액에 미포함)</Eyebrow>
+                <ChevronRight size={14} color={C.sub} />
+              </div>
+              <div className="flex items-center gap-3 mt-1">
+                <Num size={19} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
+                <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(agg.oneOffPay)}원</span>
+              </div>
+            </div>
+          </button>
+        )}
+
+        <Modal open={!!wdStatDetail} onClose={() => setWdStatDetail(null)}>
+          <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{wdStatDetail === "cover" ? "대신 근무 상세" : "일회성 현장 근무 상세"}</div>
+          <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>{labelOf(mode, anchor)} 기준 · {worker.name}</div>
+          <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+            {recs.filter((r) => wdStatDetail === "cover" ? (r.isExtra || !!r.coverForName) : (!r.isExtra && !r.coverForName && r.flatPay != null))
+              .sort((a, b) => b.date.localeCompare(a.date)).map((r) => (
+                <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
+                  <div className="flex items-center justify-between">
+                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}</span>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{money(r.flatPay)}원</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
+                </div>
+              ))}
+          </div>
+        </Modal>
 
         <div className="mt-2" style={{
           background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
