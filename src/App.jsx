@@ -396,16 +396,22 @@ function aggregate(records, worker, settings) {
   let otMin = 0, shortMin = 0, overMin = 0, flags = 0;
   let holidayNet = 0, holidayPay = 0, holidayDays = 0;
   let flatTotal = 0; // 일회성/고정금액 합계 — 공휴일 배율 미적용, 있는 그대로
-  let coverCount = 0, coverMin = 0, coverPay = 0; // 대신 근무(휴무자 대체) 전용 집계 — 실제 근무시간과 분리
+  let coverCount = 0, coverMin = 0, coverPay = 0; // 대신 근무(휴무자 대체) 전용 집계 — 실제 근무시간·지급합계와 분리
+  let oneOffCount = 0, oneOffMin = 0, oneOffPay = 0; // 순수 일회성 현장 근무 전용 집계 — 마찬가지로 분리
 
   records.forEach((r) => {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
     if (p.open) return;
-    const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부(순수 일회성 현장 근무는 제외) — 정상 1타임과 분리 집계
+    const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부
+    const isPureOneOff = !isCover && r.flatPay != null; // 대신근무가 아닌, 순수 일회성 현장 근무
     if (isCover) {
-      coverCount++; coverMin += p.net * 60; coverPay += p.pay; pay += p.pay;
-      return; // 실제 근무시간(net/times)에는 포함하지 않음
+      coverCount++; coverMin += p.net * 60; coverPay += p.pay;
+      return; // 실제 근무시간(net/times)·지급합계(pay)에는 포함하지 않음
+    }
+    if (isPureOneOff) {
+      oneOffCount++; oneOffMin += p.net * 60; oneOffPay += p.pay;
+      return; // 마찬가지로 실제 근무시간·지급합계에는 포함하지 않음
     }
     const rp = resolvePay(worker, r.siteId, settings);
     times++; net += p.net; pay += p.pay;
@@ -443,7 +449,7 @@ function aggregate(records, worker, settings) {
       base += dayReg * avgWage;
       otPay += settings.otPremium ? dayOt * avgWage * 1.5 : dayOt * avgWage;
     });
-    pay = base + otPay + holidayPay + flatTotal + coverPay;
+    pay = base + otPay + holidayPay;
     overMin = otMin;
   } else {
     Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
@@ -454,7 +460,7 @@ function aggregate(records, worker, settings) {
     otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
     holidayNet, holidayPay, holidayDays, holidayMultiplier: settings.holidayMultiplier || 1.5,
     byDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
-    coverCount, coverMin, coverPay,
+    coverCount, coverMin, coverPay, oneOffCount, oneOffMin, oneOffPay,
   };
 }
 
@@ -3742,7 +3748,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
     net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
     blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
     coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
-  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0 });
+    oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
+  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0 });
   const maxNet = Math.max(1, ...rows.map((r) => r.net));
 
   const downloadCsv = () => {
@@ -3877,12 +3884,26 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
         <button onClick={() => setStatDetail("cover")} className="pressable w-full text-left">
           <div className="mx-4 mt-0.5" style={{ background: C.tile, padding: "12px 13px" }}>
             <div className="flex items-center justify-between">
-              <Eyebrow>대신 근무 (정상 근무시간과 별도 집계)</Eyebrow>
+              <Eyebrow>대신 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center gap-3 mt-1">
               <Num size={19} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
               <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(tot.coverPay)}원</span>
+            </div>
+          </div>
+        </button>
+      )}
+      {tot.oneOffCount > 0 && (
+        <button onClick={() => setStatDetail("oneOff")} className="pressable w-full text-left">
+          <div className="mx-4 mt-0.5" style={{ background: C.tile, padding: "12px 13px" }}>
+            <div className="flex items-center justify-between">
+              <Eyebrow>일회성 현장 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
+              <ChevronRight size={14} color={C.sub} />
+            </div>
+            <div className="flex items-center gap-3 mt-1">
+              <Num size={19} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
+              <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(tot.oneOffPay)}원</span>
             </div>
           </div>
         </button>
@@ -3909,7 +3930,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       {/* 통계 상세보기 */}
       <Modal open={!!statDetail} onClose={() => setStatDetail(null)}>
         {statDetail && (() => {
-          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록", cover: "대신 근무 상세" };
+          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록", cover: "대신 근무 상세", oneOff: "일회성 현장 근무 상세" };
           return (
             <>
               <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{titles[statDetail]}</div>
@@ -3976,6 +3997,26 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                     );
                   })}
                   {tot.coverCount === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
+                </div>
+              ) : statDetail === "oneOff" ? (
+                <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+                  {inRange.filter((r) => !r.isExtra && !r.coverForName && r.flatPay != null).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                    const w = workers.find((x) => x.id === r.workerId);
+                    return (
+                      <button key={r.id} onClick={() => { setStatDetail(null); setDetail(r.workerId); }}
+                        className="pressable text-left w-full" style={{ background: C.tileSoft, padding: 10 }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{w?.name || "알 수 없음"}</span>
+                          <span style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>{r.date}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span style={{ fontSize: 12, color: C.sub }}>{r.site || "현장 미지정"}</span>
+                          <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{money(r.flatPay)}원</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {tot.oneOffCount === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
                 </div>
               ) : (
                 <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
@@ -4251,19 +4292,20 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Tile><div style={{ color: C.sub, fontSize: 13.5 }}>{q ? "검색 결과가 없습니다." : "등록된 근무자가 없습니다. 설정에서 근무자를 추가하세요."}</div></Tile>
             )}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags, coverCount, coverMin, coverPay }) => (
+              {rows.map(({ w, net, days, times, pay, blocks, otMin, shortMin, flags, coverCount, coverMin, coverPay, oneOffCount, oneOffMin, oneOffPay }) => (
                 <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
                   <div style={{ width: 34, height: 34, borderRadius: 999, background: C.bgSoft, color: C.onDark, fontSize: 13, fontWeight: 800, flexShrink: 0 }} className="flex items-center justify-center">{w.name.slice(0, 1)}</div>
                   <div style={{ minWidth: 0 }}>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                       {records.some((r) => r.workerId === w.id && r.flatPay != null && r.oneOffStatus === "pending") && (
                         <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px" }}>승인 대기</span>
                       )}
                       {coverCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무 {coverCount}</span>}
+                      {oneOffCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>일회성 현장 근무 {oneOffCount}</span>}
                       {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -4286,6 +4328,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               {coverCount > 0 && (
                 <div className="mt-1.5" style={{ fontSize: 11, color: C.text, fontWeight: 700, background: C.tileSoft, padding: "4px 8px" }}>
                   대신 근무 {coverCount}회 · {minStr(coverMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(coverPay)}원</span> (실근무시간과 별도)
+                </div>
+              )}
+              {oneOffCount > 0 && (
+                <div className="mt-1.5" style={{ fontSize: 11, color: C.text, fontWeight: 700, background: C.tileSoft, padding: "4px 8px" }}>
+                  일회성 현장 근무 {oneOffCount}회 · {minStr(oneOffMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(oneOffPay)}원</span> (실근무시간과 별도)
                 </div>
               )}
             </Tile>
