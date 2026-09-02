@@ -6,7 +6,7 @@ import {
   Pencil, Loader2, Building2, Clock3, FileText, ArrowLeft, ArrowRight, Copy, Lock,
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
-  Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays, RefreshCw,
+  Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays, RefreshCw, Download,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -751,6 +751,36 @@ export default function App() {
   }, []);
 
   const lastLocalWriteRef = useRef(0);
+  const saveConfirmedVerified = useCallback(async (mut, verifyFn, maxAttempts = 3) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        let base = dataRef.current;
+        try {
+          const latest = await loadShared();
+          if (latest) base = migrate(latest);
+        } catch (e) {}
+        const next = typeof mut === "function" ? mut(base) : mut;
+        await saveShared(next);
+        // 저장하자마자 바로 믿지 않고, 잠깐 기다렸다가 서버에서 다시 읽어와서 실제로 반영됐는지 확인함.
+        // 출퇴근은 돈과 직결된 유일한 증거라서, 느리더라도 이 확인 과정을 반드시 거침.
+        await new Promise((res) => setTimeout(res, 700));
+        let confirmed = false;
+        try {
+          const check = await loadShared();
+          const fresh = check ? migrate(check) : null;
+          if (fresh && verifyFn(fresh)) { confirmed = true; dataRef.current = fresh; setData(fresh); }
+        } catch (e) {}
+        if (confirmed) {
+          lastLocalWriteRef.current = Date.now();
+          return true;
+        }
+      } catch (e) {}
+      // 실패했으면 다음 시도 전에 잠깐 쉼
+      if (attempt < maxAttempts) await new Promise((res) => setTimeout(res, 600));
+    }
+    setToast("저장 확인에 실패했어요 — 인터넷 연결을 확인하고 다시 눌러주세요");
+    return false;
+  }, []);
   const update = useCallback(async (mut) => {
     // 화면은 일단 즉시 반응하도록 지금 알고 있는 내용 기준으로 먼저 반영(빠른 반응)
     const optimistic = typeof mut === "function" ? mut(dataRef.current) : mut;
@@ -840,7 +870,7 @@ export default function App() {
         background: `radial-gradient(120% 60% at 50% 0%, ${C.bgSoft} 0%, ${C.bg} 55%)`,
       }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} onRefresh={refreshShared} />}
+          {tab === "clock" && <ClockTab data={data} update={update} saveConfirmed={saveConfirmed} saveConfirmedVerified={saveConfirmedVerified} dev={dev} now={now} setToast={setToast} goTab={goTab} onRevealAdmin={() => setRevealAdmin(true)} inviteInfo={inviteInfo} onRefresh={refreshShared} />}
           {tab === "admin" && (
             unlocked
               ? <AdminArea data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} updateDev={updateDev} setToast={setToast} onLock={() => setUnlocked(false)} onRefresh={refreshShared} />
@@ -892,7 +922,7 @@ export default function App() {
 }
 
 /* ─────────────────────────  근무자 화면  ───────────────────────── */
-function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRevealAdmin, inviteInfo, onRefresh }) {
+function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now, setToast, goTab, onRevealAdmin, inviteInfo, onRefresh }) {
   const { workers, sites, records, settings } = data;
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
@@ -1308,41 +1338,61 @@ function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRe
   };
 
   const [clockBusy, setClockBusy] = useState(false);
+  const clockBusyRef = useRef(false); // 화면 렌더 지연으로 버튼이 미처 비활성화되기 전에 중복 클릭되는 것까지 막는 즉시 잠금
   const doClockIn = async () => {
+    if (clockBusyRef.current) return;
+    clockBusyRef.current = true;
     setClockBusy(true);
     const ts = new Date();
     const s = chk.state === "inside" ? chk.site : sites.find((x) => x.name === manualSite);
     const dateKey = dKey(ts);
-    const cover = transfers.find((t) => t.status === "approved" && t.toWorkerId === worker.id && t.date === dateKey && t.siteId === s?.id && !t.fulfilledRecordId);
     const recId = uid();
-    const ok = await saveConfirmed((d) => ({
-      ...d,
-      records: [...d.records, {
-        id: recId, workerId: worker.id, date: dateKey,
-        site: s?.name || "현장 미지정", siteId: s?.id || null,
-        clockIn: ts.toISOString(), clockOut: null, breakMinutes: null,
-        inLoc: chk.loc, inDist: chk.state === "inside" ? Math.round(chk.d) : null,
-        outLoc: null, outDist: null, outFlag: false,
-        deviceId: dev.deviceId, note: "",
-        coverForId: cover?.fromWorkerId || null, coverForName: cover?.fromWorkerName || null, transferId: cover?.id || null,
-        coverStart: cover?.startTime || null, coverEnd: cover?.endTime || null,
-      }],
-      transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
-    }));
+    const ok = await saveConfirmedVerified(
+      (d) => {
+        // 혹시라도 이미 같은 날짜에 출근(퇴근 안 한) 기록이 있으면 중복으로 또 만들지 않음
+        const already = d.records.some((r) => r.workerId === worker.id && r.date === dateKey && !r.clockOut);
+        if (already) return d;
+        const cover = (d.transfers || []).find((t) => t.status === "approved" && t.toWorkerId === worker.id && t.date === dateKey && t.siteId === s?.id && !t.fulfilledRecordId);
+        return {
+          ...d,
+          records: [...d.records, {
+            id: recId, workerId: worker.id, date: dateKey,
+            site: s?.name || "현장 미지정", siteId: s?.id || null,
+            clockIn: ts.toISOString(), clockOut: null, breakMinutes: null,
+            inLoc: chk.loc, inDist: chk.state === "inside" ? Math.round(chk.d) : null,
+            outLoc: null, outDist: null, outFlag: false,
+            deviceId: dev.deviceId, note: "",
+            coverForId: cover?.fromWorkerId || null, coverForName: cover?.fromWorkerName || null, transferId: cover?.id || null,
+            coverStart: cover?.startTime || null, coverEnd: cover?.endTime || null,
+          }],
+          transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
+        };
+      },
+      (fresh) => fresh.records.some((r) => r.workerId === worker.id && r.date === dateKey && !r.clockOut)
+    );
+    clockBusyRef.current = false;
     setClockBusy(false);
     if (!ok) return; // 실패하면 확인 팝업을 그대로 열어둬서 다시 시도할 수 있게 함
+    const cover = (data.transfers || []).find((t) => t.fulfilledRecordId === recId);
     setConfirm(null);
     setToast(cover ? `출근 처리됐습니다 · ${cover.fromWorkerName}님 대신 근무` : `출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
   const doClockOut = async () => {
+    if (clockBusyRef.current) return;
+    clockBusyRef.current = true;
     setClockBusy(true);
     const ts = new Date();
-    const ok = await saveConfirmed((d) => ({
-      ...d, records: d.records.map((r) => (r.id === open.id ? {
-        ...r, clockOut: ts.toISOString(), outLoc: chk.loc || null,
-        outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: !!chk.outside,
-      } : r)),
-    }));
+    const targetId = open.id;
+    const ok = await saveConfirmedVerified(
+      (d) => ({
+        ...d, records: d.records.map((r) => (r.id === targetId ? {
+          ...r, clockOut: ts.toISOString(), outLoc: chk.loc || null,
+          outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: !!chk.outside,
+        } : r)),
+      }),
+      (fresh) => { const r = fresh.records.find((x) => x.id === targetId); return !!r && !!r.clockOut; }
+    );
+    clockBusyRef.current = false;
     setClockBusy(false);
     if (!ok) return;
     setConfirm(null);
@@ -1909,11 +1959,23 @@ function ClockTab({ data, update, saveConfirmed, dev, now, setToast, goTab, onRe
         {galleryViewer && (
           <>
             {galleryViewer.kind === "video" ? (
-              <video src={photoUrl(photoIdsOf(galleryViewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+              <div className="relative">
+                <video src={photoUrl(photoIdsOf(galleryViewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+                <a href={photoUrl(photoIdsOf(galleryViewer)[0])} download={`${galleryViewer.siteName}_${galleryViewer.date}_영상.mp4`}
+                  className="flex items-center gap-1" style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 6 }}>
+                  <Download size={12} /> 다운로드
+                </a>
+              </div>
             ) : galleryViewer.kind === "text" ? null : (
               <div className="flex flex-col gap-2">
                 {photoIdsOf(galleryViewer).map((pid, i) => (
-                  <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                  <div key={pid} className="relative">
+                    <img src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                    <a href={photoUrl(pid)} download={`${galleryViewer.siteName}_${galleryViewer.date}_${i + 1}.jpg`}
+                      className="flex items-center gap-1" style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 6 }}>
+                      <Download size={12} /> 다운로드
+                    </a>
+                  </div>
                 ))}
               </div>
             )}
@@ -2776,11 +2838,23 @@ function PhotoAdminView({ data, update, setToast }) {
         {viewer && (
           <>
             {viewer.kind === "video" ? (
-              <video src={photoUrl(photoIdsOf(viewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+              <div className="relative">
+                <video src={photoUrl(photoIdsOf(viewer)[0])} controls autoPlay style={{ width: "100%", borderRadius: RADIUS_SM, display: "block", background: "#000" }} />
+                <a href={photoUrl(photoIdsOf(viewer)[0])} download={`${viewer.siteName}_${viewer.date}_영상.mp4`}
+                  className="flex items-center gap-1" style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 6 }}>
+                  <Download size={12} /> 다운로드
+                </a>
+              </div>
             ) : viewer.kind === "text" ? null : (
               <div className="flex flex-col gap-2">
-                {photoIdsOf(viewer).map((pid) => (
-                  <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                {photoIdsOf(viewer).map((pid, i) => (
+                  <div key={pid} className="relative">
+                    <img src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                    <a href={photoUrl(pid)} download={`${viewer.siteName}_${viewer.date}_${i + 1}.jpg`}
+                      className="flex items-center gap-1" style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "5px 9px", borderRadius: 6 }}>
+                      <Download size={12} /> 다운로드
+                    </a>
+                  </div>
                 ))}
               </div>
             )}
@@ -2789,6 +2863,16 @@ function PhotoAdminView({ data, update, setToast }) {
               <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{viewer.siteName} · {viewer.workerName} · {viewer.date}</span>
             </div>
             {viewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{viewer.note}</div>}
+            {photoIdsOf(viewer).length > 1 && (
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                {photoIdsOf(viewer).map((pid, i) => (
+                  <a key={pid} href={photoUrl(pid)} download={`${viewer.siteName}_${viewer.date}_${i + 1}.jpg`}
+                    className="flex items-center justify-center gap-1" style={{ background: C.tileSoft, fontSize: 11.5, fontWeight: 800, color: C.text, padding: "7px 0" }}>
+                    <Download size={12} /> {i + 1}번 사진
+                  </a>
+                ))}
+              </div>
+            )}
             <button onClick={() => {
               if (!window.confirm("이 사진/영상을 정말 삭제할까요?")) return;
               update((d) => ({ ...d, siteReports: (d.siteReports || []).filter((x) => x.id !== viewer.id) }));
@@ -3384,7 +3468,41 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
   const [slip, setSlip] = useState(null);   // { workerId, ym }
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
-  const [statDetail, setStatDetail] = useState(null); // "times" | "pay" | "ot" | "short" | "outside"
+  const [statDetail, setStatDetail] = useState(null); // "times" | "pay" | "ot" | "short" | "outside" | "cover" | "pendingOneOff"
+  const [reviewRec, setReviewRec] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ siteName: "", inT: "", outT: "", amount: "" });
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const openReview = (r) => {
+    setReviewForm({ siteName: r.site || "", inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "", amount: String(r.flatPay ?? "") });
+    setReviewRec(r);
+  };
+  const saveAndApproveOneOff = async () => {
+    if (!reviewForm.siteName.trim()) { setToast("현장(장소)을 입력해 주세요"); return; }
+    setReviewBusy(true);
+    const mk = (t) => { const [h, mi] = t.split(":").map(Number); const d = parseKey(reviewRec.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
+    const ok = await saveConfirmed((d) => ({
+      ...d,
+      records: d.records.map((r) => (r.id === reviewRec.id ? {
+        ...r, site: reviewForm.siteName.trim(),
+        clockIn: mk(reviewForm.inT), clockOut: mk(reviewForm.outT),
+        flatPay: Number(reviewForm.amount) || 0, oneOffStatus: "approved",
+      } : r)),
+    }));
+    setReviewBusy(false);
+    if (!ok) return;
+    setToast("승인했습니다 — 정산에 반영됐어요");
+    setReviewRec(null);
+  };
+  const rejectOneOff = async () => {
+    setReviewBusy(true);
+    const targetId = reviewRec.id;
+    const ok = await saveConfirmed((d) => ({ ...d, records: d.records.filter((r) => r.id !== targetId) }));
+    setReviewBusy(false);
+    if (!ok) return;
+    setToast("거절하고 삭제했습니다");
+    setReviewRec(null);
+  };
+  const pendingOneOffs = records.filter((r) => r.flatPay != null && r.oneOffStatus === "pending");
   const [flagEdit, setFlagEdit] = useState(null); // 현장 밖 퇴근 기록 처리용
   const saveFlagEdit = () => {
     if (!flagEdit.inT || !flagEdit.outT) { setToast("출근·퇴근 시간을 입력해 주세요"); return; }
@@ -3769,6 +3887,15 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
           </div>
         </button>
       )}
+      {pendingOneOffs.length > 0 && (
+        <button onClick={() => setStatDetail("pendingOneOff")} className="pressable w-full text-left">
+          <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FDF2F8", padding: "10px 13px" }}>
+            <Bell size={15} color={ST.pending} />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text }}>승인 대기 중인 근무 요청 {pendingOneOffs.length}건</span>
+            <ChevronRight size={14} color={C.sub} style={{ marginLeft: "auto" }} />
+          </div>
+        </button>
+      )}
       {tot.flags > 0 && (
         <button onClick={() => setStatDetail("outside")} className="pressable w-full text-left">
           <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
@@ -3788,7 +3915,27 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{titles[statDetail]}</div>
               <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>{labelOf(mode, anchor)} 기준</div>
 
-              {statDetail === "outside" ? (
+              {statDetail === "pendingOneOff" ? (
+                <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+                  {pendingOneOffs.sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                    const w = workers.find((x) => x.id === r.workerId);
+                    return (
+                      <button key={r.id} onClick={() => { setStatDetail(null); openReview(r); }}
+                        className="pressable text-left w-full" style={{ background: "#FDF2F8", padding: 10 }}>
+                        <div className="flex items-center justify-between">
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{w?.name || "알 수 없음"}</span>
+                          <span style={{ fontSize: 12, color: C.sub, fontFamily: MONO }}>{r.date}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span style={{ fontSize: 12, color: C.sub }}>{r.site || "현장 미지정"} · {tstr(r.clockIn)} → {r.clockOut ? tstr(r.clockOut) : "?"}</span>
+                          <span style={{ fontSize: 13, fontWeight: 900, color: ST.pending }}>{money(r.flatPay)}원</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {pendingOneOffs.length === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>승인 대기 중인 요청이 없어요.</div>}
+                </div>
+              ) : statDetail === "outside" ? (
                 <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
                   {inRange.filter((r) => r.outFlag).sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                     const w = workers.find((x) => x.id === r.workerId);
@@ -3885,6 +4032,41 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               className="w-full mt-3" style={{ fontSize: 12, color: C.sub, fontWeight: 700, textAlign: "center" }}>
               이 근무자의 전체 기록 보러가기
             </button>
+          </>
+        )}
+      </Modal>
+
+      {/* 일회성 근무 승인 요청 검토(수정 가능) */}
+      <Modal open={!!reviewRec} onClose={() => setReviewRec(null)}>
+        {reviewRec && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근무 요청 검토</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>
+              {workers.find((w) => w.id === reviewRec.workerId)?.name || "알 수 없음"} · {reviewRec.date}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#9D174D", marginTop: 8, lineHeight: 1.5, background: "#FDF2F8", padding: 10 }}>
+              근무자가 신청한 내용이에요. 필요하면 아래 내용을 수정한 뒤 승인해 주세요.
+            </div>
+            <div className="mt-3 flex flex-col gap-2.5">
+              <Field label="현장(장소)">
+                <input value={reviewForm.siteName} onChange={(e) => setReviewForm((f) => ({ ...f, siteName: e.target.value }))} style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="출근 시간">
+                  <input type="time" value={reviewForm.inT} onChange={(e) => setReviewForm((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="퇴근 시간">
+                  <input type="time" value={reviewForm.outT} onChange={(e) => setReviewForm((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="지급액 (원)">
+                <input type="number" value={reviewForm.amount} onChange={(e) => setReviewForm((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="danger" full disabled={reviewBusy} onClick={rejectOneOff}>거절(삭제)</Btn>
+              <Btn full disabled={reviewBusy} onClick={saveAndApproveOneOff}>{reviewBusy ? "처리 중…" : "승인하기"}</Btn>
+            </div>
           </>
         )}
       </Modal>
@@ -3989,7 +4171,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
                                 {r.flatPay != null ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>
                                 ) : r.coverForName ? (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무</span>
                                 ) : null}
@@ -4591,7 +4773,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
                       {r.flatPay != null && (
                         <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: p.pending ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>
-                          {p.pending ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}
+                          {p.pending ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}
                         </span>
                       )}
                       {r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: ST.cover, padding: "1px 4px" }}>{r.coverForName}님 대신{r.coverStart ? ` (${r.coverStart}–${r.coverEnd})` : ""}</span>}
@@ -5002,7 +5184,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: (r.isExtra || r.coverForName) ? ST.cover : ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성"}</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: (r.isExtra || r.coverForName) ? ST.cover : ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>}
                             {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
                             {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 5px" }}>대신 근무</span>}
                           </div>
