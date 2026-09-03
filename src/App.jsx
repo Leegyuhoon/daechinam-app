@@ -246,13 +246,17 @@ function payslipCalc(data, workerId, ym) {
   const agg = aggregate(recs, worker, data.settings);
   const adj = { ...EMPTY_ADJ, ...(data.adjustments[`${workerId}:${ym}`] || {}) };
   const base = Math.round(agg.pay);
+  const coverPay = Math.round(agg.coverPay || 0); // 대신 근무 — 정상 타임과 별도 항목으로 표시하되, 지급액에는 반드시 포함
+  const oneOffPay = Math.round(agg.oneOffPay || 0); // 일회성 현장 근무 — 마찬가지
+  const coverRecs = recs.filter((r) => r.isExtra || !!r.coverForName);
+  const oneOffRecs = recs.filter((r) => !r.isExtra && !r.coverForName && r.flatPay != null);
   const allowances = (worker?.allowances || []).filter((a) => Number(a.amount) > 0);
   const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
   const extra = (Number(adj.extra) || 0) + allowanceTotal;
-  const gross = base + extra;
+  const gross = base + coverPay + oneOffPay + extra;
   const tax = adj.tax ? Math.floor((gross * 0.033) / 10) * 10 : 0;
   const deduct = Number(adj.deduct) || 0;
-  return { worker, recs, agg, adj, base, extra, allowances, allowanceTotal, gross, tax, deduct, net: gross - tax - deduct };
+  return { worker, recs, agg, adj, base, coverPay, oneOffPay, coverRecs, oneOffRecs, extra, allowances, allowanceTotal, gross, tax, deduct, net: gross - tax - deduct };
 }
 const ymLabel = (ym) => `${ym.slice(0, 4)}년 ${Number(ym.slice(5, 7))}월`;
 
@@ -3158,6 +3162,7 @@ function NoticeAdminView({ data, update, setToast }) {
   const [edit, setEdit] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [siteFilter, setSiteFilter] = useState(null); // null = 전체, 아니면 siteId
+  const [monthFilter, setMonthFilter] = useState(null); // null = 전체, 아니면 "YYYY-MM"
   const notices = [...(data.notices || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const today = dKey(new Date());
 
@@ -3171,7 +3176,10 @@ function NoticeAdminView({ data, update, setToast }) {
     });
     return false;
   };
-  const shown = siteFilter ? notices.filter((n) => noticeMatchesSite(n, siteFilter)) : notices;
+  let shown = siteFilter ? notices.filter((n) => noticeMatchesSite(n, siteFilter)) : notices;
+  shown = monthFilter ? shown.filter((n) => n.createdAt.slice(0, 7) === monthFilter) : shown;
+  // 목록에 있는 공지들이 실제로 어느 달에 작성됐는지 모아서, 월 선택 칩으로 보여줌 (최신순)
+  const availableMonths = [...new Set(notices.map((n) => n.createdAt.slice(0, 7)))].sort().reverse();
 
   const openNew = () => setEdit({
     id: null, title: "", message: "", audience: "all", workerIds: [],
@@ -3239,8 +3247,23 @@ function NoticeAdminView({ data, update, setToast }) {
         })}
       </div>
 
+      {availableMonths.length > 1 && (
+        <div className="flex gap-1.5 mt-2" style={{ overflowX: "auto" }}>
+          <button onClick={() => setMonthFilter(null)}
+            style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === null ? C.text : C.tileSoft, color: monthFilter === null ? "#fff" : C.sub }}>
+            전체 기간
+          </button>
+          {availableMonths.map((ym) => (
+            <button key={ym} onClick={() => setMonthFilter(ym)}
+              style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === ym ? C.text : C.tileSoft, color: monthFilter === ym ? "#fff" : C.sub }}>
+              {ymLabel(ym)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex flex-col gap-0.5 mt-3" style={{ background: C.grout }}>
-        {shown.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>{siteFilter ? "이 현장에 해당하는 공지가 없습니다." : "등록된 공지가 없습니다."}</div></Tile>}
+        {shown.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>{siteFilter || monthFilter ? "조건에 맞는 공지가 없습니다." : "등록된 공지가 없습니다."}</div></Tile>}
         {shown.map((n) => {
           const live = n.active && today >= n.startDate && today <= n.endDate;
           return (
@@ -4546,7 +4569,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   // 고정 수당(팀장수당·주유수당 등)은 "월" 단위 개념이라 월별 조회일 때만 반영
   const allowances = mode === "month" ? (worker?.allowances || []).filter((a) => Number(a.amount) > 0) : [];
   const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
-  const totalPay = agg.pay + allowanceTotal;
+  const totalPay = agg.pay + (agg.coverPay || 0) + (agg.oneOffPay || 0) + allowanceTotal;
 
   const [exportBusy, setExportBusy] = useState(false);
   const downloadWorkerCsv = () => {
@@ -4734,7 +4757,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <button onClick={() => setWdStatDetail("cover")} className="pressable w-full text-left mt-0.5">
             <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
               <div className="flex items-center justify-between">
-                <Eyebrow>대신 근무 (별도 집계 · 아래 지급액에 미포함)</Eyebrow>
+                <Eyebrow>대신 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center gap-3 mt-1">
@@ -4748,7 +4771,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <button onClick={() => setWdStatDetail("oneOff")} className="pressable w-full text-left mt-2">
             <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
               <div className="flex items-center justify-between">
-                <Eyebrow>일회성 현장 근무 (별도 집계 · 아래 지급액에 미포함)</Eyebrow>
+                <Eyebrow>일회성 현장 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center gap-3 mt-1">
@@ -5736,9 +5759,31 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           <LineItem key={a.id} k={a.label} v={`${money(a.amount)}원`} />
         ))}
         {Number(adj.extra) > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(adj.extra)}원`} />}
+        {p.coverPay > 0 && <LineItem k="대신 근무" sub={`${p.coverRecs.length}건`} v={`${money(p.coverPay)}원`} />}
+        {p.oneOffPay > 0 && <LineItem k="일회성 현장 근무" sub={`${p.oneOffRecs.length}건`} v={`${money(p.oneOffPay)}원`} />}
         <div style={{ borderTop: `1px solid ${C.line}` }} />
         <LineItem k="지급 합계" v={`${money(p.gross)}원`} bold />
       </div>
+
+      {(p.coverRecs.length > 0 || p.oneOffRecs.length > 0) && (
+        <div className="mt-4">
+          <Eyebrow>대신 근무 · 일회성 현장 근무 상세</Eyebrow>
+          <div style={{ marginTop: 6 }}>
+            {p.coverRecs.map((r) => (
+              <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 대신 근무{r.coverForName ? ` (${r.coverForName}님 대신)` : ""}</span>
+                <span style={{ fontWeight: 700, color: C.text }}>{money(r.flatPay)}원</span>
+              </div>
+            ))}
+            {p.oneOffRecs.map((r) => (
+              <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 일회성 현장 근무</span>
+                <span style={{ fontWeight: 700, color: C.text }}>{money(r.flatPay)}원</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {agg.shift && agg.shortMin > 0 && (
         <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
           기준보다 모자란 {minStr(agg.shortMin)}은 지급액에서 빼지 않았습니다. 확인용으로만 표시합니다.
