@@ -3086,9 +3086,12 @@ function SupplyAdminView({ data, update, setToast }) {
   const sites = data.sites || [];
   const [filter, setFilter] = useState("all");
   const [siteFilter, setSiteFilter] = useState(null);
+  const [monthFilter, setMonthFilter] = useState(null); // null = 전체 기간
   const list = [...(data.supplyRequests || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const bySite = filter === "all" ? list : list.filter((x) => x.status === filter);
-  const shown = siteFilter ? bySite.filter((r) => r.siteId === siteFilter) : bySite;
+  let bySite = filter === "all" ? list : list.filter((x) => x.status === filter);
+  bySite = siteFilter ? bySite.filter((r) => r.siteId === siteFilter) : bySite;
+  const shown = monthFilter ? bySite.filter((r) => r.date.slice(0, 7) === monthFilter) : bySite;
+  const availableMonths = [...new Set(list.map((r) => r.date.slice(0, 7)))].sort().reverse();
 
   const siteChips = sortSitesByActivity(
     sites,
@@ -3110,7 +3113,105 @@ function SupplyAdminView({ data, update, setToast }) {
       declined: [C.lineDark, C.onDarkSub, "거절됨"],
     };
     const [bg, col, label] = map[status] || map.requested;
-    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px" }}>{label}</span>;
+    return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
+  };
+
+  // 구매 정보(업체·구매방식·단가·구매가격) 입력
+  const [purchaseEdit, setPurchaseEdit] = useState(null);
+  const openPurchaseEdit = (r) => setPurchaseEdit({
+    id: r.id, vendor: r.vendor || "", method: r.purchaseMethod || "online",
+    unitPrice: r.unitPrice != null ? String(r.unitPrice) : "", totalPrice: r.totalPrice != null ? String(r.totalPrice) : "",
+  });
+  const savePurchaseInfo = () => {
+    const unitPrice = purchaseEdit.unitPrice === "" ? null : Number(purchaseEdit.unitPrice);
+    const totalPrice = purchaseEdit.totalPrice === "" ? null : Number(purchaseEdit.totalPrice);
+    update((d) => ({
+      ...d,
+      supplyRequests: (d.supplyRequests || []).map((x) => (x.id === purchaseEdit.id ? {
+        ...x, vendor: purchaseEdit.vendor.trim(), purchaseMethod: purchaseEdit.method, unitPrice, totalPrice,
+      } : x)),
+    }));
+    setToast("구매 정보를 저장했습니다");
+    setPurchaseEdit(null);
+  };
+
+  const totalSpent = shown.reduce((sum, r) => sum + (Number(r.totalPrice) || 0), 0);
+
+  const downloadSupplyCsv = () => {
+    const head = "날짜,현장,용품명,수량,요청자,전달상태,전달완료일,구매처,구매방식,단가,구매가격,메모";
+    const methodLabel = { online: "온라인", offline: "오프라인" };
+    const statusLabel = { requested: "요청됨", approved: "승인됨", delivered: "전달완료", declined: "거절됨" };
+    const lines = shown.map((r) => [
+      r.date, r.siteName || "", r.itemName, r.qty, r.workerName || "",
+      statusLabel[r.status] || r.status,
+      r.status === "delivered" && r.respondedAt ? dKey(new Date(r.respondedAt)) : "",
+      r.vendor || "", methodLabel[r.purchaseMethod] || "", r.unitPrice ?? "", r.totalPrice ?? "",
+      (r.note || "").replace(/,/g, " "),
+    ].join(","));
+    const csvText = "\uFEFF" + [head, ...lines].join("\n");
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const fname = `용품내역_${monthFilter || "전체기간"}${siteFilter ? "_" + (sites.find((s) => s.id === siteFilter)?.name || "") : ""}.csv`;
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("엑셀 파일을 다운로드했습니다");
+  };
+
+  const [supplyPdfBusy, setSupplyPdfBusy] = useState(false);
+  const downloadSupplyPdf = async () => {
+    setSupplyPdfBusy(true);
+    try {
+      const methodLabel = { online: "온라인", offline: "오프라인" };
+      const statusLabel = { requested: "요청됨", approved: "승인됨", delivered: "전달완료", declined: "거절됨" };
+      const rowsHtml = shown.map((r) => `
+        <tr>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.date}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.siteName || ""}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.itemName}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:center;">${r.qty}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.workerName || ""}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${statusLabel[r.status] || r.status}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.vendor || "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.purchaseMethod ? methodLabel[r.purchaseMethod] : "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:right;">${r.unitPrice != null ? money(r.unitPrice) + "원" : "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:right; font-weight:700;">${r.totalPrice != null ? money(r.totalPrice) + "원" : "—"}</td>
+        </tr>`).join("");
+      const html = `
+        <div style="font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; padding:24px; color:#1D232A;">
+          <div style="font-size:20px; font-weight:900;">${data.settings.companyName || "용품 구매 내역"}</div>
+          <div style="font-size:13px; color:#71767D; margin-top:4px;">
+            ${monthFilter ? ymLabel(monthFilter) : "전체 기간"}${siteFilter ? " · " + (sites.find((s) => s.id === siteFilter)?.name || "") : ""}
+          </div>
+          <table style="width:100%; border-collapse:collapse; margin-top:16px;">
+            <thead>
+              <tr style="background:#F5F2ED;">
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">날짜</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">현장</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">용품명</th>
+                <th style="padding:7px 8px; text-align:center; font-size:11px;">수량</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">요청자</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">상태</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">구매처</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">구매방식</th>
+                <th style="padding:7px 8px; text-align:right; font-size:11px;">단가</th>
+                <th style="padding:7px 8px; text-align:right; font-size:11px;">구매가격</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          <div style="margin-top:14px; text-align:right; font-size:14px; font-weight:900;">
+            총 구매금액 합계: ${money(totalSpent)}원
+          </div>
+        </div>`;
+      await downloadHtmlAsPdf(html, `용품내역_${monthFilter || "전체기간"}.pdf`, 900);
+      setToast("PDF를 다운로드했습니다");
+    } catch (e) {
+      setToast("PDF 생성에 실패했습니다");
+    } finally {
+      setSupplyPdfBusy(false);
+    }
   };
 
   return (
@@ -3121,7 +3222,7 @@ function SupplyAdminView({ data, update, setToast }) {
             style={{ fontSize: 12, fontWeight: 800, padding: "6px 11px", flexShrink: 0, background: filter === k ? C.aquaDeep : C.tileSoft, color: filter === k ? "#fff" : C.sub }}>{l}</button>
         ))}
       </div>
-      <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+      <div className="flex gap-1.5 mb-2" style={{ overflowX: "auto" }}>
         <button onClick={() => setSiteFilter(null)}
           style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: siteFilter === null ? C.text : C.tileSoft, color: siteFilter === null ? "#fff" : C.sub }}>
           전체 현장
@@ -3139,6 +3240,37 @@ function SupplyAdminView({ data, update, setToast }) {
           );
         })}
       </div>
+      {availableMonths.length > 1 && (
+        <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+          <button onClick={() => setMonthFilter(null)}
+            style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === null ? "#0369A1" : C.tileSoft, color: monthFilter === null ? "#fff" : C.sub }}>
+            전체 기간
+          </button>
+          {availableMonths.map((ym) => (
+            <button key={ym} onClick={() => setMonthFilter(ym)}
+              style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === ym ? "#0369A1" : C.tileSoft, color: monthFilter === ym ? "#fff" : C.sub }}>
+              {ymLabel(ym)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {shown.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <Btn kind="ghost" small full onClick={downloadSupplyCsv}>
+            <span className="flex items-center justify-center gap-1.5"><FileText size={13} /> 엑셀 다운로드</span>
+          </Btn>
+          <Btn kind="ghost" small full disabled={supplyPdfBusy} onClick={downloadSupplyPdf}>
+            <span className="flex items-center justify-center gap-1.5"><Printer size={13} /> {supplyPdfBusy ? "생성 중…" : "PDF 다운로드"}</span>
+          </Btn>
+        </div>
+      )}
+      {totalSpent > 0 && (
+        <div className="flex items-center justify-between mb-3" style={{ background: C.tileSoft, padding: "9px 13px" }}>
+          <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>지금 목록 기준 구매금액 합계</span>
+          <span style={{ fontSize: 15, fontWeight: 900, color: C.coral }}>{money(totalSpent)}원</span>
+        </div>
+      )}
 
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>용품 요청 내역이 없습니다.</div>}
 
@@ -3155,6 +3287,14 @@ function SupplyAdminView({ data, update, setToast }) {
                   )}
                 </div>
                 {r.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{r.note}</div>}
+                {(r.vendor || r.totalPrice != null) && (
+                  <div style={{ fontSize: 11.5, color: C.text, marginTop: 5, background: C.tileSoft, padding: "5px 8px" }}>
+                    {r.vendor && <>구매처: {r.vendor} · </>}
+                    {r.purchaseMethod && <>{r.purchaseMethod === "online" ? "온라인" : "오프라인"} · </>}
+                    {r.unitPrice != null && <>단가 {money(r.unitPrice)}원 · </>}
+                    {r.totalPrice != null && <span style={{ fontWeight: 800, color: C.coral }}>구매가격 {money(r.totalPrice)}원</span>}
+                  </div>
+                )}
               </div>
               {badge(r.status)}
             </div>
@@ -3166,6 +3306,7 @@ function SupplyAdminView({ data, update, setToast }) {
                 </>
               )}
               {r.status === "approved" && <Btn small onClick={() => setStatus(r.id, "delivered")}>전달 완료 처리</Btn>}
+              <Btn kind="ghost" small onClick={() => openPurchaseEdit(r)}>구매 정보 입력</Btn>
               <button onClick={() => { if (window.confirm("이 요청을 정말 삭제할까요?")) remove(r.id); }} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
                 <Trash2 size={13} /> 삭제
               </button>
@@ -3173,6 +3314,49 @@ function SupplyAdminView({ data, update, setToast }) {
           </Tile>
         ))}
       </div>
+
+      <Modal open={!!purchaseEdit} onClose={() => setPurchaseEdit(null)}>
+        {purchaseEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>구매 정보 입력</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>월별 정리 파일에 그대로 반영돼요.</div>
+            <div className="flex flex-col gap-2.5">
+              <Field label="구매처 (업체명)">
+                <input value={purchaseEdit.vendor} onChange={(e) => setPurchaseEdit((f) => ({ ...f, vendor: e.target.value }))} placeholder="예: 쿠팡, 다이소 강남점" style={inputStyle} />
+              </Field>
+              <Field label="구매 방식">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setPurchaseEdit((f) => ({ ...f, method: k }))}
+                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: purchaseEdit.method === k ? C.aquaDeep : C.tileSoft, color: purchaseEdit.method === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="단가 (원)">
+                  <input type="number" value={purchaseEdit.unitPrice} onChange={(e) => {
+                    const unitPrice = e.target.value;
+                    setPurchaseEdit((f) => {
+                      const r = list.find((x) => x.id === f.id);
+                      const qty = r?.qty || 1;
+                      const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
+                      return { ...f, unitPrice, totalPrice: f.totalPrice === "" || f.totalPrice === String(Math.round(Number(f.unitPrice || 0) * qty)) ? auto : f.totalPrice };
+                    });
+                  }} placeholder="개당 가격" style={inputStyle} />
+                </Field>
+                <Field label="구매가격 (원)">
+                  <input type="number" value={purchaseEdit.totalPrice} onChange={(e) => setPurchaseEdit((f) => ({ ...f, totalPrice: e.target.value }))} placeholder="총 결제금액" style={inputStyle} />
+                </Field>
+              </div>
+              <div style={{ fontSize: 11, color: C.sub }}>단가를 입력하면 수량만큼 곱해서 구매가격을 자동으로 채워드려요. 직접 수정도 가능해요.</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setPurchaseEdit(null)}>취소</Btn>
+              <Btn full onClick={savePurchaseInfo}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
