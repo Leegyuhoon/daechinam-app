@@ -6712,6 +6712,74 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [manualBusy, setManualBusy] = useState(false);
   const [closureEdit, setClosureEdit] = useState(null);
   const [catalogEdit, setCatalogEdit] = useState(null);
+
+  const [personnelPdfBusy, setPersonnelPdfBusy] = useState(false);
+  const downloadPersonnelPdf = async () => {
+    setPersonnelPdfBusy(true);
+    try {
+      const cardsHtml = workers.map((w) => {
+        const siteIds = w.siteIds || (w.siteId ? [w.siteId] : []);
+        const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join(" · ") || "—";
+        const contractPeriod = (w.contractStartDate || w.contractEndDate) ? `${w.contractStartDate || "?"} ~ ${w.contractEndDate || "?"}` : "—";
+        return `
+          <div style="border:1px solid #E6E2DB; border-radius:8px; padding:18px; margin-bottom:14px; break-inside:avoid;">
+            <div style="font-size:17px; font-weight:900; color:#1D232A; margin-bottom:10px; border-bottom:2px solid #1D232A; padding-bottom:8px;">${w.name}</div>
+            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+              <tr>
+                <td style="width:90px; padding:5px 8px; color:#71767D; font-weight:700; background:#F5F2ED;">담당 현장</td>
+                <td style="padding:5px 8px; color:#1D232A;">${siteNames}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 8px; color:#71767D; font-weight:700; background:#F5F2ED;">연락처</td>
+                <td style="padding:5px 8px; color:#1D232A;">${w.phone || "—"}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 8px; color:#71767D; font-weight:700; background:#F5F2ED;">주소</td>
+                <td style="padding:5px 8px; color:#1D232A;">${w.address || "—"}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 8px; color:#71767D; font-weight:700; background:#F5F2ED;">계좌</td>
+                <td style="padding:5px 8px; color:#1D232A;">${w.bankName ? `${w.bankName} ${w.accountNumber || ""}` : (w.accountNumber || "—")}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 8px; color:#71767D; font-weight:700; background:#F5F2ED;">계약 기간</td>
+                <td style="padding:5px 8px; color:#1D232A;">${contractPeriod}</td>
+              </tr>
+            </table>
+          </div>`;
+      }).join("");
+      const html = `
+        <div style="font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; padding:24px; color:#1D232A;">
+          <div style="font-size:20px; font-weight:900;">${settings.companyName || "인사기록카드"}</div>
+          <div style="font-size:12px; color:#71767D; margin-top:4px; margin-bottom:16px;">근무자 ${workers.length}명 · ${dKey(new Date())} 기준</div>
+          ${cardsHtml}
+        </div>`;
+      await downloadHtmlAsPdf(html, `인사기록카드_${dKey(new Date())}.pdf`, 700);
+      setToast("PDF를 다운로드했습니다");
+    } catch (e) {
+      setToast("PDF 생성에 실패했습니다");
+    } finally {
+      setPersonnelPdfBusy(false);
+    }
+  };
+  const downloadPersonnelCsv = () => {
+    const head = "이름,담당현장,연락처,주소,은행,계좌번호,계약시작일,계약종료일";
+    const lines = workers.map((w) => {
+      const siteIds = w.siteIds || (w.siteId ? [w.siteId] : []);
+      const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·");
+      return [w.name, siteNames, w.phone || "", w.address || "", w.bankName || "", w.accountNumber || "", w.contractStartDate || "", w.contractEndDate || ""]
+        .map((v) => String(v).replace(/,/g, " ")).join(",");
+    });
+    const csvText = "\uFEFF" + [head, ...lines].join("\n");
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `인사기록카드_${dKey(new Date())}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("엑셀 파일을 다운로드했습니다");
+  };
+
   const openNewCatalog = () => setCatalogEdit({ id: null, itemName: "", vendor: "", method: "online", unitPrice: "" });
   const saveCatalog = () => {
     if (!catalogEdit.itemName.trim()) { setToast("품목명을 입력해 주세요"); return; }
@@ -6852,6 +6920,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
+      address: (wEdit.address || "").trim(),
       contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "",
       contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
@@ -7000,8 +7069,16 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
 
       {/* 근무자 */}
       <Sec title={`근무자 (${workers.length}명)`} right={
-        <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], leaderSiteIds: [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
-          className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
+        <div className="flex items-center gap-2">
+          <button onClick={downloadPersonnelCsv} className="flex items-center gap-1" style={{ color: C.sub, fontSize: 11.5, fontWeight: 700 }}>
+            <FileText size={12} /> 엑셀
+          </button>
+          <button onClick={downloadPersonnelPdf} disabled={personnelPdfBusy} className="flex items-center gap-1" style={{ color: C.sub, fontSize: 11.5, fontWeight: 700 }}>
+            <Printer size={12} /> {personnelPdfBusy ? "생성 중…" : "PDF"}
+          </button>
+          <button onClick={() => setWEdit({ id: null, name: "", siteIds: sites[0] ? [sites[0].id] : [], leaderSiteIds: [], paySettingsBySite: {}, wage: "", stdHours: "", shiftHours: "", shiftPay: "" })}
+            className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>
+        </div>}>
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
         {workers.map((w) => (
           <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {}, leaderSiteIds: w.leaderSiteIds || [], allowances: (w.allowances || []).map((a) => ({ ...a })) })} style={{ padding: "12px 14px" }}>
@@ -7643,6 +7720,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               </Field>
               <Field label="은행명">
                 <input value={wEdit.bankName || ""} onChange={(e) => setWEdit({ ...wEdit, bankName: e.target.value })} placeholder="예: 국민은행" style={inputStyle} />
+              </Field>
+            </div>
+            <div className="mt-2.5">
+              <Field label="주소">
+                <input value={wEdit.address || ""} onChange={(e) => setWEdit({ ...wEdit, address: e.target.value })} placeholder="예: 서울시 강남구 ○○로 12" style={inputStyle} />
               </Field>
             </div>
             <div className="mt-2.5">
