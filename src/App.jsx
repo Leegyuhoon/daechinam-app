@@ -190,7 +190,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -232,6 +232,7 @@ function migrate(p) {
   d.payslipSigns = Array.isArray(d.payslipSigns) ? d.payslipSigns : [];
   d.siteManuals = Array.isArray(d.siteManuals) ? d.siteManuals : [];
   d.closurePeriods = Array.isArray(d.closurePeriods) ? d.closurePeriods : [];
+  d.supplyCatalog = Array.isArray(d.supplyCatalog) ? d.supplyCatalog : [];
   delete d.deviceWorkerId;
   return d;
 }
@@ -3164,6 +3165,15 @@ function SupplyAdminView({ data, update, setToast }) {
     return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
   };
 
+  // 설정에 등록해둔 "자주 사는 품목" 카탈로그에서 이름이 일치하는 걸 찾아 자동으로 채워줌
+  const catalog = data.supplyCatalog || [];
+  const matchCatalog = (itemName) => {
+    const norm = itemName.trim().toLowerCase();
+    if (!norm) return null;
+    return catalog.find((c) => c.itemName.trim().toLowerCase() === norm)
+      || catalog.find((c) => norm.includes(c.itemName.trim().toLowerCase()) || c.itemName.trim().toLowerCase().includes(norm));
+  };
+
   // 구매 정보(업체·구매방식·단가·구매가격) 입력 — 같이 요청한 묶음 전체를 한 모달에서, "+"로 자유롭게 추가하며 처리
   const [purchaseEdit, setPurchaseEdit] = useState(null); // { groupIds: [], rows: [{ id(기존 요청 id 또는 null=신규), itemName, vendor, method, unitPrice, totalPrice }] }
   const openPurchaseEdit = (r) => {
@@ -3171,15 +3181,38 @@ function SupplyAdminView({ data, update, setToast }) {
     const groupItems = r.batchId ? list.filter((x) => x.batchId === r.batchId) : [r];
     setPurchaseEdit({
       groupIds,
-      rows: groupItems.map((x) => ({
-        id: x.id, itemName: x.itemName,
-        vendor: x.vendor || "", method: x.purchaseMethod || "online",
-        unitPrice: x.unitPrice != null ? String(x.unitPrice) : "", totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
-      })),
+      rows: groupItems.map((x) => {
+        // 이미 구매 정보가 있으면 그대로, 없으면 카탈로그에서 자동으로 찾아서 채움
+        if (x.vendor || x.unitPrice != null) {
+          return {
+            id: x.id, itemName: x.itemName,
+            vendor: x.vendor || "", method: x.purchaseMethod || "online",
+            unitPrice: x.unitPrice != null ? String(x.unitPrice) : "", totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
+          };
+        }
+        const m = matchCatalog(x.itemName);
+        const unitPrice = m?.unitPrice != null ? m.unitPrice : "";
+        const totalPrice = unitPrice !== "" ? Math.round(unitPrice * (x.qty || 1)) : "";
+        return {
+          id: x.id, itemName: x.itemName,
+          vendor: m?.vendor || "", method: m?.method || "online",
+          unitPrice: unitPrice === "" ? "" : String(unitPrice), totalPrice: totalPrice === "" ? "" : String(totalPrice),
+          matchedFromCatalog: !!m,
+        };
+      }),
     });
   };
   const addPurchaseRow = () => {
     setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", vendor: "", method: "online", unitPrice: "", totalPrice: "" }] }));
+  };
+  const applyCatalogToRow = (i, itemName) => {
+    const m = matchCatalog(itemName);
+    if (!m) return;
+    setPurchaseEdit((f) => {
+      const rows = [...f.rows];
+      rows[i] = { ...rows[i], itemName, vendor: m.vendor || "", method: m.method || "online", unitPrice: m.unitPrice != null ? String(m.unitPrice) : "", matchedFromCatalog: true };
+      return { ...f, rows };
+    });
   };
   const removePurchaseRow = (i) => {
     setPurchaseEdit((f) => ({ ...f, rows: f.rows.filter((_, idx) => idx !== i) }));
@@ -3413,19 +3446,27 @@ function SupplyAdminView({ data, update, setToast }) {
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>구매 정보 입력</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>
-              같이 요청한 품목들이 자동으로 다 나와요. 요청과 무관하게 더 구매한 게 있으면 "+ 항목 추가"로 같이 넣을 수 있어요.
+              같이 요청한 품목들이 자동으로 다 나와요. 설정에 등록해둔 품목이면 업체·단가가 자동으로 채워져요(직접 수정 가능). 요청과 무관하게 더 구매한 게 있으면 "+ 항목 추가"로 같이 넣을 수 있어요.
             </div>
             <div className="flex flex-col gap-3">
               {purchaseEdit.rows.map((row, i) => (
                 <div key={i} style={{ background: C.tileSoft, padding: 12 }}>
                   <div className="flex items-center justify-between mb-2">
                     {row.id ? (
-                      <div style={{ fontSize: 13.5, fontWeight: 900, color: C.text }}>{row.itemName}</div>
+                      <div className="flex items-center gap-1.5">
+                        <div style={{ fontSize: 13.5, fontWeight: 900, color: C.text }}>{row.itemName}</div>
+                        {row.matchedFromCatalog && (
+                          <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#0369A1", padding: "1px 5px", whiteSpace: "nowrap" }}>등록된 정보로 자동 입력됨</span>
+                        )}
+                      </div>
                     ) : (
-                      <input value={row.itemName} onChange={(e) => {
-                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, itemName: e.target.value };
-                        setPurchaseEdit((f) => ({ ...f, rows }));
-                      }} placeholder="품목명 (요청 없이 추가 구매한 것)" style={{ ...inputStyle, background: C.tile, flex: 1, marginRight: 8 }} />
+                      <input value={row.itemName}
+                        onChange={(e) => {
+                          const rows = [...purchaseEdit.rows]; rows[i] = { ...row, itemName: e.target.value };
+                          setPurchaseEdit((f) => ({ ...f, rows }));
+                        }}
+                        onBlur={(e) => applyCatalogToRow(i, e.target.value)}
+                        placeholder="품목명 (요청 없이 추가 구매한 것)" style={{ ...inputStyle, background: C.tile, flex: 1, marginRight: 8 }} />
                     )}
                     {purchaseEdit.rows.length > 1 && (
                       <button onClick={() => removePurchaseRow(i)}><X size={16} color={C.sub} /></button>
@@ -6655,6 +6696,27 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [addrResults, setAddrResults] = useState([]);
   const [manualBusy, setManualBusy] = useState(false);
   const [closureEdit, setClosureEdit] = useState(null);
+  const [catalogEdit, setCatalogEdit] = useState(null);
+  const openNewCatalog = () => setCatalogEdit({ id: null, itemName: "", vendor: "", method: "online", unitPrice: "" });
+  const saveCatalog = () => {
+    if (!catalogEdit.itemName.trim()) { setToast("품목명을 입력해 주세요"); return; }
+    const c = {
+      id: catalogEdit.id || uid(), itemName: catalogEdit.itemName.trim(), vendor: catalogEdit.vendor.trim(),
+      method: catalogEdit.method, unitPrice: catalogEdit.unitPrice === "" ? null : Number(catalogEdit.unitPrice),
+    };
+    update((d) => ({
+      ...d,
+      supplyCatalog: catalogEdit.id ? (d.supplyCatalog || []).map((x) => (x.id === c.id ? c : x)) : [...(d.supplyCatalog || []), c],
+    }));
+    setToast("저장했습니다");
+    setCatalogEdit(null);
+  };
+  const removeCatalog = (id) => {
+    if (!window.confirm("이 항목을 삭제할까요?")) return;
+    update((d) => ({ ...d, supplyCatalog: (d.supplyCatalog || []).filter((x) => x.id !== id) }));
+    setCatalogEdit(null);
+    setToast("삭제했습니다");
+  };
   // 시작일 하루 전 / 종료일 하루 뒤 날짜 계산 (며칠까지 근무, 며칠부터 재개 문구용)
   const dayBefore = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() - 86400000));
   const dayAfter = (dateStr) => dKey(new Date(new Date(dateStr + "T00:00:00").getTime() + 86400000));
@@ -7047,6 +7109,65 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           )}
         </Tile>
       </Sec>
+
+      {/* 용품 구매 정보(자주 사는 품목 미리 등록) */}
+      <Sec title="용품 구매 정보 (자주 사는 품목)" right={
+        <button onClick={openNewCatalog} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
+        <Tile>
+          <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+            자주 구매하는 용품의 <b style={{ color: C.text }}>업체·구매방식·단가</b>를 미리 등록해두면, 근무자가 그 이름으로 요청했을 때 "구매 정보 입력"에서 자동으로 채워져요. 물론 그 자리에서 직접 고쳐도 돼요.
+          </div>
+        </Tile>
+        {(data.supplyCatalog || []).length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 품목이 없습니다.</div></Tile>}
+        {(data.supplyCatalog || []).map((c) => (
+          <Tile key={c.id} onClick={() => setCatalogEdit({ ...c, unitPrice: c.unitPrice != null ? String(c.unitPrice) : "" })} style={{ padding: "12px 14px" }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.itemName}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                  {c.vendor || "구매처 미지정"} · {c.method === "offline" ? "오프라인" : "온라인"}{c.unitPrice != null ? ` · 단가 ${money(c.unitPrice)}원` : ""}
+                </div>
+              </div>
+              <Pencil size={14} color={C.sub} />
+            </div>
+          </Tile>
+        ))}
+      </Sec>
+
+      <Modal open={!!catalogEdit} onClose={() => setCatalogEdit(null)}>
+        {catalogEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>용품 구매 정보 {catalogEdit.id ? "수정" : "추가"}</div>
+            <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="품목명">
+                <input value={catalogEdit.itemName} onChange={(e) => setCatalogEdit((f) => ({ ...f, itemName: e.target.value }))}
+                  placeholder="예: 고무장갑, 대걸레, 쓰레기봉투 20L" style={inputStyle} />
+              </Field>
+              <Field label="구매처 (업체명)">
+                <input value={catalogEdit.vendor} onChange={(e) => setCatalogEdit((f) => ({ ...f, vendor: e.target.value }))}
+                  placeholder="예: 쿠팡, 다이소 강남점" style={inputStyle} />
+              </Field>
+              <Field label="구매 방식">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setCatalogEdit((f) => ({ ...f, method: k }))}
+                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: catalogEdit.method === k ? C.aquaDeep : C.tileSoft, color: catalogEdit.method === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="기본 단가 (원)">
+                <input type="number" value={catalogEdit.unitPrice} onChange={(e) => setCatalogEdit((f) => ({ ...f, unitPrice: e.target.value }))}
+                  placeholder="개당 가격" style={inputStyle} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              {catalogEdit.id ? <Btn kind="danger" full onClick={() => removeCatalog(catalogEdit.id)}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
+                : <Btn kind="ghost" full onClick={() => setCatalogEdit(null)}>취소</Btn>}
+              <Btn full onClick={saveCatalog}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* 휴무 기간(방학 등) 관리 */}
       <Sec title="휴무 기간 · 방학 등" right={
