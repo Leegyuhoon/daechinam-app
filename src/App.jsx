@@ -772,17 +772,33 @@ export default function App() {
         const next = typeof mut === "function" ? mut(base) : mut;
         await saveShared(next);
         // 저장하자마자 바로 믿지 않고, 잠깐 기다렸다가 서버에서 다시 읽어와서 실제로 반영됐는지 확인함.
-        // 출퇴근은 돈과 직결된 유일한 증거라서, 느리더라도 이 확인 과정을 반드시 거침.
-        await new Promise((res) => setTimeout(res, 700));
+        // 출퇴근은 돈과 직결된 유일한 증거라서, 느리더라도 이 확인 과정을 두 번(시간차를 두고) 반드시 거침 —
+        // 1차 확인 직후에 다른 곳에서 뒤늦게 덮어쓰는 경우까지 잡아내기 위함.
+        await new Promise((res) => setTimeout(res, 1000));
         let confirmed = false;
         try {
           const check = await loadShared();
           const fresh = check ? migrate(check) : null;
-          if (fresh && verifyFn(fresh)) { confirmed = true; dataRef.current = fresh; setData(fresh); }
+          if (fresh && verifyFn(fresh)) confirmed = true;
         } catch (e) {}
         if (confirmed) {
-          lastLocalWriteRef.current = Date.now();
-          return true;
+          // 2차 재확인 — 조금 더 기다렸다가 정말로 그대로 남아있는지 한 번 더 봄
+          await new Promise((res) => setTimeout(res, 1500));
+          try {
+            const check2 = await loadShared();
+            const fresh2 = check2 ? migrate(check2) : null;
+            if (fresh2 && verifyFn(fresh2)) {
+              dataRef.current = fresh2; setData(fresh2);
+              lastLocalWriteRef.current = Date.now();
+              return true;
+            }
+            // 2차에서 사라졌으면 확정하지 않고 재시도로 넘어감(다시 저장 시도)
+          } catch (e) {
+            // 재확인 자체가 네트워크로 실패한 거면, 1차 확인 결과를 믿고 통과시킴
+            dataRef.current = check ? migrate(check) : dataRef.current;
+            lastLocalWriteRef.current = Date.now();
+            return true;
+          }
         }
       } catch (e) {}
       // 실패했으면 다음 시도 전에 잠깐 쉼
@@ -1437,19 +1453,24 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     setClockBusy(true);
     const ts = new Date();
     const targetId = open.id;
+    const expectedOutFlag = !!chk.outside;
     const ok = await saveConfirmedVerified(
       (d) => ({
         ...d, records: d.records.map((r) => (r.id === targetId ? {
           ...r, clockOut: ts.toISOString(), outLoc: chk.loc || null,
-          outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: !!chk.outside,
+          outDist: chk.d != null ? Math.round(chk.d) : null, outFlag: expectedOutFlag,
         } : r)),
       }),
-      (fresh) => { const r = fresh.records.find((x) => x.id === targetId); return !!r && !!r.clockOut; }
+      (fresh) => {
+        const r = fresh.records.find((x) => x.id === targetId);
+        return !!r && !!r.clockOut && !!r.outFlag === expectedOutFlag;
+      }
     );
     clockBusyRef.current = false;
     setClockBusy(false);
     if (!ok) return;
     setConfirm(null);
+    setClockOutDone({ outside: expectedOutFlag, time: `${pad(ts.getHours())}:${pad(ts.getMinutes())}`, site: open?.site || "현장" });
     setToast(chk.outside ? "퇴근 처리됐습니다 · 현장 밖으로 기록됨" : `퇴근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
   };
 
@@ -1534,6 +1555,43 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const canGo = confirm === "out" || chk.state === "inside" || chk.state === "nogeo";
 
   const [wRefreshing, setWRefreshing] = useState(false);
+  const [clockOutDone, setClockOutDone] = useState(null); // null | { outside, time, site }
+
+  // 퇴근이 서버에 확실히 확인된 직후엔, 다른 화면으로 자연스럽게 넘어가는 대신
+  // 이렇게 전용 완료 화면으로 딱 멈춰서 확실히 마무리 짓게 함. 이 화면에 있는 동안은
+  // 아무 것도 추가로 저장하지 않으니, 이 상태를 보신 뒤엔 앱을 종료하셔도 안전해요.
+  if (clockOutDone) {
+    return (
+      <div className="flex flex-col items-center justify-center px-6" style={{ flex: 1 }}>
+        <div style={{
+          width: 96, height: 96, borderRadius: 999, background: clockOutDone.outside ? ST.outside : ST.complete,
+          display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+        }}>
+          <Check size={48} color="#fff" strokeWidth={3} />
+        </div>
+        <div style={{ color: C.onDark, fontSize: 22, fontWeight: 900, marginTop: 22, textAlign: "center" }}>
+          퇴근 처리가 확실히 완료됐어요
+        </div>
+        <div style={{ color: C.onDarkSub, fontSize: 14, marginTop: 8, textAlign: "center", lineHeight: 1.6 }}>
+          {clockOutDone.site} · {clockOutDone.time}<br />
+          {clockOutDone.outside && <span style={{ color: ST.outside, fontWeight: 700 }}>현장 밖에서 처리된 것으로 기록됐어요.<br /></span>}
+          서버에 두 번 확인까지 마쳤어요.
+        </div>
+        <div style={{
+          marginTop: 24, background: C.bgSoft, border: `1px solid ${C.lineDark}`, borderRadius: RADIUS_SM,
+          padding: "14px 18px", maxWidth: 300, textAlign: "center",
+        }}>
+          <div style={{ color: C.aqua, fontSize: 13.5, fontWeight: 800 }}>이제 앱을 종료하셔도 안전해요</div>
+          <div style={{ color: C.onDarkSub, fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+            홈 화면으로 나가시거나 앱을 완전히 꺼주셔도 오늘 퇴근 기록은 그대로 유지돼요.
+          </div>
+        </div>
+        <button onClick={() => setClockOutDone(null)} className="mt-6" style={{ color: C.onDarkSub, fontSize: 13, fontWeight: 700, textDecoration: "underline" }}>
+          그래도 화면으로 돌아가기
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center px-5" style={{ flex: 1, paddingTop: 40, paddingBottom: 32 }}>
