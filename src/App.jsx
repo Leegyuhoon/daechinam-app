@@ -4095,32 +4095,35 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 
       <div className="mx-4 grid grid-cols-3 gap-0.5" style={{ background: C.grout }}>
         <button onClick={() => setStatDetail("times")} className="pressable text-left">
-          <Tile style={{ padding: 12 }}>
+          <Tile style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? "총 타임" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1"><Num size={19}>{isShiftMode ? `${tot.times}회` : hmc(tot.net)}</Num></div>
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={20}>{isShiftMode ? `${tot.times}회` : hmc(tot.net)}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("times")} className="pressable text-left">
-          <Tile style={{ padding: 12 }}>
+          <Tile style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? "총 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1"><Num size={19}>{isShiftMode ? hmc(tot.net) : `${tot.days}일`}</Num></div>
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={20}>{isShiftMode ? hmc(tot.net) : `${tot.days}일`}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("pay")} className="pressable text-left">
-          <Tile style={{ padding: 12 }}><Eyebrow>지급 합계</Eyebrow><div className="mt-1"><Num size={22} weight={900} color={C.coral}>{money(tot.pay)}</Num></div></Tile>
+          <Tile style={{ padding: 12, minWidth: 0 }}>
+            <Eyebrow>지급 합계</Eyebrow>
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={17} weight={900} color={C.coral}>{money(tot.pay)}원</Num></div>
+          </Tile>
         </button>
       </div>
       <div className="mx-4 mt-0.5 grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
         <button onClick={() => setStatDetail("ot")} className="pressable text-left">
-          <Tile soft style={{ padding: 12 }}>
+          <Tile soft style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? `추가 인정 (${tot.blocks}회)` : "추가근무"}</Eyebrow>
-            <div className="mt-1"><Num size={17} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("short")} className="pressable text-left">
-          <Tile soft style={{ padding: 12 }}>
+          <Tile soft style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1"><Num size={17} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
           </Tile>
         </button>
       </div>
