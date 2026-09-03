@@ -1073,7 +1073,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const myLeaderSiteIds = worker ? (worker.leaderSiteIds || []) : [];
   const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
-  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [] }); setLeadNoticeOpen(true); };
+  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [], files: [], previews: [], videoFile: null, videoPreview: "", kind: "none" }); setLeadNoticeOpen(true); };
 
   const myWorkerSiteIds2 = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])) : [];
 
@@ -1097,13 +1097,44 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const myManuals = worker ? (data.siteManuals || []).filter((m) => myWorkerSiteIds2.includes(m.siteId)) : [];
   const [manualOpen, setManualOpen] = useState(false);
 
-  const submitLeadNotice = () => {
+  const [leadNoticeSaveBusy, setLeadNoticeSaveBusy] = useState(false);
+  const pickLeadNoticeFiles = (fileList) => {
+    const arr = Array.from(fileList || []).filter(Boolean);
+    if (arr.length === 0) return;
+    setLeadNoticeForm((f) => {
+      const nextFiles = [...(f.files || []), ...arr].slice(0, 6);
+      const nextPreviews = nextFiles.map((x) => URL.createObjectURL(x));
+      return { ...f, files: nextFiles, previews: nextPreviews, kind: "photo" };
+    });
+  };
+  const removeLeadNoticePhotoAt = (idx) => {
+    setLeadNoticeForm((f) => ({ ...f, files: f.files.filter((_, i) => i !== idx), previews: f.previews.filter((_, i) => i !== idx) }));
+  };
+  const pickLeadNoticeVideo = (file) => {
+    if (!file) return;
+    setLeadNoticeForm((f) => ({ ...f, videoFile: file, videoPreview: URL.createObjectURL(file), kind: "video" }));
+  };
+  const submitLeadNotice = async () => {
     if (!leadNoticeForm.title.trim()) { setToast("제목을 입력해 주세요"); return; }
     if (myLeaderSiteIds.length === 0) { setToast("팀장으로 임명된 현장이 없어서 공지를 보낼 수 없어요"); return; }
     const siteIds = leadNoticeForm.audience === "site" ? leadNoticeForm.siteIds.filter((id) => myLeaderSiteIds.includes(id)) : [];
     const workerIds = leadNoticeForm.audience === "custom" ? leadNoticeForm.workerIds.filter((id) => myTeamWorkers.some((w) => w.id === id)) : [];
     if (leadNoticeForm.audience === "site" && siteIds.length === 0) { setToast("현장을 한 곳 이상 선택해 주세요"); return; }
     if (leadNoticeForm.audience === "custom" && workerIds.length === 0) { setToast("받는 사람을 한 명 이상 선택해 주세요"); return; }
+    setLeadNoticeSaveBusy(true);
+    let photoIds = [];
+    let kind = leadNoticeForm.kind === "none" ? null : leadNoticeForm.kind;
+    try {
+      if (leadNoticeForm.kind === "video" && leadNoticeForm.videoFile) {
+        photoIds = [await uploadVideo(leadNoticeForm.videoFile)];
+      } else if (leadNoticeForm.kind === "photo" && (leadNoticeForm.files || []).length > 0) {
+        for (const f of leadNoticeForm.files) photoIds.push(await uploadPhoto(f));
+      }
+    } catch (e) {
+      setLeadNoticeSaveBusy(false);
+      setToast("사진·영상 업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+      return;
+    }
     const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
     const start = dKey(new Date());
     const endD = new Date(); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
@@ -1112,10 +1143,11 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       notices: [...(d.notices || []), {
         id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
         audience: leadNoticeForm.audience, siteIds, siteName: siteNames.join("·"), workerIds,
-        startDate: start, endDate: dKey(endD), active: true,
+        startDate: start, endDate: dKey(endD), active: true, photoIds, kind,
         createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
       }],
     }));
+    setLeadNoticeSaveBusy(false);
     setToast("공지를 보냈습니다");
     setLeadNoticeOpen(false);
   };
@@ -1240,6 +1272,18 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       return true;
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [worker, data.notices, today]);
+  // 지금 노출 중인지 여부와 무관하게, 나에게 해당됐던 공지 전체 — 월별로 지난 공지도 다시 볼 수 있게
+  const myAllNotices = useMemo(() => {
+    if (!worker) return [];
+    const myWorkerSiteIds = worker.siteIds || (worker.siteId ? [worker.siteId] : []);
+    return (data.notices || []).filter((n) => {
+      if (n.audience === "custom" && !(n.workerIds || []).includes(worker.id)) return false;
+      if (n.audience === "site" && !(n.siteIds || []).some((id) => myWorkerSiteIds.includes(id))) return false;
+      return true;
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [worker, data.notices]);
+  const myNoticeMonths = [...new Set(myAllNotices.map((n) => n.createdAt.slice(0, 7)))].sort().reverse();
+  const [noticeMonthFilter, setNoticeMonthFilter] = useState(null); // null = "지금 해당되는 것만"
   const [noticeListOpen, setNoticeListOpen] = useState(false);
   const [noticeReadViewer, setNoticeReadViewer] = useState(null);
 
@@ -1779,6 +1823,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{myNoticeViewer.title}</div>
             {myNoticeViewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{myNoticeViewer.message}</div>}
+            {myNoticeViewer.kind === "video" && myNoticeViewer.photoIds?.length > 0 && (
+              <video src={photoUrl(myNoticeViewer.photoIds[0])} controls style={{ width: "100%", borderRadius: RADIUS_SM, marginTop: 12, background: "#000" }} />
+            )}
+            {myNoticeViewer.kind === "photo" && myNoticeViewer.photoIds?.length > 0 && (
+              <div className="flex flex-col gap-2 mt-3">
+                {myNoticeViewer.photoIds.map((pid) => <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />)}
+              </div>
+            )}
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
               노출 기간 {myNoticeViewer.startDate} ~ {myNoticeViewer.endDate}
             </div>
@@ -1842,6 +1894,46 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               rows={3} style={{ ...inputStyle, resize: "none" }} />
           </Field>
 
+          <Field label="사진·영상 첨부 (선택)">
+            <div className="grid grid-cols-2 gap-1.5 mb-2">
+              {[["photo", "사진"], ["video", "동영상"]].map(([k, l]) => (
+                <button key={k} onClick={() => setLeadNoticeForm((f) => ({ ...f, kind: f.kind === k ? "none" : k, files: [], previews: [], videoFile: null, videoPreview: "" }))}
+                  style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: leadNoticeForm.kind === k ? C.aquaDeep : C.tileSoft, color: leadNoticeForm.kind === k ? "#fff" : C.sub }}>{l}</button>
+              ))}
+            </div>
+            {leadNoticeForm.kind === "photo" && (
+              <div className="grid grid-cols-3 gap-2">
+                {(leadNoticeForm.previews || []).map((src, i) => (
+                  <div key={i} className="relative" style={{ aspectRatio: "1" }}>
+                    <img src={src} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: RADIUS_SM, display: "block" }} />
+                    <button onClick={() => removeLeadNoticePhotoAt(i)} style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 4 }}><X size={11} color="#fff" /></button>
+                  </div>
+                ))}
+                {(leadNoticeForm.files || []).length < 6 && (
+                  <label style={{ aspectRatio: "1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, cursor: "pointer", background: C.tileSoft }}>
+                    <Camera size={18} color={C.sub} />
+                    <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 4 }}>선택</div>
+                    <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => { pickLeadNoticeFiles(e.target.files); e.target.value = ""; }} />
+                  </label>
+                )}
+              </div>
+            )}
+            {leadNoticeForm.kind === "video" && (
+              leadNoticeForm.videoPreview ? (
+                <div className="relative">
+                  <video src={leadNoticeForm.videoPreview} controls style={{ width: "100%", borderRadius: RADIUS_SM, background: "#000" }} />
+                  <button onClick={() => setLeadNoticeForm((f) => ({ ...f, videoFile: null, videoPreview: "" }))} style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}><X size={14} color="#fff" /></button>
+                </div>
+              ) : (
+                <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
+                  <Camera size={20} color={C.sub} />
+                  <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 25MB)</div>
+                  <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickLeadNoticeVideo(e.target.files?.[0])} />
+                </label>
+              )
+            )}
+          </Field>
+
           <Field label="받는 대상">
             <div className="grid grid-cols-2 gap-1.5">
               {[["site", "현장 선택"], ["custom", "선택한 사람"]].map(([k, l]) => (
@@ -1892,8 +1984,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-2 mt-4">
-          <Btn kind="ghost" full onClick={() => setLeadNoticeOpen(false)}>취소</Btn>
-          <Btn full onClick={submitLeadNotice}>공지 보내기</Btn>
+          <Btn kind="ghost" full disabled={leadNoticeSaveBusy} onClick={() => setLeadNoticeOpen(false)}>취소</Btn>
+          <Btn full disabled={leadNoticeSaveBusy} onClick={submitLeadNotice}>{leadNoticeSaveBusy ? "저장 중…" : "공지 보내기"}</Btn>
         </div>
       </Modal>
 
@@ -2227,6 +2319,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             {noticeShown.message && (
               <div style={{ fontSize: 14, color: C.sub, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{noticeShown.message}</div>
             )}
+            {noticeShown.kind === "video" && noticeShown.photoIds?.length > 0 && (
+              <video src={photoUrl(noticeShown.photoIds[0])} controls style={{ width: "100%", borderRadius: RADIUS_SM, marginTop: 12, background: "#000" }} />
+            )}
+            {noticeShown.kind === "photo" && noticeShown.photoIds?.length > 0 && (
+              <div className="flex flex-col gap-2 mt-3">
+                {noticeShown.photoIds.map((pid) => <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />)}
+              </div>
+            )}
             <div className="mt-5">
               <Btn full onClick={dismissNotice}>확인했어요{noticeQueue.length > 0 ? ` (다음 공지 ${noticeQueue.length}건)` : ""}</Btn>
             </div>
@@ -2237,15 +2337,33 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       {/* 공지사항 목록 (언제든 다시 보기) */}
       <Modal open={noticeListOpen} onClose={() => setNoticeListOpen(false)}>
         <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>공지사항</div>
-        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>지금 나에게 해당되는 공지예요.</div>
-        <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
-          {myActiveNotices.map((n) => (
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>
+          {noticeMonthFilter ? `${ymLabel(noticeMonthFilter)}에 온 공지예요.` : "지금 나에게 해당되는 공지예요."}
+        </div>
+        {myNoticeMonths.length > 0 && (
+          <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+            <button onClick={() => setNoticeMonthFilter(null)}
+              style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: noticeMonthFilter === null ? C.aquaDeep : C.tileSoft, color: noticeMonthFilter === null ? "#fff" : C.sub }}>
+              지금 것만
+            </button>
+            {myNoticeMonths.map((ym) => (
+              <button key={ym} onClick={() => setNoticeMonthFilter(ym)}
+                style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: noticeMonthFilter === ym ? C.aquaDeep : C.tileSoft, color: noticeMonthFilter === ym ? "#fff" : C.sub }}>
+                {ymLabel(ym)}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 380, overflowY: "auto" }}>
+          {(noticeMonthFilter ? myAllNotices.filter((n) => n.createdAt.slice(0, 7) === noticeMonthFilter) : myActiveNotices).map((n) => (
             <Tile key={n.id} onClick={() => { setNoticeListOpen(false); setNoticeReadViewer(n); }} style={{ padding: "12px 14px" }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{n.title}</div>
               <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{n.createdByName || "관리자"} · {n.createdAt.slice(0, 10)}</div>
             </Tile>
           ))}
-          {myActiveNotices.length === 0 && <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "10px 0" }}>지금 해당되는 공지가 없어요.</div></Tile>}
+          {(noticeMonthFilter ? myAllNotices.filter((n) => n.createdAt.slice(0, 7) === noticeMonthFilter) : myActiveNotices).length === 0 && (
+            <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "10px 0" }}>{noticeMonthFilter ? "이 달엔 온 공지가 없어요." : "지금 해당되는 공지가 없어요."}</div></Tile>
+          )}
         </div>
       </Modal>
 
@@ -2259,6 +2377,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 8, lineHeight: 1.35 }}>{noticeReadViewer.title}</div>
             {noticeReadViewer.message && (
               <div style={{ fontSize: 14, color: C.sub, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{noticeReadViewer.message}</div>
+            )}
+            {noticeReadViewer.kind === "video" && noticeReadViewer.photoIds?.length > 0 && (
+              <video src={photoUrl(noticeReadViewer.photoIds[0])} controls style={{ width: "100%", borderRadius: RADIUS_SM, marginTop: 12, background: "#000" }} />
+            )}
+            {noticeReadViewer.kind === "photo" && noticeReadViewer.photoIds?.length > 0 && (
+              <div className="flex flex-col gap-2 mt-3">
+                {noticeReadViewer.photoIds.map((pid) => <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />)}
+              </div>
             )}
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 14, fontFamily: MONO }}>
               노출 기간 {noticeReadViewer.startDate} ~ {noticeReadViewer.endDate}
@@ -3185,9 +3311,32 @@ function NoticeAdminView({ data, update, setToast }) {
     id: null, title: "", message: "", audience: "all", workerIds: [],
     mode: "range", targetDate: today, leadDays: 7, includeTarget: true,
     startDate: today, endDate: today, active: true,
+    files: [], previews: [], videoFile: null, videoPreview: "", kind: "none", photoIds: [],
   });
 
-  const saveNotice = () => {
+  const [noticeSaveBusy, setNoticeSaveBusy] = useState(false);
+  const pickNoticeFiles = (fileList) => {
+    const arr = Array.from(fileList || []).filter(Boolean);
+    if (arr.length === 0) return;
+    setEdit((f) => {
+      const nextFiles = [...(f.files || []), ...arr].slice(0, 6);
+      const nextPreviews = nextFiles.map((x) => URL.createObjectURL(x));
+      return { ...f, files: nextFiles, previews: nextPreviews, kind: "photo" };
+    });
+  };
+  const removeNoticePhotoAt = (idx) => {
+    setEdit((f) => {
+      const nextFiles = f.files.filter((_, i) => i !== idx);
+      const nextPreviews = f.previews.filter((_, i) => i !== idx);
+      return { ...f, files: nextFiles, previews: nextPreviews };
+    });
+  };
+  const pickNoticeVideo = (file) => {
+    if (!file) return;
+    setEdit((f) => ({ ...f, videoFile: file, videoPreview: URL.createObjectURL(file), kind: "video" }));
+  };
+
+  const saveNotice = async () => {
     if (!edit.title.trim()) { setToast("제목을 입력해 주세요"); return; }
     if (edit.audience === "site" && (edit.siteIds || []).length === 0) { setToast("현장을 한 곳 이상 선택해 주세요"); return; }
     let startDate = edit.startDate, endDate = edit.endDate;
@@ -3198,6 +3347,21 @@ function NoticeAdminView({ data, update, setToast }) {
       startDate = dKey(s); endDate = dKey(e);
     }
     if (startDate > endDate) { setToast("종료일이 시작일보다 빨라요"); return; }
+    setNoticeSaveBusy(true);
+    let photoIds = edit.photoIds || [];
+    let kind = edit.kind === "none" ? null : edit.kind;
+    try {
+      if (edit.kind === "video" && edit.videoFile) {
+        photoIds = [await uploadVideo(edit.videoFile)];
+      } else if (edit.kind === "photo" && (edit.files || []).length > 0) {
+        photoIds = [];
+        for (const f of edit.files) photoIds.push(await uploadPhoto(f));
+      }
+    } catch (e) {
+      setNoticeSaveBusy(false);
+      setToast("사진·영상 업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+      return;
+    }
     const siteIds = edit.audience === "site" ? (edit.siteIds || []) : [];
     const siteName = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·");
     const n = {
@@ -3205,10 +3369,12 @@ function NoticeAdminView({ data, update, setToast }) {
       audience: edit.audience, workerIds: edit.audience === "custom" ? edit.workerIds : [],
       siteIds, siteName,
       startDate, endDate, active: edit.active,
+      photoIds, kind,
       createdAt: edit.id ? edit.createdAt : new Date().toISOString(),
       createdBy: edit.id ? (edit.createdBy || "admin") : "admin", createdByName: edit.id ? (edit.createdByName || "관리자") : "관리자",
     };
     update((d) => ({ ...d, notices: edit.id ? (d.notices || []).map((x) => (x.id === n.id ? n : x)) : [...(d.notices || []), n] }));
+    setNoticeSaveBusy(false);
     setEdit(null); setToast("공지를 저장했습니다");
   };
   const removeNotice = (id) => { update((d) => ({ ...d, notices: (d.notices || []).filter((x) => x.id !== id) })); setEdit(null); setToast("삭제했습니다"); };
@@ -3308,6 +3474,51 @@ function NoticeAdminView({ data, update, setToast }) {
                 <textarea value={edit.message} onChange={(e) => setEdit({ ...edit, message: e.target.value })} rows={3} style={{ ...inputStyle, resize: "none" }} />
               </Field>
 
+              <Field label="사진·영상 첨부 (선택)">
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {[["photo", "사진"], ["video", "동영상"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setEdit((f) => ({ ...f, kind: f.kind === k ? "none" : k, files: [], previews: [], videoFile: null, videoPreview: "" }))}
+                      style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: edit.kind === k ? C.aquaDeep : C.tileSoft, color: edit.kind === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+                {edit.kind === "photo" && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(edit.previews || []).map((src, i) => (
+                      <div key={i} className="relative" style={{ aspectRatio: "1" }}>
+                        <img src={src} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: RADIUS_SM, display: "block" }} />
+                        <button onClick={() => removeNoticePhotoAt(i)} style={{ position: "absolute", top: 4, right: 4, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 4 }}><X size={11} color="#fff" /></button>
+                      </div>
+                    ))}
+                    {(edit.previews || []).length === 0 && edit.photoIds?.length > 0 && edit.photoIds.map((pid) => (
+                      <img key={pid} src={photoUrl(pid)} style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: RADIUS_SM }} />
+                    ))}
+                    {(edit.files || []).length < 6 && (
+                      <label style={{ aspectRatio: "1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, cursor: "pointer", background: C.tileSoft }}>
+                        <Camera size={18} color={C.sub} />
+                        <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, marginTop: 4 }}>선택</div>
+                        <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => { pickNoticeFiles(e.target.files); e.target.value = ""; }} />
+                      </label>
+                    )}
+                  </div>
+                )}
+                {edit.kind === "video" && (
+                  edit.videoPreview ? (
+                    <div className="relative">
+                      <video src={edit.videoPreview} controls style={{ width: "100%", borderRadius: RADIUS_SM, background: "#000" }} />
+                      <button onClick={() => setEdit((f) => ({ ...f, videoFile: null, videoPreview: "" }))} style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 999, padding: 6 }}><X size={14} color="#fff" /></button>
+                    </div>
+                  ) : edit.photoIds?.length > 0 && !edit.videoFile ? (
+                    <video src={photoUrl(edit.photoIds[0])} controls style={{ width: "100%", borderRadius: RADIUS_SM, background: "#000" }} />
+                  ) : (
+                    <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
+                      <Camera size={20} color={C.sub} />
+                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 25MB)</div>
+                      <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickNoticeVideo(e.target.files?.[0])} />
+                    </label>
+                  )
+                )}
+              </Field>
+
               <Field label="받는 사람">
                 <div className="grid grid-cols-3 gap-1.5">
                   {[["all", "전체 근무자"], ["site", "현장 선택"], ["custom", "선택한 사람만"]].map(([k, l]) => (
@@ -3384,8 +3595,8 @@ function NoticeAdminView({ data, update, setToast }) {
             </div>
 
             <div className="grid grid-cols-2 gap-2 mt-4">
-              <Btn kind="ghost" full onClick={() => setEdit(null)}>취소</Btn>
-              <Btn full onClick={saveNotice}>저장</Btn>
+              <Btn kind="ghost" full disabled={noticeSaveBusy} onClick={() => setEdit(null)}>취소</Btn>
+              <Btn full disabled={noticeSaveBusy} onClick={saveNotice}>{noticeSaveBusy ? "저장 중…" : "저장"}</Btn>
             </div>
             {edit.id && (
               <button onClick={() => { if (window.confirm(`"${edit.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) removeNotice(edit.id); }} className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
@@ -3420,6 +3631,16 @@ function NoticeAdminView({ data, update, setToast }) {
               </div>
               <div style={{ fontSize: 20, fontWeight: 900, color: C.text, marginTop: 10 }}>{viewer.title}</div>
               {viewer.message && <div style={{ fontSize: 14, color: C.text, marginTop: 10, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{viewer.message}</div>}
+              {viewer.kind === "video" && viewer.photoIds?.length > 0 && (
+                <video src={photoUrl(viewer.photoIds[0])} controls style={{ width: "100%", borderRadius: RADIUS_SM, marginTop: 12, background: "#000" }} />
+              )}
+              {viewer.kind === "photo" && viewer.photoIds?.length > 0 && (
+                <div className="flex flex-col gap-2 mt-3">
+                  {viewer.photoIds.map((pid) => (
+                    <img key={pid} src={photoUrl(pid)} style={{ width: "100%", borderRadius: RADIUS_SM, display: "block" }} />
+                  ))}
+                </div>
+              )}
               <div style={{ fontSize: 12.5, color: C.sub, marginTop: 14, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                 노출 기간 {viewer.startDate} ~ {viewer.endDate}
               </div>
@@ -3463,7 +3684,7 @@ function NoticeAdminView({ data, update, setToast }) {
                 <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
                 {isAdminWritten ? (
                   <Btn full onClick={() => {
-                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [] });
+                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [], files: [], previews: [], videoFile: null, videoPreview: "", kind: viewer.kind || "none", photoIds: viewer.photoIds || [] });
                     setViewer(null);
                   }}>수정하기</Btn>
                 ) : (
@@ -3910,9 +4131,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Eyebrow>대신 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
               <ChevronRight size={14} color={C.sub} />
             </div>
-            <div className="flex items-center gap-3 mt-1">
-              <Num size={19} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
-              <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(tot.coverPay)}원</span>
+            <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+              <Num size={17} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
         </button>
@@ -3924,9 +4145,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Eyebrow>일회성 현장 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
               <ChevronRight size={14} color={C.sub} />
             </div>
-            <div className="flex items-center gap-3 mt-1">
-              <Num size={19} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
-              <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(tot.oneOffPay)}원</span>
+            <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+              <Num size={17} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
+              <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{money(tot.oneOffPay)}원</span>
             </div>
           </div>
         </button>
@@ -4729,26 +4950,26 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
 
       <div className="p-4">
         <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
-          <Tile style={{ padding: 15 }}>
+          <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1.5"><Num size={32}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 17 }}>회</span>}</Num></div>
+            <div className="mt-1.5" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={20}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 14 }}>회</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
           </Tile>
-          <Tile style={{ padding: 15 }}>
+          <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1.5"><Num size={32}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 17 }}>일</span>}</Num></div>
+            <div className="mt-1.5" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={20}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
               {agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
             </div>
           </Tile>
-          <Tile soft style={{ padding: 15 }}>
+          <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
-            <div className="mt-1.5"><Num size={24} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
+            <div className="mt-1.5" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>{money(agg.otPay)}원</div>}
           </Tile>
-          <Tile soft style={{ padding: 15 }}>
+          <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1.5"><Num size={24} weight={800} color={agg.shortMin > 0 ? C.red : C.sub}>−{minStr(agg.shortMin)}</Num></div>
+            <div className="mt-1.5" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18} weight={800} color={agg.shortMin > 0 ? C.red : C.sub}>−{minStr(agg.shortMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
           </Tile>
         </div>
@@ -4760,9 +4981,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <Eyebrow>대신 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
-              <div className="flex items-center gap-3 mt-1">
-                <Num size={19} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
-                <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(agg.coverPay)}원</span>
+              <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+                <Num size={17} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
+                <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{money(agg.coverPay)}원</span>
               </div>
             </div>
           </button>
@@ -4774,9 +4995,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <Eyebrow>일회성 현장 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
-              <div className="flex items-center gap-3 mt-1">
-                <Num size={19} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
-                <span style={{ fontSize: 20, fontWeight: 900, color: C.coral }}>{money(agg.oneOffPay)}원</span>
+              <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+                <Num size={17} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
+                <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{money(agg.oneOffPay)}원</span>
               </div>
             </div>
           </button>
@@ -4804,7 +5025,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           padding: 18, borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
         }}>
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
-          <div className="mt-1.5"><Num size={40} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 19 }}> 원</span></Num></div>
+          <div className="mt-1.5" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}><Num size={26} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 15 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
             {agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
@@ -5197,23 +5418,25 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
 
         {/* 이번 주 · 이번 달 요약 */}
         <div className="grid grid-cols-2 gap-2 mb-4">
-          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
+          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
-            <div className="mt-1"><Num size={18}>{hmc(weekAgg.net)}</Num></div>
-            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(weekAgg.pay)}원</div>
-            {weekAgg.coverCount > 0 && (
-              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
-                대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18}>{hmc(weekAgg.net)}</Num></div>
+            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
+            {(weekAgg.coverCount > 0 || weekAgg.oneOffCount > 0) && (
+              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
+                {weekAgg.coverCount > 0 && <div>대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}</div>}
+                {weekAgg.oneOffCount > 0 && <div>일회성 현장 근무 {weekAgg.oneOffCount}회 · {minStr(weekAgg.oneOffMin)}</div>}
               </div>
             )}
           </div>
-          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM }}>
+          <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
-            <div className="mt-1"><Num size={18}>{hmc(monthAgg.net)}</Num></div>
-            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2 }}>{money(monthAgg.pay)}원</div>
-            {monthAgg.coverCount > 0 && (
-              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
-                대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}
+            <div className="mt-1" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Num size={18}>{hmc(monthAgg.net)}</Num></div>
+            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
+            {(monthAgg.coverCount > 0 || monthAgg.oneOffCount > 0) && (
+              <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
+                {monthAgg.coverCount > 0 && <div>대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}</div>}
+                {monthAgg.oneOffCount > 0 && <div>일회성 현장 근무 {monthAgg.oneOffCount}회 · {minStr(monthAgg.oneOffMin)}</div>}
               </div>
             )}
           </div>
