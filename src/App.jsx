@@ -2705,6 +2705,12 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
   const oneOffBadge = (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
   const transferBadge = (data.transfers || []).filter((t) => t.status === "pending").length;
   const noticeBadge = (data.notices || []).filter((n) => n.createdBy && n.createdBy !== "admin" && n.createdAt > lastSeenNotices).length;
+  const today0 = dKey(new Date());
+  const expiringWorkers = (data.workers || []).filter((w) => {
+    if (!w.contractEndDate) return false;
+    const daysLeft = Math.round((parseKey(w.contractEndDate) - parseKey(today0)) / 86400000);
+    return daysLeft <= 14; // 만료됐거나 2주 이내
+  });
 
   const goView = (k) => {
     setView(k);
@@ -2718,10 +2724,19 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
     ["notices", "공지", Bell, noticeBadge],
-    ["settings", "설정", SettingsIcon, 0],
+    ["settings", "설정", SettingsIcon, expiringWorkers.length],
   ];
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      {expiringWorkers.length > 0 && view !== "settings" && (
+        <button onClick={() => goView("settings")} className="mx-4 mt-3 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
+          <AlertTriangle size={15} color={C.amber} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, textAlign: "left" }}>
+            {expiringWorkers.map((w) => w.name).join(", ")}님 근로계약 종료가 임박했어요
+          </span>
+          <ChevronRight size={14} color={C.sub} style={{ marginLeft: "auto", flexShrink: 0 }} />
+        </button>
+      )}
       <div className="flex items-center px-4 pt-4 gap-2">
         <div className="flex gap-0.5" style={{ background: C.grout, flex: 1, overflowX: "auto" }}>
           {tabs.map(([k, l, I, badge]) => (
@@ -6801,6 +6816,24 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const bound = workers.find((w) => w.id === dev.workerId);
   const noCoord = sites.filter((s) => s.lat == null).length;
 
+  const [contractBusy, setContractBusy] = useState(false);
+  const uploadContractFile = async (file) => {
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) { setToast("파일이 너무 커요 (최대 15MB)"); return; }
+    setContractBusy(true);
+    try {
+      const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+      if (!res.ok) throw new Error("upload failed");
+      const { id: fileId } = await res.json();
+      setWEdit((f) => ({ ...f, contractFileId: fileId, contractFileName: file.name }));
+      setToast("근로계약서를 첨부했습니다 (저장을 눌러야 최종 반영돼요)");
+    } catch (e) {
+      setToast("업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setContractBusy(false);
+    }
+  };
+
   const saveWorker = () => {
     if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
     const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
@@ -6818,6 +6851,9 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
+      phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
+      contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "",
+      contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
     setWEdit(null); setToast("근무자를 저장했습니다");
@@ -6975,6 +7011,14 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
                   {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                   {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px", whiteSpace: "nowrap" }}>이 기기</span>}
+                  {(() => {
+                    if (!w.contractEndDate) return null;
+                    const today = dKey(new Date());
+                    const daysLeft = Math.round((parseKey(w.contractEndDate) - parseKey(today)) / 86400000);
+                    if (daysLeft < 0) return <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 5px", whiteSpace: "nowrap" }}>계약 만료됨</span>;
+                    if (daysLeft <= 14) return <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap" }}>계약만료 D-{daysLeft}</span>;
+                    return null;
+                  })()}
                 </div>
                 <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                   {(() => {
@@ -7592,6 +7636,52 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         {wEdit && (
           <>
             <Field label="이름"><input value={wEdit.name} onChange={(e) => setWEdit({ ...wEdit, name: e.target.value })} placeholder="예: 김순자" style={inputStyle} /></Field>
+
+            <div className="grid grid-cols-2 gap-2 mt-2.5">
+              <Field label="핸드폰 번호">
+                <input value={wEdit.phone || ""} onChange={(e) => setWEdit({ ...wEdit, phone: e.target.value })} placeholder="010-0000-0000" style={inputStyle} />
+              </Field>
+              <Field label="은행명">
+                <input value={wEdit.bankName || ""} onChange={(e) => setWEdit({ ...wEdit, bankName: e.target.value })} placeholder="예: 국민은행" style={inputStyle} />
+              </Field>
+            </div>
+            <div className="mt-2.5">
+              <Field label="계좌번호">
+                <input value={wEdit.accountNumber || ""} onChange={(e) => setWEdit({ ...wEdit, accountNumber: e.target.value })} placeholder="000-0000-0000-00" style={inputStyle} />
+              </Field>
+            </div>
+
+            <div className="mt-3" style={{ background: C.tileSoft, padding: 12 }}>
+              <Eyebrow>근로계약서</Eyebrow>
+              {wEdit.contractFileId ? (
+                <div className="flex items-center justify-between mt-2">
+                  <a href={photoUrl(wEdit.contractFileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
+                    <FileText size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wEdit.contractFileName || "계약서.pdf"}</span>
+                  </a>
+                  <button onClick={() => setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "" }))} style={{ flexShrink: 0 }}>
+                    <X size={15} color={C.sub} />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex items-center justify-center gap-1.5 mt-2" style={{ padding: "10px 0", border: `1.5px dashed ${C.line}`, cursor: "pointer", background: C.tile }}>
+                  <FileText size={14} color={C.sub} />
+                  <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{contractBusy ? "업로드 중…" : "PDF 첨부하기"}</span>
+                  <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={contractBusy}
+                    onChange={(e) => { uploadContractFile(e.target.files?.[0]); e.target.value = ""; }} />
+                </label>
+              )}
+              <div className="grid grid-cols-2 gap-2 mt-2.5">
+                <Field label="계약 시작일">
+                  <input type="date" value={wEdit.contractStartDate || ""} onChange={(e) => setWEdit({ ...wEdit, contractStartDate: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                </Field>
+                <Field label="계약 종료일">
+                  <input type="date" value={wEdit.contractEndDate || ""} onChange={(e) => setWEdit({ ...wEdit, contractEndDate: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                </Field>
+              </div>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
+                계약 종료일을 입력해두시면, 종료 2주 전부터 관리자 화면에 자동으로 알림이 떠요.
+              </div>
+            </div>
 
             <Field label="담당 현장 (여러 곳 선택 가능)">
               <div className="flex flex-wrap gap-1.5">
