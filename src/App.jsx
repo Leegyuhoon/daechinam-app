@@ -2040,7 +2040,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                     <img src={photoUrl(photoIdsOf(r)[0])} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   )}
                   {photoIdsOf(r).length > 1 && (
-                    <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px" }}>
+                    <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px", whiteSpace: "nowrap" }}>
                       {photoIdsOf(r).length}장
                     </span>
                   )}
@@ -2048,7 +2048,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                     <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>
                   )}
                   {r.authorRole === "admin" && (
-                    <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px" }}>관리자</span>
+                    <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px", whiteSpace: "nowrap" }}>관리자</span>
                   )}
                 </div>
                 <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 3 }}>{r.workerName} · {r.date.slice(5)}</div>
@@ -2084,7 +2084,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div className="flex items-center gap-2 mt-3">
               <span style={{ fontSize: 11, fontWeight: 800, color: C.sub }}>{galleryViewer.category}</span>
               {galleryViewer.authorRole === "leader" && <span style={{ fontSize: 10, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장</span>}
-              {galleryViewer.authorRole === "admin" && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px" }}>관리자</span>}
+              {galleryViewer.authorRole === "admin" && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px", whiteSpace: "nowrap" }}>관리자</span>}
               <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{galleryViewer.siteName} · {galleryViewer.workerName} · {galleryViewer.date}</span>
             </div>
             {galleryViewer.note && <div style={{ fontSize: 13, color: C.text, marginTop: 8, lineHeight: 1.6 }}>{galleryViewer.note}</div>}
@@ -2868,7 +2868,7 @@ function PhotoAdminView({ data, update, setToast }) {
                   <div className="flex items-center gap-2.5">
                     <Folder size={18} color={C.aquaDeep} />
                     <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{g.name}</div>
-                    {unCnt > 0 && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 6px" }}>미확인 {unCnt}</span>}
+                    {unCnt > 0 && <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 6px", whiteSpace: "nowrap" }}>미확인 {unCnt}</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
@@ -2956,7 +2956,7 @@ function PhotoAdminView({ data, update, setToast }) {
                 <img src={photoUrl(photoIdsOf(r)[0])} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
               )}
               {photoIdsOf(r).length > 1 && (
-                <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px" }}>
+                <span style={{ position: "absolute", bottom: 6, right: 6, fontSize: 9.5, fontWeight: 900, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "1px 6px", whiteSpace: "nowrap" }}>
                   {photoIdsOf(r).length}장
                 </span>
               )}
@@ -3439,7 +3439,7 @@ function NoticeAdminView({ data, update, setToast }) {
                   <div className="flex items-center gap-1.5">
                     <span style={{ fontWeight: 800, fontSize: 14.5, color: C.text }}>{n.title}</span>
                     {live && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "1px 5px" }}>노출 중</span>}
-                    {!n.active && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>꺼짐</span>}
+                    {!n.active && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px", whiteSpace: "nowrap" }}>꺼짐</span>}
                   </div>
                   <div className="flex items-center gap-1 mt-1">
                     <span style={{
@@ -4459,9 +4459,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 <div style={{ width: 6, height: 6, borderRadius: 999, background: statusInfo[st].color, flexShrink: 0 }} />
                                 <span style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>{r.site || "현장 미지정"}</span>
                                 {r.flatPay != null ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px", flexShrink: 0 }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: r.oneOffStatus === "pending" ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>{r.oneOffStatus === "pending" ? "승인대기" : (r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>
                                 ) : r.coverForName ? (
-                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", flexShrink: 0 }}>대신 근무</span>
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>대신 근무</span>
                                 ) : null}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
@@ -4549,10 +4549,10 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
                       {records.some((r) => r.workerId === w.id && r.flatPay != null && r.oneOffStatus === "pending") && (
-                        <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px" }}>승인 대기</span>
+                        <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 4px", whiteSpace: "nowrap" }}>승인 대기</span>
                       )}
-                      {coverCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px" }}>대신 근무 {coverCount}</span>}
-                      {oneOffCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px" }}>일회성 현장 근무{oneOffCount}</span>}
+                      {coverCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", whiteSpace: "nowrap" }}>대신 근무 {coverCount}</span>}
+                      {oneOffCount > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.extra, padding: "1px 4px", whiteSpace: "nowrap" }}>일회성 현장 근무{oneOffCount}</span>}
                       {flags > 0 && <ShieldAlert size={13} color={ST.outside} />}
                     </div>
                     <div style={{ color: C.sub, fontSize: 11.5, marginTop: 1 }}>
@@ -5115,7 +5115,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                     <div className="flex items-center gap-1.5">
                       <Num size={14.5}>{r.date.slice(5).replace("-", ".")}</Num>
                       <span style={{ fontSize: 11.5, color: d.getDay() === 0 ? C.coral : C.sub, fontWeight: 700 }}>({WD[d.getDay()]})</span>
-                      {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px" }}>수기</span>}
+                      {r.manual && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 4px", whiteSpace: "nowrap" }}>수기</span>}
                       {p.holiday && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: C.coral, padding: "1px 4px" }}>공휴일 ×{settings.holidayMultiplier ?? 1.5}</span>}
                       {r.flatPay != null && (
                         <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: p.pending ? ST.pending : ((r.isExtra || r.coverForName) ? ST.cover : ST.extra), padding: "1px 4px" }}>
@@ -5501,12 +5501,12 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
             <div className="flex items-center gap-1.5">
               <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{selDate} ({WD[parseKey(selDate).getDay()]})</span>
               {isHoliday(selDate, settings) && (
-                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: ST.holiday, padding: "2px 6px" }}>
+                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: ST.holiday, padding: "2px 6px", whiteSpace: "nowrap" }}>
                   공휴일 · {settings.holidayMultiplier || 1.5}배
                 </span>
               )}
               {closureLabelFor(selDate, worker.siteId, data.closurePeriods) && (
-                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "2px 6px" }}>
+                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "2px 6px", whiteSpace: "nowrap" }}>
                   🏫 {closureLabelFor(selDate, worker.siteId, data.closurePeriods)}
                 </span>
               )}
@@ -5519,7 +5519,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                   const subNames = offs.map((t) => t.assignedWorkerName).filter(Boolean);
                   return (
                     <div className="mt-2">
-                      <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: off.noRequest ? ST.offNoRequest : ST.offRequested, padding: "2px 7px" }}>
+                      <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: off.noRequest ? ST.offNoRequest : ST.offRequested, padding: "2px 7px", whiteSpace: "nowrap" }}>
                         {off.noRequest ? "휴무 (사전 요청 없음 · 사후등록)" : "휴무 (양도 요청됨)"}
                       </span>
                       {subNames.length > 0 && (
@@ -5546,9 +5546,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.site || "현장 미지정"}</span>
-                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: (r.isExtra || r.coverForName) ? ST.cover : ST.extra, padding: "1px 5px" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>}
-                            {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px" }}>승인 대기</span>}
-                            {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 5px" }}>대신 근무</span>}
+                            {p.flat && !p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: (r.isExtra || r.coverForName) ? ST.cover : ST.extra, padding: "1px 5px", whiteSpace: "nowrap" }}>{(r.isExtra || r.coverForName) ? "대신 근무" : "일회성 현장 근무"}</span>}
+                            {p.pending && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.pending, padding: "1px 5px", whiteSpace: "nowrap" }}>승인 대기</span>}
+                            {!p.flat && r.coverForName && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 5px", whiteSpace: "nowrap" }}>대신 근무</span>}
                           </div>
                           <div className="flex items-center gap-2">
                             {!r.clockOut && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: ST.incomplete, padding: "1px 6px" }}>퇴근 전</span>}
@@ -5937,8 +5937,8 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         )}
       </div>
 
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-baseline gap-1.5">
+      <div className="flex items-baseline justify-between flex-wrap" style={{ rowGap: 4 }}>
+        <div className="flex items-baseline gap-1.5 flex-wrap">
           <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></span>
           {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
         </div>
@@ -6520,12 +6520,12 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         {workers.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>아직 등록된 근무자가 없습니다.</div></Tile>}
         {workers.map((w) => (
           <Tile key={w.id} onClick={() => setWEdit({ ...w, wage: w.wage ?? "", stdHours: w.stdHours ?? "", shiftHours: w.shiftHours ?? "", shiftPay: w.shiftPay ?? "", siteIds: w.siteIds || (w.siteId ? [w.siteId] : []), paySettingsBySite: w.paySettingsBySite || {}, leaderSiteIds: w.leaderSiteIds || [], allowances: (w.allowances || []).map((a) => ({ ...a })) })} style={{ padding: "12px 14px" }}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap" style={{ rowGap: 4 }}>
               <div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span style={{ fontWeight: 800, fontSize: 15, color: C.text }}>{w.name}</span>
-                  {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
-                  {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px" }}>이 기기</span>}
+                  {w.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap" }}>팀장{(w.leaderSiteIds || []).length ? ` · ${w.leaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
+                  {w.id === dev.workerId && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "1px 4px", whiteSpace: "nowrap" }}>이 기기</span>}
                 </div>
                 <div style={{ color: C.sub, fontSize: 13, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                   {(() => {
@@ -6677,7 +6677,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <div className="flex items-center gap-1.5">
                   <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.label}</span>
                   {c.recurringDays?.length > 0 && (
-                    <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "1px 5px" }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "1px 5px", whiteSpace: "nowrap" }}>
                       매주 {c.recurringDays.slice().sort().map((d) => WD[d]).join("·")}
                     </span>
                   )}
