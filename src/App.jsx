@@ -1234,24 +1234,30 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const [supplyOpen, setSupplyOpen] = useState(false);
-  const [supplyForm, setSupplyForm] = useState({ siteId: "", itemName: "", qty: "1", note: "" });
+  const [supplyForm, setSupplyForm] = useState({ siteId: "", items: [{ itemName: "", qty: "1" }], note: "" });
   const openSupply = () => {
-    setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", itemName: "", qty: "1", note: "" });
+    setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", items: [{ itemName: "", qty: "1" }], note: "" });
     setSupplyOpen(true);
   };
   const submitSupply = () => {
-    if (!supplyForm.itemName.trim()) { setToast("품목을 입력해 주세요"); return; }
+    const validItems = supplyForm.items.filter((it) => it.itemName.trim());
+    if (validItems.length === 0) { setToast("품목을 한 개 이상 입력해 주세요"); return; }
     const s = sites.find((x) => x.id === supplyForm.siteId);
+    const at = new Date().toISOString();
+    const batchId = validItems.length > 1 ? uid() : null; // 여러 품목을 한 번에 요청했으면 같은 묶음으로 표시
     update((d) => ({
       ...d,
-      supplyRequests: [...(d.supplyRequests || []), {
-        id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
-        workerId: worker.id, workerName: worker.name,
-        itemName: supplyForm.itemName.trim(), qty: Number(supplyForm.qty) || 1, note: supplyForm.note.trim(),
-        status: "requested", createdAt: new Date().toISOString(), respondedAt: null,
-      }],
+      supplyRequests: [
+        ...(d.supplyRequests || []),
+        ...validItems.map((it) => ({
+          id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
+          workerId: worker.id, workerName: worker.name,
+          itemName: it.itemName.trim(), qty: Number(it.qty) || 1, note: supplyForm.note.trim(),
+          status: "requested", createdAt: at, respondedAt: null, batchId,
+        })),
+      ],
     }));
-    setToast("용품을 요청했습니다");
+    setToast(validItems.length > 1 ? `용품 ${validItems.length}종을 요청했습니다` : "용품을 요청했습니다");
     setSupplyOpen(false);
   };
 
@@ -2287,6 +2293,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       {/* 용품 요청 작성 */}
       <Modal open={supplyOpen} onClose={() => setSupplyOpen(false)}>
         <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>근무 용품 요청</div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>한 번에 여러 종류를 같이 요청할 수 있어요.</div>
         <div className="mt-4 flex flex-col gap-2.5">
           {sites.length > 1 && (
             <Field label="현장">
@@ -2295,14 +2302,33 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               </select>
             </Field>
           )}
-          <Field label="품목">
-            <input value={supplyForm.itemName} onChange={(e) => setSupplyForm((f) => ({ ...f, itemName: e.target.value }))}
-              placeholder="예: 고무장갑, 세제, 대걸레" style={inputStyle} />
-          </Field>
-          <Field label="수량">
-            <input type="number" min="1" value={supplyForm.qty} onChange={(e) => setSupplyForm((f) => ({ ...f, qty: e.target.value }))} style={inputStyle} />
-          </Field>
-          <Field label="메모 (선택)">
+          <div>
+            <Eyebrow>품목</Eyebrow>
+            <div className="flex flex-col gap-2 mt-2">
+              {supplyForm.items.map((it, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={it.itemName} onChange={(e) => {
+                    const next = [...supplyForm.items]; next[i] = { ...it, itemName: e.target.value };
+                    setSupplyForm((f) => ({ ...f, items: next }));
+                  }} placeholder="예: 고무장갑, 세제, 대걸레" style={{ ...inputStyle, flex: 2 }} />
+                  <input type="number" min="1" value={it.qty} onChange={(e) => {
+                    const next = [...supplyForm.items]; next[i] = { ...it, qty: e.target.value };
+                    setSupplyForm((f) => ({ ...f, items: next }));
+                  }} style={{ ...inputStyle, flex: 1 }} />
+                  {supplyForm.items.length > 1 && (
+                    <button onClick={() => setSupplyForm((f) => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }))}>
+                      <X size={16} color={C.sub} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setSupplyForm((f) => ({ ...f, items: [...f.items, { itemName: "", qty: "1" }] }))}
+              className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+              <Plus size={13} /> 품목 추가
+            </button>
+          </div>
+          <Field label="메모 (선택 · 전체 공통)">
             <textarea value={supplyForm.note} onChange={(e) => setSupplyForm((f) => ({ ...f, note: e.target.value }))}
               placeholder="예: 빨리 필요해요" rows={2} style={{ ...inputStyle, resize: "none" }} />
           </Field>
@@ -2826,13 +2852,31 @@ function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit,
 }
 
 function PhotoAdminView({ data, update, setToast }) {
-  const reports = data.siteReports || [];
+  const allReports = data.siteReports || [];
+  const [monthFilter, setMonthFilter] = useState(null);
+  const reports = monthFilter ? allReports.filter((r) => r.date.slice(0, 7) === monthFilter) : allReports;
+  const availableMonths = [...new Set(allReports.map((r) => r.date.slice(0, 7)))].sort().reverse();
   const [siteId, setSiteId] = useState(null);
   const [workerId, setWorkerId] = useState(null);
   const [viewer, setViewer] = useState(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", files: [], previews: [], kind: "photo" });
   const [uploadBusy, setUploadBusy] = useState(false);
+
+  const MonthChips = () => availableMonths.length > 1 ? (
+    <div className="flex gap-1.5 mb-3 mt-3" style={{ overflowX: "auto" }}>
+      <button onClick={() => setMonthFilter(null)}
+        style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === null ? "#0369A1" : C.tileSoft, color: monthFilter === null ? "#fff" : C.sub }}>
+        전체 기간
+      </button>
+      {availableMonths.map((ym) => (
+        <button key={ym} onClick={() => setMonthFilter(ym)}
+          style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === ym ? "#0369A1" : C.tileSoft, color: monthFilter === ym ? "#fff" : C.sub }}>
+          {ymLabel(ym)}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const catColor = { "시설 훼손": C.red, "작업 전": C.blue, "작업 후": C.aquaDeep, "기타": C.sub };
 
@@ -2893,7 +2937,8 @@ function PhotoAdminView({ data, update, setToast }) {
         <Btn full onClick={() => openUpload()}>
           <span className="flex items-center justify-center gap-2"><Camera size={15} /> 사진·영상 등록 (관리자)</span>
         </Btn>
-        <Tile style={{ marginTop: 10 }}><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장 사진이 없습니다.</div></Tile>
+        <MonthChips />
+        <Tile style={{ marginTop: 10 }}><div style={{ color: C.sub, fontSize: 13 }}>{monthFilter ? "이 기간엔 등록된 사진이 없습니다." : "등록된 현장 사진이 없습니다."}</div></Tile>
         <AdminUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} form={uploadForm} setForm={setUploadForm}
           sites={data.sites} busy={uploadBusy} onSubmit={submitAdminUpload} onPickFiles={pickUploadFiles} onRemovePhotoAt={removeUploadPhotoAt} />
       </div>
@@ -2917,6 +2962,7 @@ function PhotoAdminView({ data, update, setToast }) {
           <span className="flex items-center justify-center gap-2"><Camera size={15} /> 사진·영상 등록 (관리자)</span>
         </Btn>
         <div className="mt-4"><Eyebrow dark>현장별로 묶어서 보여드려요 · 미확인 있는 현장이 먼저 나와요</Eyebrow></div>
+        <MonthChips />
         <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
           {entries.map(([sid, g]) => {
             const unCnt = g.items.filter((r) => r.createdAt > lastSeenPhotos).length;
@@ -3275,17 +3321,31 @@ function SupplyAdminView({ data, update, setToast }) {
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>용품 요청 내역이 없습니다.</div>}
 
       <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-        {shown.map((r) => (
-          <Tile key={r.id} style={{ padding: "13px 14px" }}>
+        {shown.map((r) => {
+          const batchMates = r.batchId ? list.filter((x) => x.batchId === r.batchId) : [];
+          return (
+          <Tile key={r.id} style={{ padding: "13px 14px", borderLeft: r.batchId ? `3px solid ${C.aqua}` : "none" }}>
             <div className="flex items-start justify-between gap-2">
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                  {r.batchId && batchMates.length > 1 && (
+                    <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.aqua, padding: "1px 5px", whiteSpace: "nowrap" }}>
+                      함께 요청 {batchMates.length}종
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, fontWeight: 700 }}>
                   {r.date.slice(5).replace("-", "/")} 요청 · {r.siteName} · {r.workerName}
                   {r.status === "delivered" && r.respondedAt && (
                     <span style={{ color: C.aquaDeep }}> · {dKey(new Date(r.respondedAt)).slice(5).replace("-", "/")} 전달완료</span>
                   )}
                 </div>
+                {r.batchId && batchMates.length > 1 && (
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
+                    같이 요청한 다른 품목: {batchMates.filter((x) => x.id !== r.id).map((x) => `${x.itemName}×${x.qty}`).join(", ")}
+                  </div>
+                )}
                 {r.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{r.note}</div>}
                 {(r.vendor || r.totalPrice != null) && (
                   <div style={{ fontSize: 11.5, color: C.text, marginTop: 5, background: C.tileSoft, padding: "5px 8px" }}>
@@ -3312,7 +3372,8 @@ function SupplyAdminView({ data, update, setToast }) {
               </button>
             </div>
           </Tile>
-        ))}
+          );
+        })}
       </div>
 
       <Modal open={!!purchaseEdit} onClose={() => setPurchaseEdit(null)}>
@@ -3366,10 +3427,13 @@ function TransferAdminView({ data, update, setToast }) {
   const sites = data.sites || [];
   const [filter, setFilter] = useState("all");
   const [siteFilter, setSiteFilter] = useState(null);
+  const [monthFilter, setMonthFilter] = useState(null);
   const [assignPick, setAssignPick] = useState(null); // 지정 중인 transfer id
   const transfers = [...(data.transfers || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const byStatus = filter === "all" ? transfers : filter === "needAction" ? transfers.filter((t) => t.status === "pending") : transfers.filter((t) => t.status === filter);
-  const shown = siteFilter ? byStatus.filter((t) => t.siteId === siteFilter) : byStatus;
+  let shown = siteFilter ? byStatus.filter((t) => t.siteId === siteFilter) : byStatus;
+  shown = monthFilter ? shown.filter((t) => t.date.slice(0, 7) === monthFilter) : shown;
+  const availableMonths = [...new Set(transfers.map((t) => t.date.slice(0, 7)))].sort().reverse();
 
   const siteChips = sortSitesByActivity(
     sites,
@@ -3440,6 +3504,20 @@ function TransferAdminView({ data, update, setToast }) {
           );
         })}
       </div>
+      {availableMonths.length > 1 && (
+        <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+          <button onClick={() => setMonthFilter(null)}
+            style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === null ? "#0369A1" : C.tileSoft, color: monthFilter === null ? "#fff" : C.sub }}>
+            전체 기간
+          </button>
+          {availableMonths.map((ym) => (
+            <button key={ym} onClick={() => setMonthFilter(ym)}
+              style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: monthFilter === ym ? "#0369A1" : C.tileSoft, color: monthFilter === ym ? "#fff" : C.sub }}>
+              {ymLabel(ym)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {shown.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "20px 4px" }}>양도 요청 내역이 없습니다.</div>}
 
