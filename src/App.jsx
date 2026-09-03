@@ -3005,6 +3005,7 @@ function PhotoAdminView({ data, update, setToast }) {
           <Folder size={18} color={C.aquaDeep} />
           <div style={{ fontSize: 17, fontWeight: 900, color: C.text }}>{siteName}</div>
         </div>
+        <MonthChips />
         <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
           {Object.entries(byWorker).map(([wid, g]) => (
             <Tile key={wid} onClick={() => setWorkerId(wid)} style={{ padding: "14px 16px" }}>
@@ -3031,7 +3032,8 @@ function PhotoAdminView({ data, update, setToast }) {
       <button onClick={() => setWorkerId(null)} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>
         <ArrowLeft size={14} /> {siteName}
       </button>
-      <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 12 }}>{workerName}</div>
+      <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 4 }}>{workerName}</div>
+      <MonthChips />
 
       <div className="grid grid-cols-2 gap-2">
         {items.map((r) => (
@@ -3162,21 +3164,51 @@ function SupplyAdminView({ data, update, setToast }) {
     return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
   };
 
-  // 구매 정보(업체·구매방식·단가·구매가격) 입력
-  const [purchaseEdit, setPurchaseEdit] = useState(null);
-  const openPurchaseEdit = (r) => setPurchaseEdit({
-    id: r.id, vendor: r.vendor || "", method: r.purchaseMethod || "online",
-    unitPrice: r.unitPrice != null ? String(r.unitPrice) : "", totalPrice: r.totalPrice != null ? String(r.totalPrice) : "",
-  });
+  // 구매 정보(업체·구매방식·단가·구매가격) 입력 — 같이 요청한 묶음 전체를 한 모달에서, "+"로 자유롭게 추가하며 처리
+  const [purchaseEdit, setPurchaseEdit] = useState(null); // { groupIds: [], rows: [{ id(기존 요청 id 또는 null=신규), itemName, vendor, method, unitPrice, totalPrice }] }
+  const openPurchaseEdit = (r) => {
+    const groupIds = r.batchId ? list.filter((x) => x.batchId === r.batchId).map((x) => x.id) : [r.id];
+    const groupItems = r.batchId ? list.filter((x) => x.batchId === r.batchId) : [r];
+    setPurchaseEdit({
+      groupIds,
+      rows: groupItems.map((x) => ({
+        id: x.id, itemName: x.itemName,
+        vendor: x.vendor || "", method: x.purchaseMethod || "online",
+        unitPrice: x.unitPrice != null ? String(x.unitPrice) : "", totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
+      })),
+    });
+  };
+  const addPurchaseRow = () => {
+    setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", vendor: "", method: "online", unitPrice: "", totalPrice: "" }] }));
+  };
+  const removePurchaseRow = (i) => {
+    setPurchaseEdit((f) => ({ ...f, rows: f.rows.filter((_, idx) => idx !== i) }));
+  };
   const savePurchaseInfo = () => {
-    const unitPrice = purchaseEdit.unitPrice === "" ? null : Number(purchaseEdit.unitPrice);
-    const totalPrice = purchaseEdit.totalPrice === "" ? null : Number(purchaseEdit.totalPrice);
-    update((d) => ({
-      ...d,
-      supplyRequests: (d.supplyRequests || []).map((x) => (x.id === purchaseEdit.id ? {
-        ...x, vendor: purchaseEdit.vendor.trim(), purchaseMethod: purchaseEdit.method, unitPrice, totalPrice,
-      } : x)),
-    }));
+    const at = new Date().toISOString();
+    const groupBatchId = purchaseEdit.rows.length > 1 ? (list.find((x) => x.id === purchaseEdit.groupIds[0])?.batchId || uid()) : null;
+    update((d) => {
+      let reqs = [...(d.supplyRequests || [])];
+      purchaseEdit.rows.forEach((row) => {
+        const unitPrice = row.unitPrice === "" ? null : Number(row.unitPrice);
+        const totalPrice = row.totalPrice === "" ? null : Number(row.totalPrice);
+        if (row.id) {
+          // 기존 요청 항목 — 구매 정보만 갱신
+          reqs = reqs.map((x) => (x.id === row.id ? { ...x, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice } : x));
+        } else if (row.itemName.trim()) {
+          // "+"로 새로 추가한 항목 — 요청 과정 없이 바로 구매·전달완료로 등록
+          const base = reqs.find((x) => purchaseEdit.groupIds.includes(x.id));
+          reqs.push({
+            id: uid(), date: base?.date || dKey(new Date()), siteId: base?.siteId || null, siteName: base?.siteName || "현장 미지정",
+            workerId: base?.workerId || null, workerName: base?.workerName || "관리자",
+            itemName: row.itemName.trim(), qty: 1, note: "",
+            status: "delivered", createdAt: at, respondedAt: at, batchId: groupBatchId,
+            vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice,
+          });
+        }
+      });
+      return { ...d, supplyRequests: reqs };
+    });
     setToast("구매 정보를 저장했습니다");
     setPurchaseEdit(null);
   };
@@ -3380,35 +3412,70 @@ function SupplyAdminView({ data, update, setToast }) {
         {purchaseEdit && (
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>구매 정보 입력</div>
-            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>월별 정리 파일에 그대로 반영돼요.</div>
-            <div className="flex flex-col gap-2.5">
-              <Field label="구매처 (업체명)">
-                <input value={purchaseEdit.vendor} onChange={(e) => setPurchaseEdit((f) => ({ ...f, vendor: e.target.value }))} placeholder="예: 쿠팡, 다이소 강남점" style={inputStyle} />
-              </Field>
-              <Field label="구매 방식">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
-                    <button key={k} onClick={() => setPurchaseEdit((f) => ({ ...f, method: k }))}
-                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: purchaseEdit.method === k ? C.aquaDeep : C.tileSoft, color: purchaseEdit.method === k ? "#fff" : C.sub }}>{l}</button>
-                  ))}
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>
+              같이 요청한 품목들이 자동으로 다 나와요. 요청과 무관하게 더 구매한 게 있으면 "+ 항목 추가"로 같이 넣을 수 있어요.
+            </div>
+            <div className="flex flex-col gap-3">
+              {purchaseEdit.rows.map((row, i) => (
+                <div key={i} style={{ background: C.tileSoft, padding: 12 }}>
+                  <div className="flex items-center justify-between mb-2">
+                    {row.id ? (
+                      <div style={{ fontSize: 13.5, fontWeight: 900, color: C.text }}>{row.itemName}</div>
+                    ) : (
+                      <input value={row.itemName} onChange={(e) => {
+                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, itemName: e.target.value };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} placeholder="품목명 (요청 없이 추가 구매한 것)" style={{ ...inputStyle, background: C.tile, flex: 1, marginRight: 8 }} />
+                    )}
+                    {purchaseEdit.rows.length > 1 && (
+                      <button onClick={() => removePurchaseRow(i)}><X size={16} color={C.sub} /></button>
+                    )}
+                  </div>
+                  <Field label="구매처 (업체명)">
+                    <input value={row.vendor} onChange={(e) => {
+                      const rows = [...purchaseEdit.rows]; rows[i] = { ...row, vendor: e.target.value };
+                      setPurchaseEdit((f) => ({ ...f, rows }));
+                    }} placeholder="예: 쿠팡, 다이소 강남점" style={{ ...inputStyle, background: C.tile }} />
+                  </Field>
+                  <div className="mt-2">
+                    <Field label="구매 방식">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
+                          <button key={k} onClick={() => {
+                            const rows = [...purchaseEdit.rows]; rows[i] = { ...row, method: k };
+                            setPurchaseEdit((f) => ({ ...f, rows }));
+                          }}
+                            style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: row.method === k ? C.aquaDeep : C.tile, color: row.method === k ? "#fff" : C.sub }}>{l}</button>
+                        ))}
+                      </div>
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Field label="단가 (원)">
+                      <input type="number" value={row.unitPrice} onChange={(e) => {
+                        const unitPrice = e.target.value;
+                        const rows = [...purchaseEdit.rows];
+                        const existing = list.find((x) => x.id === row.id);
+                        const qty = existing?.qty || 1;
+                        const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
+                        const shouldAutoTotal = row.totalPrice === "" || row.totalPrice === String(Math.round(Number(row.unitPrice || 0) * qty));
+                        rows[i] = { ...row, unitPrice, totalPrice: shouldAutoTotal ? auto : row.totalPrice };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} placeholder="개당 가격" style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                    <Field label="구매가격 (원)">
+                      <input type="number" value={row.totalPrice} onChange={(e) => {
+                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, totalPrice: e.target.value };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} placeholder="총 결제금액" style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                  </div>
                 </div>
-              </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="단가 (원)">
-                  <input type="number" value={purchaseEdit.unitPrice} onChange={(e) => {
-                    const unitPrice = e.target.value;
-                    setPurchaseEdit((f) => {
-                      const r = list.find((x) => x.id === f.id);
-                      const qty = r?.qty || 1;
-                      const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
-                      return { ...f, unitPrice, totalPrice: f.totalPrice === "" || f.totalPrice === String(Math.round(Number(f.unitPrice || 0) * qty)) ? auto : f.totalPrice };
-                    });
-                  }} placeholder="개당 가격" style={inputStyle} />
-                </Field>
-                <Field label="구매가격 (원)">
-                  <input type="number" value={purchaseEdit.totalPrice} onChange={(e) => setPurchaseEdit((f) => ({ ...f, totalPrice: e.target.value }))} placeholder="총 결제금액" style={inputStyle} />
-                </Field>
-              </div>
+              ))}
+              <button onClick={addPurchaseRow} className="flex items-center justify-center gap-1.5"
+                style={{ padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: C.aquaDeep, border: `1.5px dashed ${C.line}` }}>
+                <Plus size={14} /> 항목 추가
+              </button>
               <div style={{ fontSize: 11, color: C.sub }}>단가를 입력하면 수량만큼 곱해서 구매가격을 자동으로 채워드려요. 직접 수정도 가능해요.</div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
