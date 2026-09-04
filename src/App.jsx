@@ -1846,7 +1846,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             </div>
             <div className="mt-2" style={{ background: C.text, padding: "13px 14px" }}>
               <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10.5, letterSpacing: "0.1em" }}>실지급액</div>
-              <div style={{ color: "#fff", fontSize: 24, fontWeight: 900, marginTop: 3, overflowWrap: "anywhere" }}>{money(signOpen.snapshot.net_pay)}원</div>
+              <div style={{ color: "#fff", fontSize: 20, fontWeight: 900, marginTop: 3, whiteSpace: "nowrap" }}>{money(signOpen.snapshot.net_pay)}원</div>
             </div>
 
             <div className="mt-4">
@@ -3422,9 +3422,9 @@ function SupplyAdminView({ data, update, setToast }) {
         </div>
       )}
       {totalSpent > 0 && (
-        <div className="flex items-center flex-wrap justify-between gap-x-2 gap-y-1 mb-3" style={{ background: C.tileSoft, padding: "9px 13px" }}>
-          <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>지금 목록 기준 구매금액 합계</span>
-          <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{money(totalSpent)}원</span>
+        <div className="flex items-center justify-between gap-2 mb-3" style={{ background: C.tileSoft, padding: "9px 13px" }}>
+          <span style={{ fontSize: 12, color: C.sub, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>지금 목록 기준 구매금액 합계</span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(totalSpent)}원</span>
         </div>
       )}
 
@@ -4600,19 +4600,19 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
         <button onClick={() => setStatDetail("times")} className="pressable text-left">
           <Tile style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? "총 타임" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={20}>{isShiftMode ? `${tot.times}회` : hmc(tot.net)}</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{isShiftMode ? `${tot.times}회` : hmc(tot.net)}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("times")} className="pressable text-left">
           <Tile style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? "총 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={20}>{isShiftMode ? hmc(tot.net) : `${tot.days}일`}</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{isShiftMode ? hmc(tot.net) : `${tot.days}일`}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("pay")} className="pressable text-left">
           <Tile style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>지급 합계</Eyebrow>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={17} weight={900} color={C.coral}>{money(tot.pay)}원</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={13} weight={900} color={C.coral}>{money(tot.pay)}원</Num></div>
           </Tile>
         </button>
       </div>
@@ -4620,13 +4620,13 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
         <button onClick={() => setStatDetail("ot")} className="pressable text-left">
           <Tile soft style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>{isShiftMode ? `추가 인정 (${tot.blocks}회)` : "추가근무"}</Eyebrow>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={18} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16} color={C.blue}>+{minStr(tot.otMin)}</Num></div>
           </Tile>
         </button>
         <button onClick={() => setStatDetail("short")} className="pressable text-left">
           <Tile soft style={{ padding: 12, minWidth: 0 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={18} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16} color={tot.shortMin > 0 ? C.red : C.sub}>−{minStr(tot.shortMin)}</Num></div>
           </Tile>
         </button>
       </div>
@@ -4637,9 +4637,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Eyebrow>대신 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
               <ChevronRight size={14} color={C.sub} />
             </div>
-            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-1" style={{ minWidth: 0 }}>
-              <Num size={17} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
-              <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{money(tot.coverPay)}원</span>
+            <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+              <Num size={15} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
         </button>
@@ -4651,9 +4651,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <Eyebrow>일회성 현장 근무 (정상 근무시간·지급합계와 별도 집계)</Eyebrow>
               <ChevronRight size={14} color={C.sub} />
             </div>
-            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-1" style={{ minWidth: 0 }}>
-              <Num size={17} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
-              <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{money(tot.oneOffPay)}원</span>
+            <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+              <Num size={15} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.oneOffPay)}원</span>
             </div>
           </div>
         </button>
@@ -5196,9 +5196,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
               <Plus size={13} /> 사람 추가
             </button>
-            <div className="flex items-center flex-wrap justify-between gap-x-2 gap-y-1 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{coverValidParts.length}명이 균등하게 나눔 · 배분 합계</span>
-              <span style={{ fontSize: 15, fontWeight: 900, color: C.text, overflowWrap: "anywhere" }}>{money(coverShares.reduce((a, b) => a + b, 0))}원</span>
+            <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+              <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{coverValidParts.length}명이 균등하게 나눔 · 배분 합계</span>
+              <span style={{ fontSize: 13, fontWeight: 900, color: C.text, whiteSpace: "nowrap", flexShrink: 0 }}>{money(coverShares.reduce((a, b) => a + b, 0))}원</span>
             </div>
           </div>
         </div>
@@ -5458,24 +5458,24 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
         <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
           <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1.5" style={{ overflowWrap: "anywhere" }}><Num size={20}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 14 }}>회</span>}</Num></div>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 14 }}>회</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
           </Tile>
           <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1.5" style={{ overflowWrap: "anywhere" }}><Num size={20}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
               {agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
             </div>
           </Tile>
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
-            <div className="mt-1.5" style={{ overflowWrap: "anywhere" }}><Num size={18} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
-            {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>{money(agg.otPay)}원</div>}
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={16} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
+            {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3, whiteSpace: "nowrap" }}>{money(agg.otPay)}원</div>}
           </Tile>
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
-            <div className="mt-1.5" style={{ overflowWrap: "anywhere" }}><Num size={18} weight={800} color={agg.shortMin > 0 ? C.red : C.sub}>−{minStr(agg.shortMin)}</Num></div>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={16} weight={800} color={agg.shortMin > 0 ? C.red : C.sub}>−{minStr(agg.shortMin)}</Num></div>
             {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3 }}>지급액에 반영 안 함</div>}
           </Tile>
         </div>
@@ -5487,9 +5487,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <Eyebrow>대신 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
-              <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-1" style={{ minWidth: 0 }}>
-                <Num size={17} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
-                <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{money(agg.coverPay)}원</span>
+              <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+                <Num size={15} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
+                <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.coverPay)}원</span>
               </div>
             </div>
           </button>
@@ -5501,9 +5501,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <Eyebrow>일회성 현장 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
-              <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-1" style={{ minWidth: 0 }}>
-                <Num size={17} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
-                <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{money(agg.oneOffPay)}원</span>
+              <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+                <Num size={15} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
+                <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.oneOffPay)}원</span>
               </div>
             </div>
           </button>
@@ -5926,8 +5926,8 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
         <div className="grid grid-cols-2 gap-2 mb-4">
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={18}>{hmc(weekAgg.net)}</Num></div>
-            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2, overflowWrap: "anywhere" }}>{money(weekAgg.pay)}원</div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(weekAgg.net)}</Num></div>
+            <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
             {(weekAgg.coverCount > 0 || weekAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
                 {weekAgg.coverCount > 0 && <div>대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}</div>}
@@ -5937,8 +5937,8 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           </div>
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
-            <div className="mt-1" style={{ overflowWrap: "anywhere" }}><Num size={18}>{hmc(monthAgg.net)}</Num></div>
-            <div style={{ fontSize: 11.5, color: C.coral, fontWeight: 800, marginTop: 2, overflowWrap: "anywhere" }}>{money(monthAgg.pay)}원</div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(monthAgg.net)}</Num></div>
+            <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
             {(monthAgg.coverCount > 0 || monthAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
                 {monthAgg.coverCount > 0 && <div>대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}</div>}
@@ -6082,9 +6082,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                     );
                   })}
                 </div>
-                <div className="flex items-center flex-wrap justify-between gap-x-2 gap-y-1 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-                  <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>이날 합계</span>
-                  <span style={{ fontSize: 15, fontWeight: 900, color: C.coral, overflowWrap: "anywhere" }}>{hmc(selDayAgg.net)} · {money(selDayAgg.pay)}원</span>
+                <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, flexShrink: 0 }}>이날 합계</span>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{hmc(selDayAgg.net)} · {money(selDayAgg.pay)}원</span>
                 </div>
               </>
             )}
