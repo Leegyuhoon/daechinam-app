@@ -1385,10 +1385,16 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     setToast("요청을 취소했습니다");
   };
 
-  const open = useMemo(
-    () => records.find((r) => worker && r.workerId === worker.id && r.date === today && !r.clockOut),
-    [records, worker, today]
-  );
+  const open = useMemo(() => {
+    if (!worker) return null;
+    // 자정을 넘겨서 근무하는 경우(예: 밤 11시 출근 → 새벽 1시 퇴근)까지 놓치지 않도록,
+    // "오늘 날짜"로만 찾지 않고 "아직 퇴근 안 한 기록 중 출근한 지 20시간이 안 지난 것"을 찾음.
+    // (20시간보다 오래된 미퇴근 기록은 실수로 방치된 것으로 보고 여기서는 무시 — 관리자가 별도로 정리)
+    const cutoff = now.getTime() - 20 * 3600 * 1000;
+    const candidates = records.filter((r) => r.workerId === worker.id && !r.clockOut && new Date(r.clockIn).getTime() > cutoff);
+    if (candidates.length === 0) return null;
+    return candidates.sort((a, b) => b.clockIn.localeCompare(a.clockIn))[0];
+  }, [records, worker, now]);
   const doneToday = useMemo(
     () => records.filter((r) => worker && r.workerId === worker.id && r.date === today && r.clockOut).slice(-1)[0],
     [records, worker, today]
@@ -1430,8 +1436,9 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     const recId = uid();
     const ok = await saveConfirmedVerified(
       (d) => {
-        // 혹시라도 이미 같은 날짜에 출근(퇴근 안 한) 기록이 있으면 중복으로 또 만들지 않음
-        const already = d.records.some((r) => r.workerId === worker.id && r.date === dateKey && !r.clockOut);
+        // 혹시라도 이미 (자정을 넘겨서든) 퇴근 안 한 최근 출근 기록이 있으면 중복으로 또 만들지 않음
+        const cutoff = ts.getTime() - 20 * 3600 * 1000;
+        const already = d.records.some((r) => r.workerId === worker.id && !r.clockOut && new Date(r.clockIn).getTime() > cutoff);
         if (already) return d;
         const cover = (d.transfers || []).find((t) => t.status === "approved" && t.toWorkerId === worker.id && t.date === dateKey && t.siteId === s?.id && !t.fulfilledRecordId);
         return {
@@ -1449,7 +1456,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
         };
       },
-      (fresh) => fresh.records.some((r) => r.workerId === worker.id && r.date === dateKey && !r.clockOut)
+      (fresh) => {
+        const cutoff = ts.getTime() - 20 * 3600 * 1000;
+        return fresh.records.some((r) => r.workerId === worker.id && !r.clockOut && new Date(r.clockIn).getTime() > cutoff);
+      }
     );
     clockBusyRef.current = false;
     setClockBusy(false);
