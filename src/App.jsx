@@ -233,6 +233,10 @@ function migrate(p) {
   d.siteManuals = Array.isArray(d.siteManuals) ? d.siteManuals : [];
   d.closurePeriods = Array.isArray(d.closurePeriods) ? d.closurePeriods : [];
   d.supplyCatalog = Array.isArray(d.supplyCatalog) ? d.supplyCatalog : [];
+  // 예전 버전(품목당 구매처 1곳)으로 저장된 데이터를, 여러 구매처를 담는 새 구조로 자동 변환
+  d.supplyCatalog = d.supplyCatalog.map((c) => (
+    c.vendors ? c : { ...c, vendors: (c.vendor || c.unitPrice != null) ? [{ vendor: c.vendor || "", method: c.method || "online", unitPrice: c.unitPrice ?? null }] : [] }
+  ));
   delete d.deviceWorkerId;
   return d;
 }
@@ -3180,7 +3184,7 @@ function SupplyAdminView({ data, update, setToast }) {
     return <span style={{ fontSize: 10.5, fontWeight: 800, color: col, background: bg, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
   };
 
-  // 설정에 등록해둔 "자주 사는 품목" 카탈로그에서 이름이 일치하는 걸 찾아 자동으로 채워줌
+  // 설정에 등록해둔 "자주 사는 품목" 카탈로그에서 이름이 일치하는 걸 찾아 자동으로 채워줌 (구매처가 여러 개면 첫번째를 기본으로, 나중에 다른 걸로 바꿀 수 있음)
   const catalog = data.supplyCatalog || [];
   const matchCatalog = (itemName) => {
     const norm = itemName.trim().toLowerCase();
@@ -3190,42 +3194,57 @@ function SupplyAdminView({ data, update, setToast }) {
   };
 
   // 구매 정보(업체·구매방식·단가·구매가격) 입력 — 같이 요청한 묶음 전체를 한 모달에서, "+"로 자유롭게 추가하며 처리
-  const [purchaseEdit, setPurchaseEdit] = useState(null); // { groupIds: [], rows: [{ id(기존 요청 id 또는 null=신규), itemName, vendor, method, unitPrice, totalPrice }] }
+  const [purchaseEdit, setPurchaseEdit] = useState(null); // { groupIds: [], rows: [{ id, itemName, vendor, method, unitPrice, totalPrice, catalogOptions }] }
   const openPurchaseEdit = (r) => {
     const groupIds = r.batchId ? list.filter((x) => x.batchId === r.batchId).map((x) => x.id) : [r.id];
     const groupItems = r.batchId ? list.filter((x) => x.batchId === r.batchId) : [r];
     setPurchaseEdit({
       groupIds,
       rows: groupItems.map((x) => {
-        // 이미 구매 정보가 있으면 그대로, 없으면 카탈로그에서 자동으로 찾아서 채움
+        const m = matchCatalog(x.itemName);
+        const catalogOptions = m?.vendors || [];
+        // 이미 구매 정보가 있으면 그대로, 없으면 카탈로그 첫 구매처로 자동 채움
         if (x.vendor || x.unitPrice != null) {
           return {
-            id: x.id, itemName: x.itemName,
+            id: x.id, itemName: x.itemName, qty: String(x.qty || 1),
             vendor: x.vendor || "", method: x.purchaseMethod || "online",
             unitPrice: x.unitPrice != null ? String(x.unitPrice) : "", totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
+            catalogOptions,
           };
         }
-        const m = matchCatalog(x.itemName);
-        const unitPrice = m?.unitPrice != null ? m.unitPrice : "";
+        const opt = catalogOptions[0];
+        const unitPrice = opt?.unitPrice != null ? opt.unitPrice : "";
         const totalPrice = unitPrice !== "" ? Math.round(unitPrice * (x.qty || 1)) : "";
         return {
-          id: x.id, itemName: x.itemName,
-          vendor: m?.vendor || "", method: m?.method || "online",
+          id: x.id, itemName: x.itemName, qty: String(x.qty || 1),
+          vendor: opt?.vendor || "", method: opt?.method || "online",
           unitPrice: unitPrice === "" ? "" : String(unitPrice), totalPrice: totalPrice === "" ? "" : String(totalPrice),
-          matchedFromCatalog: !!m,
+          matchedFromCatalog: !!opt, catalogOptions,
         };
       }),
     });
   };
   const addPurchaseRow = () => {
-    setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", vendor: "", method: "online", unitPrice: "", totalPrice: "" }] }));
+    setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", qty: "1", vendor: "", method: "online", unitPrice: "", totalPrice: "", catalogOptions: [] }] }));
   };
   const applyCatalogToRow = (i, itemName) => {
     const m = matchCatalog(itemName);
-    if (!m) return;
+    const catalogOptions = m?.vendors || [];
+    const opt = catalogOptions[0];
+    if (!opt) { setPurchaseEdit((f) => { const rows = [...f.rows]; rows[i] = { ...rows[i], itemName, catalogOptions }; return { ...f, rows }; }); return; }
     setPurchaseEdit((f) => {
       const rows = [...f.rows];
-      rows[i] = { ...rows[i], itemName, vendor: m.vendor || "", method: m.method || "online", unitPrice: m.unitPrice != null ? String(m.unitPrice) : "", matchedFromCatalog: true };
+      rows[i] = { ...rows[i], itemName, vendor: opt.vendor || "", method: opt.method || "online", unitPrice: opt.unitPrice != null ? String(opt.unitPrice) : "", matchedFromCatalog: true, catalogOptions };
+      return { ...f, rows };
+    });
+  };
+  const pickCatalogVendor = (i, opt) => {
+    setPurchaseEdit((f) => {
+      const rows = [...f.rows];
+      const row = rows[i];
+      const qty = Number(row.qty) || 1;
+      const totalPrice = opt.unitPrice != null ? String(Math.round(opt.unitPrice * qty)) : row.totalPrice;
+      rows[i] = { ...row, vendor: opt.vendor || "", method: opt.method || "online", unitPrice: opt.unitPrice != null ? String(opt.unitPrice) : "", totalPrice };
       return { ...f, rows };
     });
   };
@@ -3240,16 +3259,17 @@ function SupplyAdminView({ data, update, setToast }) {
       purchaseEdit.rows.forEach((row) => {
         const unitPrice = row.unitPrice === "" ? null : Number(row.unitPrice);
         const totalPrice = row.totalPrice === "" ? null : Number(row.totalPrice);
+        const qty = Number(row.qty) || 1;
         if (row.id) {
-          // 기존 요청 항목 — 구매 정보만 갱신
-          reqs = reqs.map((x) => (x.id === row.id ? { ...x, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice } : x));
+          // 기존 요청 항목 — 구매 정보(수량 포함)를 갱신
+          reqs = reqs.map((x) => (x.id === row.id ? { ...x, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice } : x));
         } else if (row.itemName.trim()) {
           // "+"로 새로 추가한 항목 — 요청 과정 없이 바로 구매·전달완료로 등록
           const base = reqs.find((x) => purchaseEdit.groupIds.includes(x.id));
           reqs.push({
             id: uid(), date: base?.date || dKey(new Date()), siteId: base?.siteId || null, siteName: base?.siteName || "현장 미지정",
             workerId: base?.workerId || null, workerName: base?.workerName || "관리자",
-            itemName: row.itemName.trim(), qty: 1, note: "",
+            itemName: row.itemName.trim(), qty, note: "",
             status: "delivered", createdAt: at, respondedAt: at, batchId: groupBatchId,
             vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice,
           });
@@ -3466,64 +3486,102 @@ function SupplyAdminView({ data, update, setToast }) {
             <div className="flex flex-col gap-3">
               {purchaseEdit.rows.map((row, i) => (
                 <div key={i} style={{ background: C.tileSoft, padding: 12 }}>
-                  <div className="flex items-center justify-between mb-2">
-                    {row.id ? (
-                      <div className="flex items-center gap-1.5">
-                        <div style={{ fontSize: 13.5, fontWeight: 900, color: C.text }}>{row.itemName}</div>
-                        {row.matchedFromCatalog && (
-                          <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#0369A1", padding: "1px 5px", whiteSpace: "nowrap" }}>등록된 정보로 자동 입력됨</span>
-                        )}
-                      </div>
-                    ) : (
-                      <input value={row.itemName}
-                        onChange={(e) => {
-                          const rows = [...purchaseEdit.rows]; rows[i] = { ...row, itemName: e.target.value };
-                          setPurchaseEdit((f) => ({ ...f, rows }));
-                        }}
-                        onBlur={(e) => applyCatalogToRow(i, e.target.value)}
-                        placeholder="품목명 (요청 없이 추가 구매한 것)" style={{ ...inputStyle, background: C.tile, flex: 1, marginRight: 8 }} />
-                    )}
+                  <div className="flex items-center justify-end mb-1">
                     {purchaseEdit.rows.length > 1 && (
                       <button onClick={() => removePurchaseRow(i)}><X size={16} color={C.sub} /></button>
                     )}
                   </div>
-                  <Field label="구매처 (업체명)">
-                    <input value={row.vendor} onChange={(e) => {
-                      const rows = [...purchaseEdit.rows]; rows[i] = { ...row, vendor: e.target.value };
-                      setPurchaseEdit((f) => ({ ...f, rows }));
-                    }} placeholder="예: 쿠팡, 다이소 강남점" style={{ ...inputStyle, background: C.tile }} />
+
+                  {/* ① 구매 방식 */}
+                  <Field label="① 구매 방식">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
+                        <button key={k} onClick={() => {
+                          const rows = [...purchaseEdit.rows]; rows[i] = { ...row, method: k };
+                          setPurchaseEdit((f) => ({ ...f, rows }));
+                        }}
+                          style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: row.method === k ? C.aquaDeep : C.tile, color: row.method === k ? "#fff" : C.sub }}>{l}</button>
+                      ))}
+                    </div>
                   </Field>
+
+                  {/* ② 구매처 */}
+                  {row.catalogOptions && row.catalogOptions.length > 1 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {row.catalogOptions.map((opt, oi) => {
+                        const active = row.vendor === opt.vendor && row.method === opt.method;
+                        return (
+                          <button key={oi} onClick={() => pickCatalogVendor(i, opt)}
+                            style={{ fontSize: 11, fontWeight: 700, padding: "5px 9px", background: active ? "#0369A1" : C.tile, color: active ? "#fff" : C.sub, whiteSpace: "nowrap" }}>
+                            {opt.vendor} ({opt.method === "offline" ? "오프" : "온라인"})
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <div className="mt-2">
-                    <Field label="구매 방식">
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
-                          <button key={k} onClick={() => {
-                            const rows = [...purchaseEdit.rows]; rows[i] = { ...row, method: k };
-                            setPurchaseEdit((f) => ({ ...f, rows }));
-                          }}
-                            style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: row.method === k ? C.aquaDeep : C.tile, color: row.method === k ? "#fff" : C.sub }}>{l}</button>
-                        ))}
-                      </div>
+                    <Field label="② 구매처 (업체명)">
+                      <input value={row.vendor} onChange={(e) => {
+                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, vendor: e.target.value };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} placeholder="예: 쿠팡, 다이소 강남점" style={{ ...inputStyle, background: C.tile }} />
                     </Field>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <Field label="단가 (원)">
-                      <input type="number" value={row.unitPrice} onChange={(e) => {
-                        const unitPrice = e.target.value;
+
+                  {/* ③ 제품명 */}
+                  <div className="mt-2">
+                    {row.id ? (
+                      <Field label="③ 제품명">
+                        <div className="flex items-center gap-1.5" style={{ padding: "10px 12px", background: C.tile }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{row.itemName}</span>
+                          {row.matchedFromCatalog && (
+                            <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#0369A1", padding: "1px 5px", whiteSpace: "nowrap" }}>자동 입력됨</span>
+                          )}
+                        </div>
+                      </Field>
+                    ) : (
+                      <Field label="③ 제품명">
+                        <input value={row.itemName}
+                          onChange={(e) => {
+                            const rows = [...purchaseEdit.rows]; rows[i] = { ...row, itemName: e.target.value };
+                            setPurchaseEdit((f) => ({ ...f, rows }));
+                          }}
+                          onBlur={(e) => applyCatalogToRow(i, e.target.value)}
+                          placeholder="품목명 (요청 없이 추가 구매한 것)" style={{ ...inputStyle, background: C.tile }} />
+                      </Field>
+                    )}
+                  </div>
+
+                  {/* ④ 수량 */}
+                  <div className="mt-2">
+                    <Field label="④ 수량">
+                      <input type="number" min="1" value={row.qty} onChange={(e) => {
+                        const qty = e.target.value;
                         const rows = [...purchaseEdit.rows];
-                        const existing = list.find((x) => x.id === row.id);
-                        const qty = existing?.qty || 1;
-                        const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
-                        const shouldAutoTotal = row.totalPrice === "" || row.totalPrice === String(Math.round(Number(row.unitPrice || 0) * qty));
-                        rows[i] = { ...row, unitPrice, totalPrice: shouldAutoTotal ? auto : row.totalPrice };
+                        const auto = row.unitPrice !== "" ? String(Math.round(Number(row.unitPrice) * (Number(qty) || 1))) : row.totalPrice;
+                        rows[i] = { ...row, qty, totalPrice: auto };
                         setPurchaseEdit((f) => ({ ...f, rows }));
-                      }} placeholder="개당 가격" style={{ ...inputStyle, background: C.tile }} />
+                      }} style={{ ...inputStyle, background: C.tile }} />
                     </Field>
-                    <Field label="구매가격 (원)">
+                  </div>
+
+                  {/* ⑤ 가격(구매가격) → ⑥ 단가 */}
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Field label="⑤ 구매가격 (원)">
                       <input type="number" value={row.totalPrice} onChange={(e) => {
                         const rows = [...purchaseEdit.rows]; rows[i] = { ...row, totalPrice: e.target.value };
                         setPurchaseEdit((f) => ({ ...f, rows }));
                       }} placeholder="총 결제금액" style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                    <Field label="⑥ 단가 (원)">
+                      <input type="number" value={row.unitPrice} onChange={(e) => {
+                        const unitPrice = e.target.value;
+                        const rows = [...purchaseEdit.rows];
+                        const qty = Number(row.qty) || 1;
+                        const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
+                        rows[i] = { ...row, unitPrice, totalPrice: auto };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} placeholder="개당 가격" style={{ ...inputStyle, background: C.tile }} />
                     </Field>
                   </div>
                 </div>
@@ -6780,13 +6838,15 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     setToast("엑셀 파일을 다운로드했습니다");
   };
 
-  const openNewCatalog = () => setCatalogEdit({ id: null, itemName: "", vendor: "", method: "online", unitPrice: "" });
+  const openNewCatalog = () => setCatalogEdit({ id: null, itemName: "", vendors: [{ vendor: "", method: "online", unitPrice: "" }] });
+  const addCatalogVendor = () => setCatalogEdit((f) => ({ ...f, vendors: [...f.vendors, { vendor: "", method: "online", unitPrice: "" }] }));
+  const removeCatalogVendor = (i) => setCatalogEdit((f) => ({ ...f, vendors: f.vendors.filter((_, idx) => idx !== i) }));
   const saveCatalog = () => {
     if (!catalogEdit.itemName.trim()) { setToast("품목명을 입력해 주세요"); return; }
-    const c = {
-      id: catalogEdit.id || uid(), itemName: catalogEdit.itemName.trim(), vendor: catalogEdit.vendor.trim(),
-      method: catalogEdit.method, unitPrice: catalogEdit.unitPrice === "" ? null : Number(catalogEdit.unitPrice),
-    };
+    const vendors = catalogEdit.vendors
+      .filter((v) => v.vendor.trim())
+      .map((v) => ({ vendor: v.vendor.trim(), method: v.method, unitPrice: v.unitPrice === "" ? null : Number(v.unitPrice) }));
+    const c = { id: catalogEdit.id || uid(), itemName: catalogEdit.itemName.trim(), vendors };
     update((d) => ({
       ...d,
       supplyCatalog: catalogEdit.id ? (d.supplyCatalog || []).map((x) => (x.id === c.id ? c : x)) : [...(d.supplyCatalog || []), c],
@@ -7236,20 +7296,26 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         <button onClick={openNewCatalog} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         <Tile>
           <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
-            자주 구매하는 용품의 <b style={{ color: C.text }}>업체·구매방식·단가</b>를 미리 등록해두면, 근무자가 그 이름으로 요청했을 때 "구매 정보 입력"에서 자동으로 채워져요. 물론 그 자리에서 직접 고쳐도 돼요.
+            자주 구매하는 용품의 <b style={{ color: C.text }}>업체·구매방식·단가</b>를 미리 등록해두면, 근무자가 그 이름으로 요청했을 때 "구매 정보 입력"에서 자동으로 채워져요. 한 품목을 여러 업체에서 구매하신다면 업체를 여러 개 등록해두고 그때그때 고를 수 있어요.
           </div>
         </Tile>
         {(data.supplyCatalog || []).length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 품목이 없습니다.</div></Tile>}
         {(data.supplyCatalog || []).map((c) => (
-          <Tile key={c.id} onClick={() => setCatalogEdit({ ...c, unitPrice: c.unitPrice != null ? String(c.unitPrice) : "" })} style={{ padding: "12px 14px" }}>
+          <Tile key={c.id} onClick={() => setCatalogEdit({ id: c.id, itemName: c.itemName, vendors: (c.vendors && c.vendors.length > 0 ? c.vendors : [{ vendor: "", method: "online", unitPrice: null }]).map((v) => ({ ...v, unitPrice: v.unitPrice != null ? String(v.unitPrice) : "" })) })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center justify-between">
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{c.itemName}</div>
-                <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
-                  {c.vendor || "구매처 미지정"} · {c.method === "offline" ? "오프라인" : "온라인"}{c.unitPrice != null ? ` · 단가 ${money(c.unitPrice)}원` : ""}
-                </div>
+                {(c.vendors || []).length === 0 ? (
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>등록된 구매처 없음</div>
+                ) : (
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                    {c.vendors.map((v, i) => (
+                      <div key={i}>{v.vendor} · {v.method === "offline" ? "오프라인" : "온라인"}{v.unitPrice != null ? ` · 단가 ${money(v.unitPrice)}원` : ""}</div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <Pencil size={14} color={C.sub} />
+              <Pencil size={14} color={C.sub} style={{ flexShrink: 0 }} />
             </div>
           </Tile>
         ))}
@@ -7264,22 +7330,39 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <input value={catalogEdit.itemName} onChange={(e) => setCatalogEdit((f) => ({ ...f, itemName: e.target.value }))}
                   placeholder="예: 고무장갑, 대걸레, 쓰레기봉투 20L" style={inputStyle} />
               </Field>
-              <Field label="구매처 (업체명)">
-                <input value={catalogEdit.vendor} onChange={(e) => setCatalogEdit((f) => ({ ...f, vendor: e.target.value }))}
-                  placeholder="예: 쿠팡, 다이소 강남점" style={inputStyle} />
-              </Field>
-              <Field label="구매 방식">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
-                    <button key={k} onClick={() => setCatalogEdit((f) => ({ ...f, method: k }))}
-                      style={{ padding: "9px 0", fontSize: 12.5, fontWeight: 800, background: catalogEdit.method === k ? C.aquaDeep : C.tileSoft, color: catalogEdit.method === k ? "#fff" : C.sub }}>{l}</button>
+              <div>
+                <Eyebrow>구매처 (여러 곳 등록 가능)</Eyebrow>
+                <div className="flex flex-col gap-2 mt-2">
+                  {catalogEdit.vendors.map((v, i) => (
+                    <div key={i} style={{ background: C.tileSoft, padding: 10 }}>
+                      <div className="flex items-center justify-end mb-1">
+                        {catalogEdit.vendors.length > 1 && (
+                          <button onClick={() => removeCatalogVendor(i)}><X size={16} color={C.sub} /></button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+                        {[["online", "온라인"], ["offline", "오프라인"]].map(([k, l]) => (
+                          <button key={k} onClick={() => {
+                            const vendors = [...catalogEdit.vendors]; vendors[i] = { ...v, method: k };
+                            setCatalogEdit((f) => ({ ...f, vendors }));
+                          }} style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: v.method === k ? C.aquaDeep : C.tile, color: v.method === k ? "#fff" : C.sub }}>{l}</button>
+                        ))}
+                      </div>
+                      <input value={v.vendor} onChange={(e) => {
+                        const vendors = [...catalogEdit.vendors]; vendors[i] = { ...v, vendor: e.target.value };
+                        setCatalogEdit((f) => ({ ...f, vendors }));
+                      }} placeholder="예: 쿠팡, 다이소 강남점" style={{ ...inputStyle, background: C.tile, marginBottom: 6 }} />
+                      <input type="number" value={v.unitPrice} onChange={(e) => {
+                        const vendors = [...catalogEdit.vendors]; vendors[i] = { ...v, unitPrice: e.target.value };
+                        setCatalogEdit((f) => ({ ...f, vendors }));
+                      }} placeholder="이 업체에서의 단가 (원)" style={{ ...inputStyle, background: C.tile }} />
+                    </div>
                   ))}
                 </div>
-              </Field>
-              <Field label="기본 단가 (원)">
-                <input type="number" value={catalogEdit.unitPrice} onChange={(e) => setCatalogEdit((f) => ({ ...f, unitPrice: e.target.value }))}
-                  placeholder="개당 가격" style={inputStyle} />
-              </Field>
+                <button onClick={addCatalogVendor} className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+                  <Plus size={13} /> 구매처 추가
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               {catalogEdit.id ? <Btn kind="danger" full onClick={() => removeCatalog(catalogEdit.id)}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
