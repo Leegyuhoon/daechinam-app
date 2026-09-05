@@ -278,19 +278,34 @@ function isHoliday(date, settings) {
 // 공휴일과는 별개로, "방학 기간"처럼 특정 현장이 통째로 쉬는 기간을 관리자가 미리 설정해둘 수 있음.
 // 1.5배 같은 급여 배율은 없고, 그냥 "이 기간엔 원래 안 나와도 되는 날"이라는 안내용.
 // recurringDays가 있으면 "이 기간 동안, 지정한 요일마다 반복" 방식으로 판정함 (예: 매주 화요일 휴무).
-function closureLabelFor(date, siteId, closurePeriods) {
-  const hit = (closurePeriods || []).find((c) => {
+// siteIds는 근무자가 소속된 현장 전부(배열)를 넘겨야 함 — 여러 현장 중 한 곳만 휴무여도 놓치지 않기 위함.
+// 반환값: { label, siteName(전체 현장 대상이면 null) } | null
+function closureInfoFor(date, siteIds, closurePeriods, sites) {
+  const mySiteIds = Array.isArray(siteIds) ? siteIds : (siteIds ? [siteIds] : []);
+  const matchesDay = (c) => {
     if (date < c.startDate || date > c.endDate) return false;
-    if (!c.siteIds || c.siteIds.length === 0 || (siteId && c.siteIds.includes(siteId))) {
-      if (c.recurringDays && c.recurringDays.length > 0) {
-        const dow = parseKey(date).getDay();
-        return c.recurringDays.includes(dow);
-      }
-      return true;
+    if (c.recurringDays && c.recurringDays.length > 0) {
+      return c.recurringDays.includes(parseKey(date).getDay());
     }
-    return false;
-  });
-  return hit ? hit.label : null;
+    return true;
+  };
+  for (const c of (closurePeriods || [])) {
+    if (!matchesDay(c)) continue;
+    if (!c.siteIds || c.siteIds.length === 0) {
+      return { label: c.label, siteName: null }; // 전체 현장 대상
+    }
+    const matchedSiteId = mySiteIds.find((sid) => c.siteIds.includes(sid));
+    if (matchedSiteId) {
+      const siteName = sites?.find((s) => s.id === matchedSiteId)?.name || null;
+      return { label: c.label, siteName };
+    }
+  }
+  return null;
+}
+// 하위 호환용 — 기존처럼 라벨 문자열만 필요한 곳에서 사용
+function closureLabelFor(date, siteId, closurePeriods) {
+  const info = closureInfoFor(date, siteId, closurePeriods, null);
+  return info ? info.label : null;
 }
 
 // 추가근무 시간을 "N회 + M분" 형태로 표시 (1회 = 120분 기준). 실제 급여는 otMin(30분 단위) 그대로 계산되고, 이건 표시용.
@@ -4396,9 +4411,10 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       if (recs.length > 0) status = recs.some((r) => !r.clockOut) ? "incomplete" : "complete";
       let offInfo = null;
       let closureLabel = null;
+      let closureSiteName = null;
       if (status === "absent") {
-        closureLabel = closureLabelFor(boardDate, w.siteId, data.closurePeriods);
-        if (closureLabel) status = "closure";
+        const info = closureInfoFor(boardDate, w.siteIds || (w.siteId ? [w.siteId] : []), data.closurePeriods, sites);
+        if (info) { closureLabel = info.label; closureSiteName = info.siteName; status = "closure"; }
       }
       if (status === "absent") {
         const matches = (transfers || []).filter((x) => x.fromWorkerId === w.id && x.date === boardDate && x.status === "approved");
@@ -4409,7 +4425,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
         }
       }
       const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
-      return { w, recs, status, siteNames, offInfo, closureLabel };
+      return { w, recs, status, siteNames, offInfo, closureLabel, closureSiteName };
     }).sort((a, b) => {
       const order = { incomplete: 0, offNoRequest: 1, complete: 2, offRequested: 3, closure: 4, absent: 5 };
       return order[a.status] - order[b.status] || a.w.name.localeCompare(b.w.name);
@@ -4911,7 +4927,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 
             {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {boardRows.map(({ w, recs, status, siteNames, offInfo, closureLabel }) => {
+              {boardRows.map(({ w, recs, status, siteNames, offInfo, closureLabel, closureSiteName }) => {
                 const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
                   complete: { color: ST.complete, label: "정상 완료" },
@@ -4939,7 +4955,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                       </div>
                     ) : status === "closure" ? (
                       <div style={{ marginLeft: 17 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: statusInfo[status].color }}>🏫 {closureLabel} 기간</div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: statusInfo[status].color }}>🏫 {closureSiteName ? `${closureSiteName} · ` : ""}{closureLabel} 기간</div>
                         <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>이 기간엔 원래 쉬는 날이라 결근으로 잡히지 않아요.</div>
                       </div>
                     ) : recs.length === 0 ? (
@@ -5962,7 +5978,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
             const dateKey = `${y}-${pad(m + 1)}-${pad(d)}`;
             const status = cellStatus(dateKey);
             const holiday = isHoliday(dateKey, settings);
-            const closureLabel = closureLabelFor(dateKey, worker.siteId, data.closurePeriods);
+            const closureInfo = closureInfoFor(dateKey, worker.siteIds || (worker.siteId ? [worker.siteId] : []), data.closurePeriods, data.sites);
             const isToday = dateKey === todayKey;
             const isSel = dateKey === selDate;
             const bg = cellColors[status] || C.tile;
@@ -5978,7 +5994,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 {holiday && (
                   <div style={{ position: "absolute", bottom: 3, left: "50%", transform: "translateX(-50%)", width: 4, height: 4, borderRadius: 999, background: status === "none" ? C.red : "#fff" }} />
                 )}
-                {closureLabel && (
+                {closureInfo && (
                   <div style={{ position: "absolute", top: 1, right: 2, fontSize: 8 }}>🏫</div>
                 )}
               </button>
@@ -6008,11 +6024,15 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                   공휴일 · {settings.holidayMultiplier || 1.5}배
                 </span>
               )}
-              {closureLabelFor(selDate, worker.siteId, data.closurePeriods) && (
-                <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "2px 6px", whiteSpace: "nowrap" }}>
-                  🏫 {closureLabelFor(selDate, worker.siteId, data.closurePeriods)}
-                </span>
-              )}
+              {(() => {
+                const info = closureInfoFor(selDate, worker.siteIds || (worker.siteId ? [worker.siteId] : []), data.closurePeriods, data.sites);
+                if (!info) return null;
+                return (
+                  <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: "#0369A1", padding: "2px 6px", whiteSpace: "nowrap" }}>
+                    🏫 {info.siteName ? `${info.siteName} · ` : ""}{info.label}
+                  </span>
+                );
+              })()}
             </div>
             {selRecs.length === 0 ? (
               (() => {
