@@ -105,6 +105,15 @@ async function uploadPhoto(file) {
   const data = await res.json();
   return data.id;
 }
+const MAX_VIDEO_MB = 40; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지
+// 영상을 고르자마자(업로드 시도 전에) 용량부터 확인 — 너무 크면 업로드해보고 실패하는 게 아니라 바로 이유를 알려줌
+function checkVideoSize(file) {
+  const mb = file.size / 1024 / 1024;
+  if (mb > MAX_VIDEO_MB) {
+    return `이 영상은 ${mb.toFixed(1)}MB예요 (최대 ${MAX_VIDEO_MB}MB). 더 짧게 찍거나, 카메라 화질을 낮춰서 다시 시도해 주세요.`;
+  }
+  return null;
+}
 async function uploadVideo(file) {
   const res = await fetch("/api/photo", {
     method: "POST",
@@ -190,7 +199,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -238,6 +247,15 @@ function migrate(p) {
     c.vendors ? c : { ...c, vendors: (c.vendor || c.unitPrice != null) ? [{ vendor: c.vendor || "", method: c.method || "online", unitPrice: c.unitPrice ?? null }] : [] }
   ));
   delete d.deviceWorkerId;
+  d.checklistItems = Array.isArray(d.checklistItems) ? d.checklistItems : [
+    { id: uid(), text: "화장실 청소 완료" },
+    { id: uid(), text: "쓰레기통 비움" },
+    { id: uid(), text: "바닥 청소 완료" },
+    { id: uid(), text: "비품(휴지·세제 등) 보충 확인" },
+    { id: uid(), text: "출입구·공용공간 정리 완료" },
+    { id: uid(), text: "안전사고 없음" },
+  ];
+  d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
   return d;
 }
 
@@ -1111,6 +1129,36 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
   const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [], files: [], previews: [], videoFile: null, videoPreview: "", kind: "none" }); setLeadNoticeOpen(true); };
 
+  // 일일체크리스트 — 내가 팀장인 현장 중 "체크리스트 대상"으로 켜둔 곳들
+  const myChecklistSites = sites.filter((s) => myLeaderSiteIds.includes(s.id) && s.checklistEnabled);
+  const [checklistSiteId, setChecklistSiteId] = useState(null); // 열려있는 체크리스트의 대상 현장
+  const [checklistAnswers, setChecklistAnswers] = useState({});
+  const openChecklist = (siteId) => {
+    const existing = (data.dailyChecklists || []).find((c) => c.siteId === siteId && c.date === today);
+    const items = data.checklistItems || [];
+    const initial = {};
+    items.forEach((it) => { initial[it.id] = existing ? !!existing.answers?.[it.id] : true; });
+    setChecklistAnswers(initial);
+    setChecklistSiteId(siteId);
+  };
+  const submitChecklist = () => {
+    const s = sites.find((x) => x.id === checklistSiteId);
+    update((d) => {
+      const existingIdx = (d.dailyChecklists || []).findIndex((c) => c.siteId === checklistSiteId && c.date === today);
+      const entry = {
+        id: existingIdx >= 0 ? d.dailyChecklists[existingIdx].id : uid(),
+        date: today, siteId: checklistSiteId, siteName: s?.name || "",
+        workerId: worker.id, workerName: worker.name,
+        answers: checklistAnswers, submittedAt: new Date().toISOString(),
+      };
+      const list = [...(d.dailyChecklists || [])];
+      if (existingIdx >= 0) list[existingIdx] = entry; else list.push(entry);
+      return { ...d, dailyChecklists: list };
+    });
+    setToast("일일체크리스트를 저장했습니다");
+    setChecklistSiteId(null);
+  };
+
   const myWorkerSiteIds2 = worker ? (worker.siteIds || (worker.siteId ? [worker.siteId] : [])) : [];
 
   // 내가 팀장인 현장 소속 근무자들만 (선택한 사람 옵션에 노출할 대상)
@@ -1148,6 +1196,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
   const pickLeadNoticeVideo = (file) => {
     if (!file) return;
+    const err = checkVideoSize(file);
+    if (err) { setToast(err); return; }
     setLeadNoticeForm((f) => ({ ...f, videoFile: file, videoPreview: URL.createObjectURL(file), kind: "video" }));
   };
   const submitLeadNotice = async () => {
@@ -1200,6 +1250,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     if (arr.length === 0) return;
     if (photoForm.kind === "video") {
       // 영상은 1개만
+      const err = checkVideoSize(arr[0]);
+      if (err) { setToast(err); return; }
       setPhotoForm((p) => ({ ...p, file: arr[0], preview: URL.createObjectURL(arr[0]) }));
     } else {
       // 사진은 여러 장 계속 추가 가능 (최대 10장)
@@ -1879,6 +1931,51 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           </>
         )}
       </Modal>
+
+      {/* 일일체크리스트 작성 */}
+      <Modal open={!!checklistSiteId} onClose={() => setChecklistSiteId(null)}>
+        {checklistSiteId && (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{sites.find((s) => s.id === checklistSiteId)?.name} 일일체크리스트</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{today} · {worker.name}</div>
+            <div className="flex flex-col gap-2 mt-4">
+              {(data.checklistItems || []).map((it) => {
+                const on = checklistAnswers[it.id];
+                return (
+                  <button key={it.id} onClick={() => setChecklistAnswers((a) => ({ ...a, [it.id]: !a[it.id] }))}
+                    className="flex items-center justify-between" style={{ padding: "13px 14px", background: C.tileSoft }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: C.text, textAlign: "left" }}>{it.text}</span>
+                    <span style={{ fontSize: 12, fontWeight: 900, color: "#fff", background: on ? ST.complete : C.sub, padding: "5px 12px", flexShrink: 0, marginLeft: 10 }}>
+                      {on ? "예" : "아니오"}
+                    </span>
+                  </button>
+                );
+              })}
+              {(data.checklistItems || []).length === 0 && (
+                <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "16px 0" }}>관리자가 아직 체크리스트 항목을 등록하지 않았어요.</div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setChecklistSiteId(null)}>나중에</Btn>
+              <Btn full disabled={(data.checklistItems || []).length === 0} onClick={submitChecklist}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {myChecklistSites.length > 0 && (
+        <div className="w-full flex flex-col gap-1.5" style={{ maxWidth: 320, marginTop: 10 }}>
+          {myChecklistSites.map((s) => {
+            const done = (data.dailyChecklists || []).some((c) => c.siteId === s.id && c.date === today);
+            return (
+              <button key={s.id} onClick={() => openChecklist(s.id)} className="w-full flex items-center justify-center gap-2"
+                style={{ background: done ? C.bgSoft : "#0369A1", border: done ? `1px solid ${C.lineDark}` : "none", padding: "12px 0", color: done ? C.aqua : "#fff", fontSize: 13, fontWeight: 900 }}>
+                <ClipboardList size={15} /> {s.name} 일일체크리스트{done ? " · 작성 완료 (수정하기)" : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* 팀장 전용: 현장 공지 */}
       {worker?.isTeamLead && (
@@ -2933,6 +3030,8 @@ function PhotoAdminView({ data, update, setToast }) {
     const arr = Array.from(fileList || []).filter(Boolean);
     if (arr.length === 0) return;
     if (uploadForm.kind === "video") {
+      const err = checkVideoSize(arr[0]);
+      if (err) { setToast(err); return; }
       setUploadForm((p) => ({ ...p, file: arr[0], preview: URL.createObjectURL(arr[0]) }));
     } else {
       setUploadForm((p) => {
@@ -3851,6 +3950,8 @@ function NoticeAdminView({ data, update, setToast }) {
   };
   const pickNoticeVideo = (file) => {
     if (!file) return;
+    const err = checkVideoSize(file);
+    if (err) { setToast(err); return; }
     setEdit((f) => ({ ...f, videoFile: file, videoPreview: URL.createObjectURL(file), kind: "video" }));
   };
 
@@ -6801,6 +6902,16 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [closureEdit, setClosureEdit] = useState(null);
   const [catalogEdit, setCatalogEdit] = useState(null);
 
+  const [checklistItemsDraft, setChecklistItemsDraft] = useState(null); // 편집 중일 때만 값 있음
+  const startEditChecklistItems = () => setChecklistItemsDraft((data.checklistItems || []).map((x) => ({ ...x })));
+  const saveChecklistItems = () => {
+    const cleaned = checklistItemsDraft.filter((x) => x.text.trim()).map((x) => ({ ...x, text: x.text.trim() }));
+    if (cleaned.length === 0) { setToast("항목을 한 개 이상 남겨주세요"); return; }
+    update((d) => ({ ...d, checklistItems: cleaned }));
+    setChecklistItemsDraft(null);
+    setToast("체크리스트 항목을 저장했습니다");
+  };
+
   const [personnelPdfBusy, setPersonnelPdfBusy] = useState(false);
   const downloadPersonnelPdf = async () => {
     setPersonnelPdfBusy(true);
@@ -7036,6 +7147,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       workDays: sEdit.workDays || [],
       startTime: sEdit.startTime || "",
       endTime: sEdit.endTime || "",
+      checklistEnabled: !!sEdit.checklistEnabled,
     };
     update((d) => ({ ...d, sites: sEdit.id ? d.sites.map((x) => (x.id === s.id ? s : x)) : [...d.sites, s] }));
     setSEdit(null); setCap("idle"); setToast("현장을 저장했습니다");
@@ -7322,6 +7434,49 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       </Sec>
 
       {/* 용품 구매 정보(자주 사는 품목 미리 등록) */}
+      <Sec title="일일체크리스트 항목" right={
+        <button onClick={startEditChecklistItems} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Pencil size={12} /> 편집</button>}>
+        <Tile>
+          <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+            "일일체크리스트 대상 현장"으로 켜둔 현장의 팀장에게 매일 이 항목들이 예/아니오 체크리스트로 나타나요.
+          </div>
+        </Tile>
+        {(data.checklistItems || []).length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 항목이 없습니다.</div></Tile>}
+        {(data.checklistItems || []).map((it, i) => (
+          <Tile key={it.id} style={{ padding: "10px 14px" }}>
+            <span style={{ fontSize: 13.5, color: C.text }}>{i + 1}. {it.text}</span>
+          </Tile>
+        ))}
+      </Sec>
+
+      <Modal open={!!checklistItemsDraft} onClose={() => setChecklistItemsDraft(null)}>
+        {checklistItemsDraft && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>일일체크리스트 항목 편집</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>예/아니오로 체크하는 항목들이에요.</div>
+            <div className="flex flex-col gap-2">
+              {checklistItemsDraft.map((it, i) => (
+                <div key={it.id} className="flex items-center gap-2">
+                  <input value={it.text} onChange={(e) => {
+                    const next = [...checklistItemsDraft]; next[i] = { ...it, text: e.target.value };
+                    setChecklistItemsDraft(next);
+                  }} style={inputStyle} />
+                  <button onClick={() => setChecklistItemsDraft(checklistItemsDraft.filter((_, idx) => idx !== i))}><X size={16} color={C.sub} /></button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setChecklistItemsDraft([...checklistItemsDraft, { id: uid(), text: "" }])}
+              className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+              <Plus size={13} /> 항목 추가
+            </button>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setChecklistItemsDraft(null)}>취소</Btn>
+              <Btn full onClick={saveChecklistItems}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
       <Sec title="용품 구매 정보 (자주 사는 품목)" right={
         <button onClick={openNewCatalog} className="flex items-center gap-1" style={{ color: C.aqua, fontSize: 12, fontWeight: 700 }}><Plus size={13} /> 추가</button>}>
         <Tile>
@@ -7775,6 +7930,12 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <Field label="시작 시간"><input type="time" value={sEdit.startTime || ""} onChange={(e) => setSEdit({ ...sEdit, startTime: e.target.value })} style={inputStyle} /></Field>
                 <Field label="종료 시간"><input type="time" value={sEdit.endTime || ""} onChange={(e) => setSEdit({ ...sEdit, endTime: e.target.value })} style={inputStyle} /></Field>
               </div>
+            </div>
+
+            <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
+              <Toggle label="일일체크리스트 대상 현장" first
+                desc="켜두면 이 현장의 팀장 화면에 매일 작성하는 체크리스트가 생겨요. (항목은 설정 하단에서 관리)"
+                on={!!sEdit.checklistEnabled} onChange={(v) => setSEdit({ ...sEdit, checklistEnabled: v })} />
             </div>
 
             {sEdit.id && (
