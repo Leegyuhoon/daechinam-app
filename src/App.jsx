@@ -4526,12 +4526,14 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
         }
       }
       const siteNames = [...new Set(recs.map((r) => r.site).filter(Boolean))];
-      return { w, recs, status, siteNames, offInfo, closureLabel, closureSiteName };
+      // 그날 하루 기준 추가시간/부족시간 — 시급제는 하루 전체 합산, 타임제는 레코드별로 이미 계산됨
+      const dayAgg = recs.length > 0 && recs.every((r) => r.clockOut) ? aggregate(recs, w, settings) : null;
+      return { w, recs, status, siteNames, offInfo, closureLabel, closureSiteName, dayAgg };
     }).sort((a, b) => {
       const order = { incomplete: 0, offNoRequest: 1, complete: 2, offRequested: 3, closure: 4, absent: 5 };
       return order[a.status] - order[b.status] || a.w.name.localeCompare(b.w.name);
     });
-  }, [boardOpen, boardDate, workers, records, transfers, data.closurePeriods]);
+  }, [boardOpen, boardDate, workers, records, transfers, data.closurePeriods, settings]);
 
   const [markOffFor, setMarkOffFor] = useState(null); // { workerId, workerName }
   const [markOffSubs, setMarkOffSubs] = useState([""]); // 대신 근무한 사람 workerId 목록
@@ -5028,7 +5030,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 
             {boardRows.length === 0 && <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 근무자가 없습니다.</div></Tile>}
             <div className="flex flex-col gap-0.5" style={{ background: C.grout }}>
-              {boardRows.map(({ w, recs, status, siteNames, offInfo, closureLabel, closureSiteName }) => {
+              {boardRows.map(({ w, recs, status, siteNames, offInfo, closureLabel, closureSiteName, dayAgg }) => {
                 const recStatus = (r) => (!r.clockOut ? "incomplete" : "complete");
                 const statusInfo = {
                   complete: { color: ST.complete, label: "정상 완료" },
@@ -5040,11 +5042,17 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                 };
                 return (
                   <Tile key={w.id} style={{ padding: "12px 14px" }}>
-                    <div onClick={() => setDetail(w.id)} className="flex items-center gap-2.5" style={{ marginBottom: (recs.length > 0 || status.startsWith("off")) ? 8 : 0, cursor: "pointer" }}>
+                    <div onClick={() => setDetail(w.id)} className="flex items-center gap-2.5 flex-wrap" style={{ marginBottom: (recs.length > 0 || status.startsWith("off")) ? 8 : 0, cursor: "pointer", rowGap: 4 }}>
                       <div style={{ width: 9, height: 9, borderRadius: 999, background: statusInfo[status].color, flexShrink: 0 }} />
                       <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
-                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px" }}>팀장</span>}
+                      {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px", whiteSpace: "nowrap" }}>팀장</span>}
                       {recs.length > 1 && <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>· {recs.length}건</span>}
+                      {dayAgg && dayAgg.otMin > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px", whiteSpace: "nowrap" }}>추가 {minStr(dayAgg.otMin)}</span>
+                      )}
+                      {dayAgg && dayAgg.shortMin > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 5px", whiteSpace: "nowrap" }}>부족 {minStr(dayAgg.shortMin)}</span>
+                      )}
                     </div>
 
                     {status.startsWith("off") ? (
