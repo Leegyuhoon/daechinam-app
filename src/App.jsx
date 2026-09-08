@@ -5047,12 +5047,6 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                       <span style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</span>
                       {w.isTeamLead && <span style={{ fontSize: 9, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 4px", whiteSpace: "nowrap" }}>팀장</span>}
                       {recs.length > 1 && <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>· {recs.length}건</span>}
-                      {dayAgg && dayAgg.otMin > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 5px", whiteSpace: "nowrap" }}>추가 {minStr(dayAgg.otMin)}</span>
-                      )}
-                      {dayAgg && dayAgg.shortMin > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 5px", whiteSpace: "nowrap" }}>부족 {minStr(dayAgg.shortMin)}</span>
-                      )}
                     </div>
 
                     {status.startsWith("off") ? (
@@ -5081,6 +5075,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                       <div className="flex flex-col gap-1.5" style={{ marginLeft: 17 }}>
                         {recs.map((r) => {
                           const st = recStatus(r);
+                          const p = r.clockOut ? calcPay(r, w, settings) : null;
+                          const shortish = p && p.shortMin >= (settings.shortThreshold || 0);
                           return (
                             <div key={r.id} className="flex items-start justify-between flex-wrap" style={{ rowGap: 4 }}>
                               <div className="flex items-center gap-1.5 flex-wrap" style={{ flex: 1, minWidth: 120 }}>
@@ -5091,6 +5087,12 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 ) : r.coverForName ? (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>대신 근무</span>
                                 ) : null}
+                                {isShiftMode && p && p.blocks > 0 && (
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>추가 {minStr(p.otMin)}</span>
+                                )}
+                                {isShiftMode && p && p.blocks === 0 && shortish && (
+                                  <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>부족 {minStr(p.shortMin)}</span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
@@ -5101,6 +5103,13 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                             </div>
                           );
                         })}
+                        {!isShiftMode && dayAgg && (dayAgg.otMin > 0 || dayAgg.shortMin > 0) && (
+                          <div className="flex items-center gap-1.5 flex-wrap" style={{ paddingTop: 2 }}>
+                            <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>오늘 전체 기준</span>
+                            {dayAgg.otMin > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 4px", whiteSpace: "nowrap" }}>추가 {minStr(dayAgg.otMin)}</span>}
+                            {dayAgg.shortMin > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap" }}>부족 {minStr(dayAgg.shortMin)}</span>}
+                          </div>
+                        )}
                       </div>
                     )}
                   </Tile>
