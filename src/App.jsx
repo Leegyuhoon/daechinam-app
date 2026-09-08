@@ -976,8 +976,8 @@ export default function App() {
         </div>
 
         {toast && (
-          <div className="absolute left-0 right-0 flex justify-center px-6" style={{ bottom: 78 }}>
-            <div style={{ background: C.onDark, color: C.text, fontSize: 13, fontWeight: 700, padding: "10px 16px", textAlign: "center" }}>{toast}</div>
+          <div className="fixed left-0 right-0 flex justify-center px-6" style={{ bottom: 78, zIndex: 200 }}>
+            <div style={{ background: C.onDark, color: C.text, fontSize: 13, fontWeight: 700, padding: "10px 16px", textAlign: "center", maxWidth: 340, boxShadow: "0 6px 20px rgba(0,0,0,0.35)" }}>{toast}</div>
           </div>
         )}
       </div>
