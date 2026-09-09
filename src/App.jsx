@@ -218,10 +218,10 @@ function fillContractDefaults(f) {
   return out;
 }
 function buildContractHtml(c) {
-  const sigTag = (h = 30) => c.sig
-    ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-8px; margin:0 4px;" />`
+  const sigTag = (h = 26) => c.sig
+    ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-14px; margin:0 4px;" />`
     : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
-  const sealTag = c.seal ? `<img src="${c.seal}" style="height:46px; max-width:70px; object-fit:contain; vertical-align:-14px; margin-left:6px;" />` : ` (인)`;
+  const sealTag = c.seal ? `<img src="${c.seal}" style="height:46px; max-width:70px; object-fit:contain; vertical-align:-24px; margin-left:6px;" />` : ` (인)`;
   const agreeLine = (num) => `동의자 : &nbsp;&nbsp;${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
@@ -8892,10 +8892,35 @@ function SignaturePad({ onChange }) {
     empty.current = false;
     setHasDrawn(true);
   };
+  // 캔버스 전체(빈 여백 포함)를 그대로 쓰면, 사용자가 패드 어디에 서명하냐에 따라 계약서 안에서
+  // 위/아래로 치우쳐 보이는 문제가 생김. 그래서 실제로 잉크가 있는 부분만 딱 잘라냄.
+  const trimCanvas = (canvas) => {
+    const ctx = canvas.getContext("2d");
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+    let minX = width, minY = height, maxX = 0, maxY = 0, found = false;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (data[(y * width + x) * 4 + 3] > 10) { // 알파값 있는(잉크가 있는) 픽셀
+          found = true;
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (!found) return canvas;
+    const pad = 6;
+    minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+    maxX = Math.min(width, maxX + pad); maxY = Math.min(height, maxY + pad);
+    const out = document.createElement("canvas");
+    out.width = maxX - minX; out.height = maxY - minY;
+    out.getContext("2d").drawImage(canvas, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
+    return out;
+  };
   const end = () => {
     if (!drawing.current) return;
     drawing.current = false;
-    onChange(empty.current ? null : canvasRef.current.toDataURL("image/png"));
+    onChange(empty.current ? null : trimCanvas(canvasRef.current).toDataURL("image/png"));
   };
   const clear = () => {
     const canvas = canvasRef.current;
