@@ -5093,6 +5093,12 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 {isShiftMode && p && p.blocks === 0 && shortish && (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>부족 {minStr(p.shortMin)}</span>
                                 )}
+                                {r.outFlag && (
+                                  <button onClick={(e) => { e.stopPropagation(); setFlagEdit({ ...r, workerName: w.name, inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "" }); }}
+                                    style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.outside, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                                    현장 밖 퇴근
+                                  </button>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: statusInfo[st].color }}>{statusInfo[st].label}</span>
