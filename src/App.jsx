@@ -1258,7 +1258,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       const fileId = await uploadPdfBlob(blob, `근로계약서_${myContractRequest.workerName}.pdf`);
       const ok = await saveConfirmed((d) => ({
         ...d,
-        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd } : w)),
+        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: new Date().toISOString() } : w)),
         contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
       }));
       if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
@@ -3091,6 +3091,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     const daysLeft = Math.round((parseKey(w.contractEndDate) - parseKey(today0)) / 86400000);
     return daysLeft <= 14; // 만료됐거나 2주 이내
   });
+  const pendingContractSigns = data.contractRequests || [];
 
   const goView = (k) => {
     setView(k);
@@ -3104,10 +3105,19 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
     ["notices", "공지", Bell, noticeBadge],
-    ["settings", "설정", SettingsIcon, expiringWorkers.length],
+    ["settings", "설정", SettingsIcon, expiringWorkers.length + pendingContractSigns.length],
   ];
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      {pendingContractSigns.length > 0 && view !== "settings" && (
+        <button onClick={() => goView("settings")} className="mx-4 mt-3 flex items-center gap-2" style={{ background: "#E0F2FE", padding: "10px 13px" }}>
+          <FileText size={15} color="#0369A1" />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, textAlign: "left" }}>
+            {pendingContractSigns.map((r) => r.workerName).join(", ")}님 근로계약서 서명 대기 중이에요
+          </span>
+          <ChevronRight size={14} color={C.sub} style={{ marginLeft: "auto", flexShrink: 0 }} />
+        </button>
+      )}
       {expiringWorkers.length > 0 && view !== "settings" && (
         <button onClick={() => goView("settings")} className="mx-4 mt-3 flex items-center gap-2" style={{ background: "#FFF4E0", padding: "10px 13px" }}>
           <AlertTriangle size={15} color={C.amber} />
@@ -7455,7 +7465,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
-      contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "",
+      contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null,
       contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
     update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
@@ -8395,10 +8405,17 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Eyebrow>근로계약서</Eyebrow>
               {wEdit.contractFileId ? (
                 <div className="flex items-center justify-between mt-2">
-                  <a href={photoUrl(wEdit.contractFileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
-                    <FileText size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wEdit.contractFileName || "계약서.pdf"}</span>
-                  </a>
-                  <button onClick={() => setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "" }))} style={{ flexShrink: 0 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <a href={photoUrl(wEdit.contractFileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
+                      <FileText size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wEdit.contractFileName || "계약서.pdf"}</span>
+                    </a>
+                    {wEdit.contractSignedAt && (
+                      <div style={{ fontSize: 10.5, color: ST.complete, fontWeight: 700, marginTop: 3 }}>
+                        ✓ {new Date(wEdit.contractSignedAt).toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}에 본인 서명 완료
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null }))} style={{ flexShrink: 0 }}>
                     <X size={15} color={C.sub} />
                   </button>
                 </div>
