@@ -240,7 +240,6 @@ function buildContractHtml(c) {
   const sigTag = (h = 26) => c.sig
     ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-14px; margin:0 4px;" />`
     : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
-  const sealTag = c.seal ? `<img src="${c.seal}" style="height:46px; max-width:70px; object-fit:contain; vertical-align:-24px; margin-left:6px;" />` : ` (인)`;
   const agreeLine = (num) => `동의자 :&nbsp;<span style="white-space:nowrap; display:inline-block;">${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span></span>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
@@ -264,7 +263,7 @@ function buildContractHtml(c) {
         <td style="${td} text-align:center; font-weight:700;">성 명</td>
         <td style="${td} font-weight:700;">${c.workerName}</td>
         <td style="${td} text-align:center; font-weight:700;">주민번호</td>
-        <td style="${td}">${c.ssn || ""}</td>
+        <td style="${td} font-family:'Courier New',monospace; letter-spacing:0.5px; white-space:nowrap;">${c.ssn || ""}</td>
       </tr>
       <tr>
         <td style="${td} text-align:center; font-weight:700;">주 소</td>
@@ -337,15 +336,20 @@ function buildContractHtml(c) {
     <div style="font-weight:900; margin-top:8px;">9. 기타: 본 계약서는 "근로자"에게 교부되었음을 확인하며, 명시되지 아니한 사항은 취업규칙 및 관계법규에 따른다.&nbsp;&nbsp;&nbsp;교부 확인 : ${agreeLine(8)}</div>
 
     <div style="text-align:center; margin-top:26px; font-weight:700; font-size:15px;">${c.signDateLabel}</div>
-    <table style="width:100%; margin-top:14px; font-size:13px;">
+    <table style="width:100%; margin-top:14px; font-size:13px; border-collapse:collapse;">
       <tr>
-        <td style="width:120px; font-weight:700;">사용자(갑)</td>
-        <td>${c.companyName}&nbsp;&nbsp;&nbsp;대표&nbsp;&nbsp;${c.companyRepName}${sealTag}</td>
+        <td style="width:120px; font-weight:700; padding:10px 0; vertical-align:middle;">사용자(갑)</td>
+        <td style="padding:10px 0; vertical-align:middle;">
+          <span style="display:inline-block; vertical-align:middle;">${c.companyName}&nbsp;&nbsp;&nbsp;대표&nbsp;&nbsp;${c.companyRepName}</span>
+          ${c.seal ? `<img src="${c.seal}" style="height:44px; max-width:66px; object-fit:contain; vertical-align:middle; margin-left:8px;" />` : ` (인)`}
+        </td>
       </tr>
-      <tr><td colspan="2" style="height:14px;"></td></tr>
       <tr>
-        <td style="font-weight:700;">근로자(을)</td>
-        <td>${c.workerName}&nbsp;&nbsp;&nbsp;${sigTag(44)}</td>
+        <td style="font-weight:700; padding:14px 0; vertical-align:middle;">근로자(을)</td>
+        <td style="padding:14px 0; vertical-align:middle;">
+          <span style="display:inline-block; vertical-align:middle;">${c.workerName}</span>
+          ${c.sig ? `<img src="${c.sig}" style="height:38px; max-width:90px; object-fit:contain; vertical-align:middle; margin-left:8px;" />` : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; vertical-align:middle; margin-left:8px;">&nbsp;</span>`}
+        </td>
       </tr>
     </table>
   </div>`;
