@@ -426,6 +426,7 @@ function migrate(p) {
   ];
   d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
   d.contractRequests = Array.isArray(d.contractRequests) ? d.contractRequests : [];
+  if (d.settings.contractCompanyName == null) d.settings.contractCompanyName = "주식회사 이엘씨";
   return d;
 }
 
@@ -1244,7 +1245,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     try {
       const settings = data.settings;
       const html = buildContractHtml({
-        companyName: settings.companyName || "", companyRepName: settings.companyRepName || "", companyAddress: settings.companyAddress || "",
+        companyName: settings.contractCompanyName || settings.companyName || "", companyRepName: settings.companyRepName || "", companyAddress: settings.companyAddress || "",
         workerName: myContractRequest.workerName, workerAddress: myContractRequest.workerAddress, workerPhone: myContractRequest.workerPhone,
         ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
         contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
@@ -2163,7 +2164,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div style={{ maxHeight: 380, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
               <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161%" }}
                 dangerouslySetInnerHTML={{ __html: buildContractHtml({
-                  companyName: data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
+                  companyName: data.settings.contractCompanyName || data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
                   workerName: myContractRequest.workerName, workerAddress: myContractRequest.workerAddress, workerPhone: myContractRequest.workerPhone,
                   ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
                   contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
@@ -7406,7 +7407,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       const d = parseKey(start); d.setMonth(d.getMonth() + 3); return dKey(d);
     })();
     setContractReqEdit({
-      workerId: w.id, workerName: w.name,
+      workerId: w.id, workerName: w.name, workerAddress: w.address || "",
       contractStart: start,
       contractEnd: defaultEnd,
       siteId, ssn: "",
@@ -7423,7 +7424,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     const worker = workers.find((w) => w.id === f.workerId);
     const req = {
       id: uid(), workerId: f.workerId, workerName: f.workerName,
-      workerAddress: worker?.address || "", workerPhone: worker?.phone || "",
+      workerAddress: f.workerAddress || worker?.address || "", workerPhone: worker?.phone || "",
       contractStart: f.contractStart, contractEnd: f.contractEnd,
       siteName: site?.name || "", ssn: f.ssn.trim(),
       workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel, hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
@@ -7676,10 +7677,16 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginBottom: 10 }}>
             여기 입력해둔 정보와 도장 이미지가, 근로계약서를 만들 때마다 자동으로 들어가요.
           </div>
-          <Field label="대표자 성명">
-            <input value={settings.companyRepName || ""} placeholder="예: 김지연" style={inputStyle}
-              onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, companyRepName: e.target.value } }))} />
+          <Field label="상호 (근로계약서용)">
+            <input value={settings.contractCompanyName || ""} placeholder="예: 주식회사 이엘씨" style={inputStyle}
+              onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, contractCompanyName: e.target.value } }))} />
           </Field>
+          <div className="mt-2.5">
+            <Field label="대표자 성명">
+              <input value={settings.companyRepName || ""} placeholder="예: 김지연" style={inputStyle}
+                onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, companyRepName: e.target.value } }))} />
+            </Field>
+          </div>
           <div className="mt-2.5">
             <Field label="회사 주소">
               <input value={settings.companyAddress || ""} placeholder="예: 경기도 하남시 검단산로 63-11 3층" style={inputStyle}
@@ -8618,6 +8625,9 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Field label="계약서에 표기될 이름 (서명란·상단 표에 전부 이 이름으로 들어가요)">
                 <input value={contractReqEdit.workerName} onChange={(e) => setContractReqEdit((f) => ({ ...f, workerName: e.target.value }))} style={inputStyle} />
               </Field>
+              <Field label="주소">
+                <input value={contractReqEdit.workerAddress} onChange={(e) => setContractReqEdit((f) => ({ ...f, workerAddress: e.target.value }))} placeholder="예: 하남시 풍산동 미사강변서로85 ○○아파트 000동 000호" style={inputStyle} />
+              </Field>
               <Field label="주민등록번호">
                 <input value={contractReqEdit.ssn} onChange={(e) => setContractReqEdit((f) => ({ ...f, ssn: e.target.value }))} placeholder="000000-0000000" style={inputStyle} />
               </Field>
@@ -8690,8 +8700,8 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 return (
               <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161%" }}
                 dangerouslySetInnerHTML={{ __html: buildContractHtml({
-                  companyName: data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
-                  workerName: f.workerName, workerAddress: workers.find((w) => w.id === f.workerId)?.address || "",
+                  companyName: data.settings.contractCompanyName || data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
+                  workerName: f.workerName, workerAddress: f.workerAddress || workers.find((w) => w.id === f.workerId)?.address || "",
                   workerPhone: workers.find((w) => w.id === f.workerId)?.phone || "",
                   ssn: f.ssn, hireDate: f.contractStart,
                   contractStart: f.contractStart, contractEnd: f.contractEnd,
