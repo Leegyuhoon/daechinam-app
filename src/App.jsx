@@ -7386,6 +7386,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 근로계약서 서명 요청 — 관리자가 세부 항목을 입력하면 근무자 화면에 "서명해주세요" 요청이 뜸.
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
+  const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const openContractRequest = (w) => {
     const siteId = (w.siteIds || [])[0] || w.siteId || "";
     const start = w.contractStartDate || dKey(new Date());
@@ -8653,9 +8654,39 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                 <input value={contractReqEdit.payDayLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, payDayLabel: e.target.value }))} style={inputStyle} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-4">
+            <div className="grid grid-cols-3 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>취소</Btn>
+              <Btn kind="ghost" full onClick={() => setContractPreviewOpen(true)}>미리보기</Btn>
               <Btn full onClick={submitContractRequest}>서명 요청 보내기</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 근로계약서 미리보기 (서명 전) */}
+      <Modal open={contractPreviewOpen} onClose={() => setContractPreviewOpen(false)}>
+        {contractReqEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 미리보기</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>서명·도장은 아직 안 찍힌 상태로 보여드려요.</div>
+            <div style={{ maxHeight: 480, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
+              <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161%" }}
+                dangerouslySetInnerHTML={{ __html: buildContractHtml({
+                  companyName: data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
+                  workerName: contractReqEdit.workerName, workerAddress: workers.find((w) => w.id === contractReqEdit.workerId)?.address || "",
+                  workerPhone: workers.find((w) => w.id === contractReqEdit.workerId)?.phone || "",
+                  ssn: contractReqEdit.ssn, hireDate: contractReqEdit.contractStart,
+                  contractStart: contractReqEdit.contractStart, contractEnd: contractReqEdit.contractEnd,
+                  siteName: sites.find((s) => s.id === contractReqEdit.siteId)?.name || "",
+                  workDaysLabel: contractReqEdit.workDaysLabel, offDayLabel: contractReqEdit.offDayLabel,
+                  hoursLabel: contractReqEdit.hoursLabel, breakLabel: contractReqEdit.breakLabel, netHoursLabel: contractReqEdit.netHoursLabel,
+                  baseAmount: contractReqEdit.baseAmount, wageNote: contractReqEdit.wageNote, payDayLabel: contractReqEdit.payDayLabel,
+                  signDateLabel: `${parseKey(dKey(new Date())).getFullYear()}년 ${parseKey(dKey(new Date())).getMonth() + 1}월 ${parseKey(dKey(new Date())).getDate()}일 (서명 시점 날짜로 자동 표시됨)`,
+                  sig: null, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
+                }) }} />
+            </div>
+            <div className="mt-4">
+              <Btn kind="ghost" full onClick={() => setContractPreviewOpen(false)}>닫고 계속 수정하기</Btn>
             </div>
           </>
         )}
