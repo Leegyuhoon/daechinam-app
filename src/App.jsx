@@ -106,6 +106,37 @@ async function uploadPhoto(file) {
   return data.id;
 }
 const MAX_VIDEO_MB = 40; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지
+// 회사 도장처럼 "투명 배경"이 중요한 이미지는 uploadPhoto(JPEG로 압축, 투명도 사라짐)를 쓰면 안 되고,
+// PNG 투명도를 그대로 보존한 채로 업로드해야 함. 다만 용량은 줄여서 올림(원본 그대로면 너무 클 수 있으므로).
+function compressPngKeepAlpha(file, maxSize = 600) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width > maxSize || height > maxSize) {
+        const scale = maxSize / Math.max(width, height);
+        width = Math.round(width * scale); height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      // 배경을 흰색 등으로 채우지 않고 그대로 둬서, 투명한 부분은 계속 투명하게 유지됨
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("compress failed"))), "image/png");
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+async function uploadPngKeepAlpha(file) {
+  const blob = await compressPngKeepAlpha(file);
+  const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+  if (!res.ok) throw new Error("upload failed");
+  const data = await res.json();
+  return data.id;
+}
 // 영상을 고르자마자(업로드 시도 전에) 용량부터 확인 — 너무 크면 업로드해보고 실패하는 게 아니라 바로 이유를 알려줌
 function checkVideoSize(file) {
   const mb = file.size / 1024 / 1024;
@@ -7444,7 +7475,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     if (!file) return;
     setSealUploadBusy(true);
     try {
-      const fileId = await uploadPhoto(file);
+      const fileId = await uploadPngKeepAlpha(file);
       update((d) => ({ ...d, settings: { ...d.settings, companySealFileId: fileId } }));
       setToast("도장 이미지를 등록했습니다");
     } catch (e) {
