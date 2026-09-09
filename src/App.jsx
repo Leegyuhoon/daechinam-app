@@ -283,8 +283,8 @@ function buildContractHtml(c) {
   const agreeLine = (label = "동의자") => `
     <div style="display:flex; align-items:center; justify-content:flex-end; gap:6px; margin:2px 0 6px;">
       <span>${label} :</span>
-      ${sigTag()}
       <span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>
+      ${sigTag()}
     </div>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
@@ -392,16 +392,20 @@ function buildContractHtml(c) {
     <table style="width:100%; margin-top:14px; font-size:13px; border-collapse:collapse;">
       <tr>
         <td style="width:120px; font-weight:700; padding:10px 0; vertical-align:middle;">사용자(갑)</td>
-        <td style="padding:10px 0; vertical-align:middle;">
-          <span style="display:inline-block; vertical-align:middle;">${c.companyName}&nbsp;&nbsp;&nbsp;대표&nbsp;&nbsp;${c.companyRepName}</span>
-          ${c.seal ? `<img src="${c.seal}" style="height:44px; max-width:66px; object-fit:contain; vertical-align:middle; margin-left:8px;" />` : ` (인)`}
+        <td style="padding:10px 0;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>${c.companyName}&nbsp;&nbsp;&nbsp;대표&nbsp;&nbsp;${c.companyRepName}</span>
+            ${c.seal ? `<img src="${c.seal}" style="height:44px; max-width:66px; object-fit:contain;" />` : `<span>(인)</span>`}
+          </div>
         </td>
       </tr>
       <tr>
         <td style="font-weight:700; padding:14px 0; vertical-align:middle;">근로자(을)</td>
-        <td style="padding:14px 0; vertical-align:middle;">
-          <span style="display:inline-block; vertical-align:middle;">${c.workerName}</span>
-          ${c.sig ? `<img src="${c.sig}" style="height:38px; max-width:90px; object-fit:contain; vertical-align:middle; margin-left:8px;" />` : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; vertical-align:middle; margin-left:8px;">&nbsp;</span>`}
+        <td style="padding:14px 0;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>${c.workerName}</span>
+            ${c.sig ? `<img src="${c.sig}" style="height:38px; max-width:90px; object-fit:contain;" />` : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000;">&nbsp;</span>`}
+          </div>
         </td>
       </tr>
     </table>
