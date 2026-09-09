@@ -8612,7 +8612,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               </Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="계약 시작일">
-                  <input type="date" value={contractReqEdit.contractStart} onChange={(e) => setContractReqEdit((f) => ({ ...f, contractStart: e.target.value }))} style={inputStyle} />
+                  <input type="date" value={contractReqEdit.contractStart} onChange={(e) => {
+                    const contractStart = e.target.value;
+                    const d = parseKey(contractStart); d.setMonth(d.getMonth() + 3);
+                    setContractReqEdit((f) => ({ ...f, contractStart, contractEnd: dKey(d) }));
+                  }} style={inputStyle} />
                 </Field>
                 <Field label="계약 종료일">
                   <input type="date" value={contractReqEdit.contractEnd} onChange={(e) => setContractReqEdit((f) => ({ ...f, contractEnd: e.target.value }))} style={inputStyle} />
