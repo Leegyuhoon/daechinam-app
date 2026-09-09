@@ -218,10 +218,10 @@ function fillContractDefaults(f) {
   return out;
 }
 function buildContractHtml(c) {
-  const sigTag = (h = 34) => c.sig
-    ? `<img src="${c.sig}" style="height:${h}px; vertical-align:middle;" />`
-    : `<span style="display:inline-block; width:110px; border-bottom:1px solid #000;">&nbsp;</span>`;
-  const sealTag = c.seal ? `<img src="${c.seal}" style="height:52px; vertical-align:middle; margin-left:6px;" />` : ` (인)`;
+  const sigTag = (h = 30) => c.sig
+    ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-8px; margin:0 4px;" />`
+    : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
+  const sealTag = c.seal ? `<img src="${c.seal}" style="height:46px; max-width:70px; object-fit:contain; vertical-align:-14px; margin-left:6px;" />` : ` (인)`;
   const agreeLine = (num) => `동의자 : &nbsp;&nbsp;${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
@@ -1250,11 +1250,13 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const [contractSignOpen, setContractSignOpen] = useState(false);
   const [contractSigData, setContractSigData] = useState(null);
   const [contractSignBusy, setContractSignBusy] = useState(false);
+  const [contractDoneFileId, setContractDoneFileId] = useState(null);
   const submitContractSign = async () => {
     if (!contractSigData) { setToast("서명을 먼저 그려주세요"); return; }
     setContractSignBusy(true);
     try {
       const settings = data.settings;
+      const fname = `근로계약서_${myContractRequest.workerName}.pdf`;
       const html = buildContractHtml({
         companyName: settings.contractCompanyName || settings.companyName || "", companyRepName: settings.companyRepName || "", companyAddress: settings.companyAddress || "",
         workerName: myContractRequest.workerName, workerAddress: myContractRequest.workerAddress, workerPhone: myContractRequest.workerPhone,
@@ -1266,20 +1268,19 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         sig: contractSigData, seal: settings.companySealFileId ? photoUrl(settings.companySealFileId) : null,
       });
       const blob = await htmlToPdfBlob(html, 780);
-      const fileId = await uploadPdfBlob(blob, `근로계약서_${myContractRequest.workerName}.pdf`);
+      const fileId = await uploadPdfBlob(blob, fname);
       const signedAt = new Date().toISOString();
       const ok = await saveConfirmed((d) => ({
         ...d,
-        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
+        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: fname, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
         contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
         workerContracts: [...(d.workerContracts || []), {
-          id: uid(), workerId: worker.id, workerName: myContractRequest.workerName, fileId, fileName: `근로계약서_${myContractRequest.workerName}.pdf`,
+          id: uid(), workerId: worker.id, workerName: myContractRequest.workerName, fileId, fileName: fname,
           contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, createdAt: signedAt, source: "signed",
         }],
       }));
       if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
-      setToast("근로계약서 서명이 완료됐습니다");
-      setContractSignOpen(false);
+      setContractDoneFileId(fileId);
       setContractSigData(null);
     } catch (e) {
       setToast("계약서 생성에 실패했어요 — 인터넷 연결을 확인해 주세요");
@@ -1991,6 +1992,15 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </button>
       </div>
 
+      {worker?.contractFileId && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
+          <a href={photoUrl(worker.contractFileId)} target="_blank" rel="noreferrer" className="w-full flex items-center justify-center gap-2"
+            style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
+            <FileText size={15} /> 내 근로계약서 다운로드
+          </a>
+        </div>
+      )}
+
       {/* 근무 양도 요청하기 */}
       <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
         <button onClick={openXfer} className="w-full flex items-center justify-center gap-2"
@@ -2121,7 +2131,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               {myContractRequest.contractStart} ~ {myContractRequest.contractEnd} · {myContractRequest.siteName}
             </div>
             <div className="mt-3">
-              <Btn full small onClick={() => { setContractSignOpen(true); setContractSigData(null); }}>내용 확인하고 서명하기</Btn>
+              <Btn full small onClick={() => { setContractSignOpen(true); setContractSigData(null); setContractDoneFileId(null); }}>내용 확인하고 서명하기</Btn>
             </div>
           </div>
         </div>
@@ -2172,8 +2182,20 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       </Modal>
 
       {/* 근로계약서 확인 · 서명 */}
-      <Modal open={contractSignOpen} onClose={() => !contractSignBusy && setContractSignOpen(false)}>
-        {myContractRequest && (
+      <Modal open={contractSignOpen} onClose={() => { if (contractSignBusy) return; setContractSignOpen(false); setContractDoneFileId(null); }}>
+        {contractDoneFileId ? (
+          <div className="flex flex-col items-center text-center" style={{ padding: "10px 0" }}>
+            <div style={{ width: 64, height: 64, borderRadius: 999, background: ST.complete, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+              <Check size={32} color="#fff" strokeWidth={3} />
+            </div>
+            <div style={{ fontSize: 16.5, fontWeight: 900, color: C.text }}>근로계약서 서명이 완료됐습니다</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>회사 도장까지 자동으로 찍힌 최종 PDF가<br />생성되어 저장됐어요.</div>
+            <a href={photoUrl(contractDoneFileId)} target="_blank" rel="noreferrer" className="w-full mt-5">
+              <Btn full><span className="flex items-center justify-center gap-1.5"><Download size={14} /> 내 계약서 PDF 다운로드</span></Btn>
+            </a>
+            <button onClick={() => { setContractSignOpen(false); setContractDoneFileId(null); }} className="mt-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>닫기</button>
+          </div>
+        ) : myContractRequest && (
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 확인</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>내용을 꼼꼼히 확인한 뒤 아래에 서명해 주세요.</div>
