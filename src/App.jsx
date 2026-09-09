@@ -7449,6 +7449,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 근로계약서 서명 요청 — 관리자가 세부 항목을 입력하면 근무자 화면에 "서명해주세요" 요청이 뜸.
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
+  const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const openContractRequest = (w) => {
     const siteId = (w.siteIds || [])[0] || w.siteId || "";
@@ -8502,14 +8503,20 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     이름·주소·연락처 등은 자동으로 채워지고, 근무시간·임금만 입력하면 돼요. 근무자가 앱에서 서명하면 도장까지 자동으로 찍힌 PDF가 여기에 바로 저장돼요.
                   </div>
                   {(() => {
-                    const history = (data.contractHistory || data.workerContracts || []).filter((h) => h.workerId === wEdit.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                    const history = (data.workerContracts || []).filter((h) => h.workerId === wEdit.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
                     if (history.length === 0) return null;
+                    const preview = history.slice(0, 3);
                     return (
                       <div className="mt-3">
                         <div style={{ borderTop: `1px solid ${C.line}`, margin: "10px 0" }} />
-                        <Eyebrow>지난 계약서 이력 ({history.length}건)</Eyebrow>
+                        <div className="flex items-center justify-between">
+                          <Eyebrow>지난 계약서 이력 ({history.length}건)</Eyebrow>
+                          {history.length > 3 && (
+                            <button onClick={() => setContractHistoryViewerId(wEdit.id)} style={{ fontSize: 11, color: C.aquaDeep, fontWeight: 800 }}>전체보기</button>
+                          )}
+                        </div>
                         <div className="flex flex-col gap-1.5 mt-2">
-                          {history.map((h) => (
+                          {preview.map((h) => (
                             <a key={h.id} href={downloadUrl(h.fileId, h.fileName || "근로계약서.pdf")}
                               className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
                               <div style={{ minWidth: 0 }}>
@@ -8524,6 +8531,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                             </a>
                           ))}
                         </div>
+                        {history.length > 3 && (
+                          <button onClick={() => setContractHistoryViewerId(wEdit.id)} className="w-full mt-1.5" style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, padding: "6px 0", textAlign: "center" }}>
+                            +{history.length - 3}건 더 보기
+                          </button>
+                        )}
                       </div>
                     );
                   })()}
@@ -8816,6 +8828,51 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             </div>
           </>
         )}
+      </Modal>
+
+      {/* 근로계약서 이력 전체보기 (월별 정리) */}
+      <Modal open={!!contractHistoryViewerId} onClose={() => setContractHistoryViewerId(null)}>
+        {contractHistoryViewerId && (() => {
+          const w = workers.find((x) => x.id === contractHistoryViewerId);
+          const all = (data.workerContracts || []).filter((h) => h.workerId === contractHistoryViewerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          const groups = {};
+          all.forEach((h) => {
+            const ym = h.createdAt.slice(0, 7);
+            if (!groups[ym]) groups[ym] = [];
+            groups[ym].push(h);
+          });
+          const months = Object.keys(groups).sort().reverse();
+          return (
+            <>
+              <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{w?.name} 계약서 전체 이력</div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>총 {all.length}건 · 월별로 정리했어요</div>
+              <div style={{ maxHeight: 480, overflowY: "auto" }}>
+                {months.map((ym) => (
+                  <div key={ym} className="mb-4">
+                    <div style={{ fontSize: 12.5, fontWeight: 900, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>{ymLabel(ym)} ({groups[ym].length}건)</div>
+                    <div className="flex flex-col gap-1.5 mt-1.5">
+                      {groups[ym].map((h) => (
+                        <a key={h.id} href={downloadUrl(h.fileId, h.fileName || "근로계약서.pdf")}
+                          className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}` }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 700, color: C.aquaDeep }}>
+                              {h.contractStart || "?"} ~ {h.contractEnd || "?"}
+                            </div>
+                            <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
+                              {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          </div>
+                          <Download size={15} color={C.sub} style={{ flexShrink: 0 }} />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Btn kind="ghost" full onClick={() => setContractHistoryViewerId(null)}>닫기</Btn>
+            </>
+          );
+        })()}
       </Modal>
 
       <Modal open={!!pinEdit} onClose={() => setPinEdit(null)} title="관리자 PIN 변경">
