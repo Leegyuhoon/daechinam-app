@@ -129,6 +129,9 @@ async function uploadVideo(file) {
   return data.id;
 }
 const photoUrl = (id) => `/api/photo?id=${id}`;
+// 사진·영상은 그냥 "보기"가 자연스럽지만, 문서(PDF 등)는 눌렀을 때 실제로 기기에 저장돼야 하므로
+// 서버에 download=1을 붙여서 강제로 다운로드되도록 함 (그냥 보여주기만 하는 문제 방지)
+const downloadUrl = (id, filename) => `/api/photo?id=${id}&download=1&filename=${encodeURIComponent(filename || "file.pdf")}`;
 // 기존 데이터(photoId 단수)와 신규 데이터(photoIds 배열)를 둘 다 지원
 const photoIdsOf = (r) => (Array.isArray(r.photoIds) && r.photoIds.length > 0 ? r.photoIds : (r.photoId ? [r.photoId] : []));
 
@@ -1994,7 +1997,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
 
       {worker?.contractFileId && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
-          <a href={photoUrl(worker.contractFileId)} target="_blank" rel="noreferrer" className="w-full flex items-center justify-center gap-2"
+          <a href={downloadUrl(worker.contractFileId, worker.contractFileName || "근로계약서.pdf")} className="w-full flex items-center justify-center gap-2"
             style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
             <FileText size={15} /> 내 근로계약서 다운로드
           </a>
@@ -2190,7 +2193,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             </div>
             <div style={{ fontSize: 16.5, fontWeight: 900, color: C.text }}>근로계약서 서명이 완료됐습니다</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>회사 도장까지 자동으로 찍힌 최종 PDF가<br />생성되어 저장됐어요.</div>
-            <a href={photoUrl(contractDoneFileId)} target="_blank" rel="noreferrer" className="w-full mt-5">
+            <a href={downloadUrl(contractDoneFileId, `근로계약서_${myContractRequest?.workerName || ""}.pdf`)} className="w-full mt-5">
               <Btn full><span className="flex items-center justify-center gap-1.5"><Download size={14} /> 내 계약서 PDF 다운로드</span></Btn>
             </a>
             <button onClick={() => { setContractSignOpen(false); setContractDoneFileId(null); }} className="mt-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>닫기</button>
@@ -8457,7 +8460,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               {wEdit.contractFileId ? (
                 <div className="flex items-center justify-between mt-2">
                   <div style={{ minWidth: 0 }}>
-                    <a href={photoUrl(wEdit.contractFileId)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
+                    <a href={downloadUrl(wEdit.contractFileId, wEdit.contractFileName || "근로계약서.pdf")} className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
                       <FileText size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wEdit.contractFileName || "계약서.pdf"}</span>
                     </a>
                     {wEdit.contractSignedAt && (
@@ -8507,7 +8510,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                         <Eyebrow>지난 계약서 이력 ({history.length}건)</Eyebrow>
                         <div className="flex flex-col gap-1.5 mt-2">
                           {history.map((h) => (
-                            <a key={h.id} href={photoUrl(h.fileId)} target="_blank" rel="noreferrer"
+                            <a key={h.id} href={downloadUrl(h.fileId, h.fileName || "근로계약서.pdf")}
                               className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: C.aquaDeep }}>
