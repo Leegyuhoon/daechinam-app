@@ -289,7 +289,7 @@ function buildContractHtml(c) {
     <div style="font-weight:900; margin-top:8px;">4. 유급휴일 : 1주간 개근시 주휴일, 근로자의 날, 근로기준법상 관공서공휴일</div>
 
     <div style="font-weight:900; margin-top:8px;">5. 임금</div>
-    <div>① 월 임금은 월급제로 "을"은 아래와 같이 기본급, 법정수당, 제수당 등이 포함된 포괄임금방식으로 산정하여 지급하는 것에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(4)}</div>
+    <div>① 월 임금은 월급제로 "을"은 아래와 같이 기본급, 법정수당, 제수당, 주유수당 등이 포함된 포괄임금방식으로 산정하여 지급하는 것에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(4)}</div>
     <table style="width:100%; border-collapse:collapse; margin:6px 0;">
       <tr><td style="${td} text-align:center; font-weight:700; width:80px;">구분</td><td style="${td} text-align:center; font-weight:700; width:90px;">금액(원)</td><td style="${td} text-align:center; font-weight:700;">내역</td></tr>
       <tr><td style="${td}">기본급</td><td style="${td} text-align:right;">${money(c.baseAmount)}</td><td style="${td}">${c.wageNote || ""}</td></tr>
@@ -321,7 +321,7 @@ function buildContractHtml(c) {
     <table style="width:100%; margin-top:14px; font-size:13px;">
       <tr>
         <td style="width:120px; font-weight:700;">사용자(갑)</td>
-        <td>${c.companyName}&nbsp;&nbsp;&nbsp;대표이사&nbsp;&nbsp;${c.companyRepName}${sealTag}</td>
+        <td>${c.companyName}&nbsp;&nbsp;&nbsp;대표&nbsp;&nbsp;${c.companyRepName}${sealTag}</td>
       </tr>
       <tr><td colspan="2" style="height:14px;"></td></tr>
       <tr>
