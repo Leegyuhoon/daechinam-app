@@ -276,9 +276,16 @@ function buildContractHtml(c) {
     return `${y}년 ${m}월 ${d}일`;
   };
   const sigTag = (h = 26) => c.sig
-    ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-14px; margin:0 4px;" />`
-    : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
-  const agreeLine = (num) => `동의자 :&nbsp;<span style="white-space:nowrap; display:inline-block;">${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span></span>`;
+    ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain;" />`
+    : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000;">&nbsp;</span>`;
+  // 동의자 서명란은 문단 텍스트 속에 끼워넣지 않고, 그 문단 바로 아래 독립된 줄(오른쪽 정렬)로 완전히 분리함.
+  // 문단 안에 섞으면 줄바꿈 타이밍에 따라 서명이 텍스트 사이로 엉뚱하게 끼어드는 문제가 있었음 — 이제 그럴 일이 없음.
+  const agreeLine = (label = "동의자") => `
+    <div style="display:flex; align-items:center; justify-content:flex-end; gap:6px; margin:2px 0 6px;">
+      <span>${label} :</span>
+      ${sigTag()}
+      <span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>
+    </div>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
   <div style="font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; padding:34px 40px; color:#000; font-size:12.5px; line-height:1.55;">
@@ -319,11 +326,13 @@ function buildContractHtml(c) {
     <div>&nbsp;- ${koDate(c.contractStart)} ~ ${koDate(c.contractEnd)}</div>
 
     <div style="font-weight:900; margin-top:8px;">2. 근무장소/업무내용:갑의 사업장 및 갑이 지정하는 장소 /(${c.siteName})</div>
-    <div>① 업무상 필요가 있는 경우 업무 내용을 변경 또는 일시적으로 다른 부서의 업무 지원을 요청할 수 있다. 을은 이에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(1)}</div>
+    <div>① 업무상 필요가 있는 경우 업무 내용을 변경 또는 일시적으로 다른 부서의 업무 지원을 요청할 수 있다. 을은 이에 동의한다.</div>
+    ${agreeLine()}
     <div>② "을"은 항상 단정한 복장과 직원으로서의 자질을 갖추고 품위를 유지하여야 한다.</div>
 
     <div style="font-weight:900; margin-top:8px;">3. 소정근로시간</div>
-    <div>① 소정근로시간 및 휴게시간은 업무상 필요시 변경될 수 있고 "을"은 이에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(2)}</div>
+    <div>① 소정근로시간 및 휴게시간은 업무상 필요시 변경될 수 있고 "을"은 이에 동의한다.</div>
+    ${agreeLine()}
     <table style="width:100%; border-collapse:collapse; margin:6px 0;">
       <tr>
         <td style="${td} text-align:center; font-weight:700;">${c.workDaysLabel || "근무 요일"}</td>
@@ -339,13 +348,15 @@ function buildContractHtml(c) {
       </tr>
     </table>
     <div>② 휴게시간은 자유로이 이용하고, 휴게시간 미사용 시 책임은 "을"에게 있다.</div>
-    <div>③ "을"은 연장, 야간, 휴일근로 등에 동의한다. 단 상기 시간 외에 을의 임의적인 근로는 인정되지 않는다.&nbsp;&nbsp;&nbsp;${agreeLine(3)}</div>
+    <div>③ "을"은 연장, 야간, 휴일근로 등에 동의한다. 단 상기 시간 외에 을의 임의적인 근로는 인정되지 않는다.</div>
+    ${agreeLine()}
     <div>④ '초과법정수당' 한도내에서 업무상 필요시 별도 수당없이 추가 연장, 휴일근로 등을 할 수 있다.</div>
 
     <div style="font-weight:900; margin-top:8px;">4. 유급휴일 : 1주간 개근시 주휴일, 근로자의 날, 근로기준법상 관공서공휴일</div>
 
     <div style="font-weight:900; margin-top:8px;">5. 임금</div>
-    <div>① 월 임금은 월급제로 "을"은 아래와 같이 기본급, 법정수당, 제수당, 주유수당 등이 포함된 포괄임금방식으로 산정하여 지급하는 것에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(4)}</div>
+    <div>① 월 임금은 월급제로 "을"은 아래와 같이 기본급, 법정수당, 제수당, 주유수당 등이 포함된 포괄임금방식으로 산정하여 지급하는 것에 동의한다.</div>
+    ${agreeLine()}
     <table style="width:100%; border-collapse:collapse; margin:6px 0;">
       <tr><td style="${td} text-align:center; font-weight:700; width:80px;">구분</td><td style="${td} text-align:center; font-weight:700; width:90px;">금액(원)</td><td style="${td} text-align:center; font-weight:700;">내역</td></tr>
       <tr><td style="${td}">기본급</td><td style="${td} text-align:right;">${money(c.baseAmount)}</td><td style="${td}">${c.wageNote || ""}</td></tr>
@@ -358,7 +369,8 @@ function buildContractHtml(c) {
     <div>⑥ 1개월 미만 근무하고 퇴사 또는 인수인계를 하지 않고 퇴사 등에는 일할계산하여 지급한다.</div>
     <div>⑦ 퇴사시 회사에 가불 또는 변상금이 있는 경우에는 금품청산시 "을"의 상계 요청이 있는 것으로 간주한다.</div>
     <div>⑧ 퇴직금은 1주 소정근로시간이 15시간 이상이며, 1년 이상 계속 근로한 직원이 퇴직 시 지급하며 퇴직연금에 가입 처리할 수 있다.</div>
-    <div>⑨ 월 중간퇴사할 경우 금품청산은 임금지급일까지 연장하기로 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(5)}</div>
+    <div>⑨ 월 중간퇴사할 경우 금품청산은 임금지급일까지 연장하기로 동의한다.</div>
+    ${agreeLine()}
 
     <div style="font-weight:900; margin-top:8px;">6. 연차유급휴가: 1주 평균 소정근로시간이 15시간 이상인 직원에 대해 근로기준법에 따라 지급한다.</div>
 
@@ -368,10 +380,13 @@ function buildContractHtml(c) {
     <div>② "을"은 본인의 사유에 의하여 계약해지를 원할 때는 해지를 원하는 날의 1개월 전에 "갑"에게 통보하여야 한다.</div>
 
     <div style="font-weight:900; margin-top:8px;">8. 개인정보 등</div>
-    <div>① "을"은 4대보험 관리 등을 위해 자신의 성명, 주소, 주민번호, 전화번호 등 개인정보를 근로기간 및 그 후 3년간 사용자가 수집·이용함에 (동의)한다. "을"은 동의하지 않을 권리가 있으나, 이용 동의를 거부할 경우 4대보험 가입이 되지 아니하는 등 불이익을 받을 수 있다.&nbsp;&nbsp;&nbsp;${agreeLine(6)}</div>
-    <div>② "을"은 회사의 업무상 복무관리를 위해 회사의 컴퓨터 열람, CCTV설치 활용 및 관리 등에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(7)}</div>
+    <div>① "을"은 4대보험 관리 등을 위해 자신의 성명, 주소, 주민번호, 전화번호 등 개인정보를 근로기간 및 그 후 3년간 사용자가 수집·이용함에 (동의)한다. "을"은 동의하지 않을 권리가 있으나, 이용 동의를 거부할 경우 4대보험 가입이 되지 아니하는 등 불이익을 받을 수 있다.</div>
+    ${agreeLine()}
+    <div>② "을"은 회사의 업무상 복무관리를 위해 회사의 컴퓨터 열람, CCTV설치 활용 및 관리 등에 동의한다.</div>
+    ${agreeLine()}
 
-    <div style="font-weight:900; margin-top:8px;">9. 기타: 본 계약서는 "근로자"에게 교부되었음을 확인하며, 명시되지 아니한 사항은 취업규칙 및 관계법규에 따른다.&nbsp;&nbsp;&nbsp;교부 확인 : ${agreeLine(8)}</div>
+    <div style="font-weight:900; margin-top:8px;">9. 기타: 본 계약서는 "근로자"에게 교부되었음을 확인하며, 명시되지 아니한 사항은 취업규칙 및 관계법규에 따른다.</div>
+    ${agreeLine("교부 확인")}
 
     <div style="text-align:center; margin-top:26px; font-weight:700; font-size:15px;">${c.signDateLabel}</div>
     <table style="width:100%; margin-top:14px; font-size:13px; border-collapse:collapse;">
