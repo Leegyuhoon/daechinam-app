@@ -133,6 +133,46 @@ const photoUrl = (id) => `/api/photo?id=${id}`;
 const photoIdsOf = (r) => (Array.isArray(r.photoIds) && r.photoIds.length > 0 ? r.photoIds : (r.photoId ? [r.photoId] : []));
 
 /* 화면에 보이지 않는 HTML 조각을 즉시 PDF 파일로 캡처·다운로드 */
+// html2canvas+jsPDF로 만든 PDF를 다운로드하지 않고 Blob으로만 반환 (서버 업로드용)
+async function htmlToPdfBlob(html, widthPx = 800) {
+  const holder = document.createElement("div");
+  holder.style.cssText = `position:fixed; left:-9999px; top:0; width:${widthPx}px; background:#fff;`;
+  holder.innerHTML = html;
+  document.body.appendChild(holder);
+  try {
+    await new Promise((r) => setTimeout(r, 60));
+    const canvas = await html2canvas(holder, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    let heightLeft = imgH;
+    let y = 0;
+    pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH);
+    heightLeft -= pageH;
+    while (heightLeft > 0) {
+      y = heightLeft - imgH;
+      pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, y, imgW, imgH);
+      heightLeft -= pageH;
+    }
+    return pdf.output("blob");
+  } finally {
+    document.body.removeChild(holder);
+  }
+}
+// 완성된 PDF Blob을 서버(사진·문서 저장용 API)에 업로드하고 파일 id를 돌려받음
+async function uploadPdfBlob(blob, filename) {
+  const file = new File([blob], filename, { type: "application/pdf" });
+  const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": "application/pdf" }, body: file });
+  if (!res.ok) throw new Error("upload failed");
+  const { id } = await res.json();
+  return id;
+}
+
+
 async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
   const holder = document.createElement("div");
   holder.style.cssText = `position:fixed; left:-9999px; top:0; width:${widthPx}px; background:#fff;`;
@@ -161,6 +201,124 @@ async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
   } finally {
     document.body.removeChild(holder);
   }
+}
+
+// 근로계약서 HTML 생성 — 업로드해주신 실제 양식 문구를 그대로 재현함.
+// sig가 있으면 "서명 또는 인" 9곳 전부에 그 서명 이미지를 자동으로 반복 삽입,
+// seal이 있으면 대표이사 도장 자리에 자동 삽입. 둘 다 없으면 빈 밑줄로 남겨둠(서명 전 미리보기용).
+function buildContractHtml(c) {
+  const sigTag = (h = 34) => c.sig
+    ? `<img src="${c.sig}" style="height:${h}px; vertical-align:middle;" />`
+    : `<span style="display:inline-block; width:110px; border-bottom:1px solid #000;">&nbsp;</span>`;
+  const sealTag = c.seal ? `<img src="${c.seal}" style="height:52px; vertical-align:middle; margin-left:6px;" />` : ` (인)`;
+  const agreeLine = (num) => `동의자 : &nbsp;&nbsp;${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>`;
+  const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
+  return `
+  <div style="font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; padding:34px 40px; color:#000; font-size:12.5px; line-height:1.55;">
+    <div style="text-align:center; border:2px solid #000; padding:10px 0; font-size:22px; font-weight:900; letter-spacing:0.3em; margin-bottom:16px;">근 로 계 약 서</div>
+
+    <table style="width:100%; border-collapse:collapse; margin-bottom:14px;">
+      <tr>
+        <td style="${td} width:70px; text-align:center; font-weight:700;" rowspan="2">사용자<br/>(甲)</td>
+        <td style="${td} width:60px; text-align:center; font-weight:700;">상 호</td>
+        <td style="${td}">${c.companyName}</td>
+        <td style="${td} width:60px; text-align:center; font-weight:700;">대표자</td>
+        <td style="${td} width:90px;">${c.companyRepName}</td>
+      </tr>
+      <tr>
+        <td style="${td} text-align:center; font-weight:700;">주 소</td>
+        <td style="${td}" colspan="3">${c.companyAddress}</td>
+      </tr>
+      <tr>
+        <td style="${td} text-align:center; font-weight:700;" rowspan="3">근로자<br/>(乙)</td>
+        <td style="${td} text-align:center; font-weight:700;">성 명</td>
+        <td style="${td} font-weight:700;">${c.workerName}</td>
+        <td style="${td} text-align:center; font-weight:700;">주민번호</td>
+        <td style="${td}">${c.ssn || ""}</td>
+      </tr>
+      <tr>
+        <td style="${td} text-align:center; font-weight:700;">주 소</td>
+        <td style="${td}" colspan="3">${c.workerAddress || ""}</td>
+      </tr>
+      <tr>
+        <td style="${td} text-align:center; font-weight:700;">연락처</td>
+        <td style="${td}">${c.workerPhone || ""}</td>
+        <td style="${td} text-align:center; font-weight:700;">입사일</td>
+        <td style="${td}">${c.hireDate || ""}</td>
+      </tr>
+    </table>
+
+    <div style="font-weight:900; margin-top:10px;">1. 근로계약기간</div>
+    <div>&nbsp;- ${c.contractStart} ~ ${c.contractEnd}</div>
+
+    <div style="font-weight:900; margin-top:8px;">2. 근무장소/업무내용:갑의 사업장 및 갑이 지정하는 장소 /(${c.siteName})</div>
+    <div>① 업무상 필요가 있는 경우 업무 내용을 변경 또는 일시적으로 다른 부서의 업무 지원을 요청할 수 있다. 을은 이에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(1)}</div>
+    <div>② "을"은 항상 단정한 복장과 직원으로서의 자질을 갖추고 품위를 유지하여야 한다.</div>
+
+    <div style="font-weight:900; margin-top:8px;">3. 소정근로시간</div>
+    <div>① 소정근로시간 및 휴게시간은 업무상 필요시 변경될 수 있고 "을"은 이에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(2)}</div>
+    <table style="width:100%; border-collapse:collapse; margin:6px 0;">
+      <tr>
+        <td style="${td} text-align:center; font-weight:700;">${c.workDaysLabel || "근무 요일"}</td>
+        <td style="${td} text-align:center; font-weight:700;">${c.offDayLabel || "주휴일"}</td>
+      </tr>
+      <tr>
+        <td style="${td}">
+          - 시종업시간: ${c.hoursLabel || ""}<br/>
+          - 휴게시간 : ${c.breakLabel || ""}<br/>
+          - 실근로시간: ${c.netHoursLabel || ""}
+        </td>
+        <td style="${td} text-align:center;">${c.offDayLabel || "주휴일"}</td>
+      </tr>
+    </table>
+    <div>② 휴게시간은 자유로이 이용하고, 휴게시간 미사용 시 책임은 "을"에게 있다.</div>
+    <div>③ "을"은 연장, 야간, 휴일근로 등에 동의한다. 단 상기 시간 외에 을의 임의적인 근로는 인정되지 않는다.&nbsp;&nbsp;&nbsp;${agreeLine(3)}</div>
+    <div>④ '초과법정수당' 한도내에서 업무상 필요시 별도 수당없이 추가 연장, 휴일근로 등을 할 수 있다.</div>
+
+    <div style="font-weight:900; margin-top:8px;">4. 유급휴일 : 1주간 개근시 주휴일, 근로자의 날, 근로기준법상 관공서공휴일</div>
+
+    <div style="font-weight:900; margin-top:8px;">5. 임금</div>
+    <div>① 월 임금은 월급제로 "을"은 아래와 같이 기본급, 법정수당, 제수당 등이 포함된 포괄임금방식으로 산정하여 지급하는 것에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(4)}</div>
+    <table style="width:100%; border-collapse:collapse; margin:6px 0;">
+      <tr><td style="${td} text-align:center; font-weight:700; width:80px;">구분</td><td style="${td} text-align:center; font-weight:700; width:90px;">금액(원)</td><td style="${td} text-align:center; font-weight:700;">내역</td></tr>
+      <tr><td style="${td}">기본급</td><td style="${td} text-align:right;">${money(c.baseAmount)}</td><td style="${td}">${c.wageNote || ""}</td></tr>
+      <tr><td style="${td} font-weight:700;">월급 총액</td><td style="${td} text-align:right; font-weight:700;">${money(c.baseAmount)}</td><td style="${td}"></td></tr>
+    </table>
+    <div>② 지급일: ${c.payDayLabel || "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다."}</div>
+    <div>③ 지급방법 : 을의 예금통장으로 입금</div>
+    <div>④ 지각, 조퇴, 결근 등의 경우에는 당해 시간급을 공제한다.</div>
+    <div>⑤ 급여명세서는 절대 기밀을 유지하며 이를 위반 시에는 이로 인한 모든 불이익을 감수한다.</div>
+    <div>⑥ 1개월 미만 근무하고 퇴사 또는 인수인계를 하지 않고 퇴사 등에는 일할계산하여 지급한다.</div>
+    <div>⑦ 퇴사시 회사에 가불 또는 변상금이 있는 경우에는 금품청산시 "을"의 상계 요청이 있는 것으로 간주한다.</div>
+    <div>⑧ 퇴직금은 1주 소정근로시간이 15시간 이상이며, 1년 이상 계속 근로한 직원이 퇴직 시 지급하며 퇴직연금에 가입 처리할 수 있다.</div>
+    <div>⑨ 월 중간퇴사할 경우 금품청산은 임금지급일까지 연장하기로 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(5)}</div>
+
+    <div style="font-weight:900; margin-top:8px;">6. 연차유급휴가: 1주 평균 소정근로시간이 15시간 이상인 직원에 대해 근로기준법에 따라 지급한다.</div>
+
+    <div style="font-weight:900; margin-top:8px;">7. 계약해지</div>
+    <div>① "갑"은 "을"이 다음 각 호의 어느 하나에 해당할 경우에는 수습 또는 시용기간(각 3개월), 근무 기간 중이라도 변명을 들은 후, 해지사유와 일자를 명시한 서면으로 1개월 전에 통지하고, 본 계약을 해지할 수 있다.</div>
+    <div>&nbsp;&nbsp;1. 업무태만 및 근로계약서 제출 해태·거부한 경우<br/>&nbsp;&nbsp;2. 고객에 대한 불친절 등 민원을 야기한 경우<br/>&nbsp;&nbsp;3. 결근이나 업무지시를 불이행한 경우<br/>&nbsp;&nbsp;4. 정년(만60세) 및 휴직 등 당연퇴직 사유가 발생한 경우<br/>&nbsp;&nbsp;5. 기타 사규위반이나 경영상 부득이한 경우</div>
+    <div>② "을"은 본인의 사유에 의하여 계약해지를 원할 때는 해지를 원하는 날의 1개월 전에 "갑"에게 통보하여야 한다.</div>
+
+    <div style="font-weight:900; margin-top:8px;">8. 개인정보 등</div>
+    <div>① "을"은 4대보험 관리 등을 위해 자신의 성명, 주소, 주민번호, 전화번호 등 개인정보를 근로기간 및 그 후 3년간 사용자가 수집·이용함에 (동의)한다. "을"은 동의하지 않을 권리가 있으나, 이용 동의를 거부할 경우 4대보험 가입이 되지 아니하는 등 불이익을 받을 수 있다.&nbsp;&nbsp;&nbsp;${agreeLine(6)}</div>
+    <div>② "을"은 회사의 업무상 복무관리를 위해 회사의 컴퓨터 열람, CCTV설치 활용 및 관리 등에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(7)}</div>
+
+    <div style="font-weight:900; margin-top:8px;">9. 기타: 본 계약서는 "근로자"에게 교부되었음을 확인하며, 명시되지 아니한 사항은 취업규칙 및 관계법규에 따른다.&nbsp;&nbsp;&nbsp;교부 확인 : ${agreeLine(8)}</div>
+
+    <div style="text-align:center; margin-top:26px; font-weight:700; font-size:15px;">${c.signDateLabel}</div>
+    <table style="width:100%; margin-top:14px; font-size:13px;">
+      <tr>
+        <td style="width:120px; font-weight:700;">사용자(갑)</td>
+        <td>${c.companyName}&nbsp;&nbsp;&nbsp;대표이사&nbsp;&nbsp;${c.companyRepName}${sealTag}</td>
+      </tr>
+      <tr><td colspan="2" style="height:14px;"></td></tr>
+      <tr>
+        <td style="font-weight:700;">근로자(을)</td>
+        <td>${c.workerName}&nbsp;&nbsp;&nbsp;${sigTag(44)}</td>
+      </tr>
+    </table>
+  </div>`;
 }
 
 /* ─────────────────────────  유틸  ───────────────────────── */
@@ -199,7 +357,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -256,6 +414,7 @@ function migrate(p) {
     { id: uid(), text: "안전사고 없음" },
   ];
   d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
+  d.contractRequests = Array.isArray(d.contractRequests) ? d.contractRequests : [];
   return d;
 }
 
@@ -1064,6 +1223,42 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
+  const myContractRequest = worker ? (data.contractRequests || []).find((x) => x.workerId === worker.id) : null;
+  const [contractSignOpen, setContractSignOpen] = useState(false);
+  const [contractSigData, setContractSigData] = useState(null);
+  const [contractSignBusy, setContractSignBusy] = useState(false);
+  const submitContractSign = async () => {
+    if (!contractSigData) { setToast("서명을 먼저 그려주세요"); return; }
+    setContractSignBusy(true);
+    try {
+      const settings = data.settings;
+      const html = buildContractHtml({
+        companyName: settings.companyName || "", companyRepName: settings.companyRepName || "", companyAddress: settings.companyAddress || "",
+        workerName: myContractRequest.workerName, workerAddress: myContractRequest.workerAddress, workerPhone: myContractRequest.workerPhone,
+        ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
+        contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
+        workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
+        baseAmount: myContractRequest.baseAmount, wageNote: myContractRequest.wageNote, payDayLabel: myContractRequest.payDayLabel,
+        signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
+        sig: contractSigData, seal: settings.companySealFileId ? photoUrl(settings.companySealFileId) : null,
+      });
+      const blob = await htmlToPdfBlob(html, 780);
+      const fileId = await uploadPdfBlob(blob, `근로계약서_${myContractRequest.workerName}.pdf`);
+      const ok = await saveConfirmed((d) => ({
+        ...d,
+        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd } : w)),
+        contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
+      }));
+      if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
+      setToast("근로계약서 서명이 완료됐습니다");
+      setContractSignOpen(false);
+      setContractSigData(null);
+    } catch (e) {
+      setToast("계약서 생성에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setContractSignBusy(false);
+    }
+  };
 
   // 대신 근무하기로 확정된 날, 퇴근까지 완료했는데 아직 "대체근무만/기본근무+대체근무" 확인을 안 한 건이 있으면 물어봄
   const myCoverConfirmNeeded = useMemo(() => {
@@ -1888,6 +2083,22 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </div>
       )}
 
+      {myContractRequest && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          <div style={{ background: C.tile, padding: 14, border: `1.5px solid #0369A1` }}>
+            <div className="flex items-center gap-1.5" style={{ color: "#0369A1", fontSize: 11.5, fontWeight: 800 }}>
+              <FileText size={12} /> 근로계약서 서명이 필요해요
+            </div>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
+              {myContractRequest.contractStart} ~ {myContractRequest.contractEnd} · {myContractRequest.siteName}
+            </div>
+            <div className="mt-3">
+              <Btn full small onClick={() => { setContractSignOpen(true); setContractSigData(null); }}>내용 확인하고 서명하기</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 정산서 확인 · 서명 */}
       <Modal open={!!signOpen} onClose={() => !signBusy && setSignOpen(null)}>
         {signOpen && (
@@ -1927,6 +2138,37 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full disabled={signBusy} onClick={() => setSignOpen(null)}>나중에</Btn>
               <Btn full disabled={signBusy || !sigData} onClick={submitSign}>{signBusy ? "저장 중…" : "서명 완료"}</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 근로계약서 확인 · 서명 */}
+      <Modal open={contractSignOpen} onClose={() => !contractSignBusy && setContractSignOpen(false)}>
+        {myContractRequest && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 확인</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>내용을 꼼꼼히 확인한 뒤 아래에 서명해 주세요.</div>
+            <div style={{ maxHeight: 380, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
+              <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161%" }}
+                dangerouslySetInnerHTML={{ __html: buildContractHtml({
+                  companyName: data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
+                  workerName: myContractRequest.workerName, workerAddress: myContractRequest.workerAddress, workerPhone: myContractRequest.workerPhone,
+                  ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
+                  contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
+                  workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
+                  baseAmount: myContractRequest.baseAmount, wageNote: myContractRequest.wageNote, payDayLabel: myContractRequest.payDayLabel,
+                  signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
+                  sig: contractSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
+                }) }} />
+            </div>
+            <div className="mt-4">
+              <Eyebrow>여기에 서명해 주세요</Eyebrow>
+              <div className="mt-1.5"><SignaturePad onChange={setContractSigData} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full disabled={contractSignBusy} onClick={() => setContractSignOpen(false)}>나중에</Btn>
+              <Btn full disabled={contractSignBusy || !contractSigData} onClick={submitContractSign}>{contractSignBusy ? "저장 중…" : "서명 완료"}</Btn>
             </div>
           </>
         )}
@@ -7108,6 +7350,21 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const bound = workers.find((w) => w.id === dev.workerId);
   const noCoord = sites.filter((s) => s.lat == null).length;
 
+  const [sealUploadBusy, setSealUploadBusy] = useState(false);
+  const uploadSealFile = async (file) => {
+    if (!file) return;
+    setSealUploadBusy(true);
+    try {
+      const fileId = await uploadPhoto(file);
+      update((d) => ({ ...d, settings: { ...d.settings, companySealFileId: fileId } }));
+      setToast("도장 이미지를 등록했습니다");
+    } catch (e) {
+      setToast("업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    } finally {
+      setSealUploadBusy(false);
+    }
+  };
+
   const [contractBusy, setContractBusy] = useState(false);
   const uploadContractFile = async (file) => {
     if (!file) return;
@@ -7124,6 +7381,46 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     } finally {
       setContractBusy(false);
     }
+  };
+
+  // 근로계약서 서명 요청 — 관리자가 세부 항목을 입력하면 근무자 화면에 "서명해주세요" 요청이 뜸.
+  // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
+  const [contractReqEdit, setContractReqEdit] = useState(null);
+  const openContractRequest = (w) => {
+    const siteId = (w.siteIds || [])[0] || w.siteId || "";
+    const start = w.contractStartDate || dKey(new Date());
+    // 기본 계약기간은 3개월 — 시작일로부터 3개월 후 같은 날짜를 종료일로 자동 계산 (물론 수정 가능)
+    const defaultEnd = w.contractEndDate || (() => {
+      const d = parseKey(start); d.setMonth(d.getMonth() + 3); return dKey(d);
+    })();
+    setContractReqEdit({
+      workerId: w.id, workerName: w.name,
+      contractStart: start,
+      contractEnd: defaultEnd,
+      siteId, ssn: "",
+      workDaysLabel: "주6일(월~토)", offDayLabel: "주휴일", hoursLabel: "", breakLabel: "", netHoursLabel: "",
+      baseAmount: "", wageNote: "", payDayLabel: "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다.",
+    });
+  };
+  const [contractReqBusy, setContractReqBusy] = useState(false);
+  const submitContractRequest = () => {
+    const f = contractReqEdit;
+    if (!f.contractEnd) { setToast("계약 종료일을 입력해 주세요"); return; }
+    if (!f.baseAmount) { setToast("기본급을 입력해 주세요"); return; }
+    const site = sites.find((s) => s.id === f.siteId);
+    const worker = workers.find((w) => w.id === f.workerId);
+    const req = {
+      id: uid(), workerId: f.workerId, workerName: f.workerName,
+      workerAddress: worker?.address || "", workerPhone: worker?.phone || "",
+      contractStart: f.contractStart, contractEnd: f.contractEnd,
+      siteName: site?.name || "", ssn: f.ssn.trim(),
+      workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel, hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
+      baseAmount: Number(f.baseAmount) || 0, wageNote: f.wageNote, payDayLabel: f.payDayLabel,
+      createdAt: new Date().toISOString(),
+    };
+    update((d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] }));
+    setToast("근로계약서 서명 요청을 보냈습니다 — 근무자 화면에 알림이 떠요");
+    setContractReqEdit(null);
   };
 
   const saveWorker = () => {
@@ -7359,6 +7656,41 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             </div>
           </Tile>
         ))}
+      </Sec>
+
+      {/* 근로계약서 */}
+      <Sec title="근로계약서 (회사 정보 · 도장)">
+        <Tile style={{ padding: 14 }}>
+          <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, marginBottom: 10 }}>
+            여기 입력해둔 정보와 도장 이미지가, 근로계약서를 만들 때마다 자동으로 들어가요.
+          </div>
+          <Field label="대표자 성명">
+            <input value={settings.companyRepName || ""} placeholder="예: 김지연" style={inputStyle}
+              onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, companyRepName: e.target.value } }))} />
+          </Field>
+          <div className="mt-2.5">
+            <Field label="회사 주소">
+              <input value={settings.companyAddress || ""} placeholder="예: 경기도 하남시 검단산로 63-11 3층" style={inputStyle}
+                onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, companyAddress: e.target.value } }))} />
+            </Field>
+          </div>
+          <div className="mt-3">
+            <Eyebrow>회사 도장(직인) 이미지</Eyebrow>
+            {settings.companySealFileId ? (
+              <div className="flex items-center gap-3 mt-2">
+                <img src={photoUrl(settings.companySealFileId)} style={{ width: 64, height: 64, objectFit: "contain", background: C.tileSoft, borderRadius: 6 }} />
+                <button onClick={() => update((d) => ({ ...d, settings: { ...d.settings, companySealFileId: null } }))} style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>삭제</button>
+              </div>
+            ) : (
+              <label className="flex items-center justify-center gap-1.5 mt-2" style={{ padding: "12px 0", border: `1.5px dashed ${C.line}`, cursor: "pointer", background: C.tileSoft }}>
+                <Camera size={14} color={C.sub} />
+                <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>{sealUploadBusy ? "업로드 중…" : "도장 이미지 선택 (배경 투명 PNG 권장)"}</span>
+                <input type="file" accept="image/*" style={{ display: "none" }} disabled={sealUploadBusy}
+                  onChange={(e) => { uploadSealFile(e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
+            )}
+          </div>
+        </Tile>
       </Sec>
 
       {/* 정산 */}
@@ -8070,6 +8402,17 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
                 계약 종료일을 입력해두시면, 종료 2주 전부터 관리자 화면에 자동으로 알림이 떠요.
               </div>
+              {wEdit.id && (
+                <>
+                  <div style={{ borderTop: `1px solid ${C.line}`, margin: "10px 0" }} />
+                  <button onClick={() => openContractRequest(wEdit)} className="flex items-center justify-center gap-1.5 w-full" style={{ padding: "10px 0", background: "#0369A1", color: "#fff", fontSize: 12.5, fontWeight: 800 }}>
+                    <FileText size={13} /> 근로계약서 작성해서 서명 요청하기
+                  </button>
+                  <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
+                    이름·주소·연락처 등은 자동으로 채워지고, 근무시간·임금만 입력하면 돼요. 근무자가 앱에서 서명하면 도장까지 자동으로 찍힌 PDF가 여기에 바로 저장돼요.
+                  </div>
+                </>
+              )}
             </div>
 
             <Field label="담당 현장 (여러 곳 선택 가능)">
@@ -8245,6 +8588,74 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               {wEdit.id ? <Btn kind="danger" full onClick={delWorker}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
                 : <Btn kind="ghost" full onClick={() => setWEdit(null)}>취소</Btn>}
               <Btn full onClick={saveWorker}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 근로계약서 서명 요청 작성 */}
+      <Modal open={!!contractReqEdit} onClose={() => setContractReqEdit(null)}>
+        {contractReqEdit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 작성</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 4 }}>{contractReqEdit.workerName}님</div>
+            <div style={{ fontSize: 11, color: "#9D174D", background: "#FDF2F8", padding: 8, marginBottom: 10, lineHeight: 1.5 }}>
+              주민번호는 계약서 생성에만 쓰이고, 근무자가 서명을 완료하면 앱에는 저장되지 않고 사라져요.
+            </div>
+            <div className="flex flex-col gap-2.5">
+              <Field label="계약서에 표기될 이름 (서명란·상단 표에 전부 이 이름으로 들어가요)">
+                <input value={contractReqEdit.workerName} onChange={(e) => setContractReqEdit((f) => ({ ...f, workerName: e.target.value }))} style={inputStyle} />
+              </Field>
+              <Field label="주민등록번호">
+                <input value={contractReqEdit.ssn} onChange={(e) => setContractReqEdit((f) => ({ ...f, ssn: e.target.value }))} placeholder="000000-0000000" style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="계약 시작일">
+                  <input type="date" value={contractReqEdit.contractStart} onChange={(e) => setContractReqEdit((f) => ({ ...f, contractStart: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="계약 종료일">
+                  <input type="date" value={contractReqEdit.contractEnd} onChange={(e) => setContractReqEdit((f) => ({ ...f, contractEnd: e.target.value }))} style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="근무장소(현장)">
+                <select value={contractReqEdit.siteId} onChange={(e) => setContractReqEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                  {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="근무 요일 표기">
+                  <input value={contractReqEdit.workDaysLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, workDaysLabel: e.target.value }))} placeholder="예: 주6일(월~토)" style={inputStyle} />
+                </Field>
+                <Field label="휴무 표기">
+                  <input value={contractReqEdit.offDayLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, offDayLabel: e.target.value }))} placeholder="예: 주휴일(일)" style={inputStyle} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="시종업시간">
+                  <input value={contractReqEdit.hoursLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, hoursLabel: e.target.value }))} placeholder="예: 2.0시간(6:00~8:00)" style={inputStyle} />
+                </Field>
+                <Field label="휴게시간">
+                  <input value={contractReqEdit.breakLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, breakLabel: e.target.value }))} placeholder="예: 10분(자율적)" style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="실근로시간 표기">
+                <input value={contractReqEdit.netHoursLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, netHoursLabel: e.target.value }))} placeholder="예: 1시간50분(주당 11시간)" style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="기본급(월, 원)">
+                  <input type="number" value={contractReqEdit.baseAmount} onChange={(e) => setContractReqEdit((f) => ({ ...f, baseAmount: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="임금 산정 내역">
+                  <input value={contractReqEdit.wageNote} onChange={(e) => setContractReqEdit((f) => ({ ...f, wageNote: e.target.value }))} placeholder="예: (기본급)/월48시간=15,000원" style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="지급일 조항">
+                <input value={contractReqEdit.payDayLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, payDayLabel: e.target.value }))} style={inputStyle} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>취소</Btn>
+              <Btn full onClick={submitContractRequest}>서명 요청 보내기</Btn>
             </div>
           </>
         )}
