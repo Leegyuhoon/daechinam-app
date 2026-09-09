@@ -132,6 +132,22 @@ const photoUrl = (id) => `/api/photo?id=${id}`;
 // 사진·영상은 그냥 "보기"가 자연스럽지만, 문서(PDF 등)는 눌렀을 때 실제로 기기에 저장돼야 하므로
 // 서버에 download=1을 붙여서 강제로 다운로드되도록 함 (그냥 보여주기만 하는 문제 방지)
 const downloadUrl = (id, filename) => `/api/photo?id=${id}&download=1&filename=${encodeURIComponent(filename || "file.pdf")}`;
+// <a href> 네비게이션만으로는 특히 아이폰 사파리에서 Content-Disposition을 무시하고 그냥 미리보기만 여는 경우가 많음.
+// 그래서 파일을 JS로 직접 받아와 blob으로 만든 뒤 강제로 다운로드를 트리거함(대부분의 환경에서 더 확실하게 동작).
+async function triggerDownload(id, filename, setToast) {
+  try {
+    const res = await fetch(photoUrl(id));
+    if (!res.ok) throw new Error("파일을 불러오지 못했습니다");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename || "file.pdf";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } catch (e) {
+    setToast && setToast("다운로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
+  }
+}
 // 기존 데이터(photoId 단수)와 신규 데이터(photoIds 배열)를 둘 다 지원
 const photoIdsOf = (r) => (Array.isArray(r.photoIds) && r.photoIds.length > 0 ? r.photoIds : (r.photoId ? [r.photoId] : []));
 
@@ -225,7 +241,7 @@ function buildContractHtml(c) {
     ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-14px; margin:0 4px;" />`
     : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
   const sealTag = c.seal ? `<img src="${c.seal}" style="height:46px; max-width:70px; object-fit:contain; vertical-align:-24px; margin-left:6px;" />` : ` (인)`;
-  const agreeLine = (num) => `동의자 : &nbsp;&nbsp;${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span>`;
+  const agreeLine = (num) => `동의자 :&nbsp;<span style="white-space:nowrap; display:inline-block;">${sigTag()}<span style="font-weight:700;">${c.workerName}(서명 또는 인)</span></span>`;
   const td = "padding:6px 8px; border:1px solid #000; font-size:12px;";
   return `
   <div style="font-family:'Noto Sans CJK KR','Malgun Gothic',sans-serif; padding:34px 40px; color:#000; font-size:12.5px; line-height:1.55;">
@@ -1997,10 +2013,13 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
 
       {worker?.contractFileId && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
-          <a href={downloadUrl(worker.contractFileId, worker.contractFileName || "근로계약서.pdf")} className="w-full flex items-center justify-center gap-2"
+          <button onClick={() => triggerDownload(worker.contractFileId, worker.contractFileName || "근로계약서.pdf", setToast)} className="w-full flex items-center justify-center gap-2"
             style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 13.5, fontWeight: 800 }}>
             <FileText size={15} /> 내 근로계약서 다운로드
-          </a>
+          </button>
+          <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 5, textAlign: "center", lineHeight: 1.5 }}>
+            아이폰에서 파일만 열리고 저장이 안 되면, 화면 위의 공유 아이콘(⬆️)을 눌러 "파일에 저장"을 선택해 주세요.
+          </div>
         </div>
       )}
 
@@ -2193,9 +2212,12 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             </div>
             <div style={{ fontSize: 16.5, fontWeight: 900, color: C.text }}>근로계약서 서명이 완료됐습니다</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>회사 도장까지 자동으로 찍힌 최종 PDF가<br />생성되어 저장됐어요.</div>
-            <a href={downloadUrl(contractDoneFileId, `근로계약서_${myContractRequest?.workerName || ""}.pdf`)} className="w-full mt-5">
+            <div className="w-full mt-5" onClick={() => triggerDownload(contractDoneFileId, `근로계약서_${myContractRequest?.workerName || ""}.pdf`, setToast)}>
               <Btn full><span className="flex items-center justify-center gap-1.5"><Download size={14} /> 내 계약서 PDF 다운로드</span></Btn>
-            </a>
+            </div>
+            <div style={{ fontSize: 10.5, color: C.sub, marginTop: 8, lineHeight: 1.5 }}>
+              아이폰에서 파일만 열리고 저장이 안 되면, 화면 위의 공유 아이콘(⬆️)을 눌러 "파일에 저장"을 선택해 주세요.
+            </div>
             <button onClick={() => { setContractSignOpen(false); setContractDoneFileId(null); }} className="mt-3" style={{ fontSize: 12.5, color: C.sub, fontWeight: 700 }}>닫기</button>
           </div>
         ) : myContractRequest && (
@@ -8461,9 +8483,9 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               {wEdit.contractFileId ? (
                 <div className="flex items-center justify-between mt-2">
                   <div style={{ minWidth: 0 }}>
-                    <a href={downloadUrl(wEdit.contractFileId, wEdit.contractFileName || "근로계약서.pdf")} className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
+                    <button onClick={() => triggerDownload(wEdit.contractFileId, wEdit.contractFileName || "근로계약서.pdf", setToast)} className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 700, color: C.aquaDeep, minWidth: 0 }}>
                       <FileText size={14} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wEdit.contractFileName || "계약서.pdf"}</span>
-                    </a>
+                    </button>
                     {wEdit.contractSignedAt && (
                       <div style={{ fontSize: 10.5, color: ST.complete, fontWeight: 700, marginTop: 3 }}>
                         ✓ {new Date(wEdit.contractSignedAt).toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}에 본인 서명 완료
@@ -8517,8 +8539,8 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                         </div>
                         <div className="flex flex-col gap-1.5 mt-2">
                           {preview.map((h) => (
-                            <a key={h.id} href={downloadUrl(h.fileId, h.fileName || "근로계약서.pdf")}
-                              className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
+                            <div key={h.id} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)}
+                              className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px", cursor: "pointer" }}>
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: C.aquaDeep }}>
                                   {h.contractStart || "?"} ~ {h.contractEnd || "?"}
@@ -8528,7 +8550,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                                 </div>
                               </div>
                               <Download size={14} color={C.sub} style={{ flexShrink: 0 }} />
-                            </a>
+                            </div>
                           ))}
                         </div>
                         {history.length > 3 && (
@@ -8852,8 +8874,8 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     <div style={{ fontSize: 12.5, fontWeight: 900, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>{ymLabel(ym)} ({groups[ym].length}건)</div>
                     <div className="flex flex-col gap-1.5 mt-1.5">
                       {groups[ym].map((h) => (
-                        <a key={h.id} href={downloadUrl(h.fileId, h.fileName || "근로계약서.pdf")}
-                          className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}` }}>
+                        <div key={h.id} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)}
+                          className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}`, cursor: "pointer" }}>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 12.5, fontWeight: 700, color: C.aquaDeep }}>
                               {h.contractStart || "?"} ~ {h.contractEnd || "?"}
@@ -8863,7 +8885,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                             </div>
                           </div>
                           <Download size={15} color={C.sub} style={{ flexShrink: 0 }} />
-                        </a>
+                        </div>
                       ))}
                     </div>
                   </div>
