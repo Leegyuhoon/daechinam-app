@@ -7515,6 +7515,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   const [contractReqEdit, setContractReqEdit] = useState(null);
   const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
+  const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
   const openContractRequest = (w) => {
     const siteId = (w.siteIds || [])[0] || w.siteId || "";
     const start = w.contractStartDate || dKey(new Date());
@@ -8862,12 +8863,14 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       </Modal>
 
       {/* 근로계약서 미리보기 (서명 전) */}
-      <Modal open={contractPreviewOpen} onClose={() => setContractPreviewOpen(false)}>
+      <Modal open={contractPreviewOpen} onClose={() => { setContractPreviewOpen(false); setPreviewSigData(null); }}>
         {contractReqEdit && (
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 미리보기</div>
-            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>서명·도장은 아직 안 찍힌 상태로 보여드려요.</div>
-            <div style={{ maxHeight: 480, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>
+              {previewSigData ? "아래 서명 위치·크기가 실제 결과물과 동일해요." : "서명은 아직 안 찍힌 상태예요. 아래에서 테스트로 그려보면 실제 위치를 바로 확인할 수 있어요."}
+            </div>
+            <div style={{ maxHeight: 420, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
               {(() => {
                 const f = fillContractDefaults(contractReqEdit);
                 return (
@@ -8883,12 +8886,19 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
                   baseAmount: f.baseAmount, wageNote: f.wageNote, payDayLabel: f.payDayLabel,
                   signDateLabel: `${parseKey(dKey(new Date())).getFullYear()}년 ${parseKey(dKey(new Date())).getMonth() + 1}월 ${parseKey(dKey(new Date())).getDate()}일 (서명 시점 날짜로 자동 표시됨)`,
-                  sig: null, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
+                  sig: previewSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
                 ); })()}
             </div>
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <Eyebrow>테스트 서명 (실제로 저장되지 않아요, 위치 확인용)</Eyebrow>
+                {previewSigData && <button onClick={() => setPreviewSigData(null)} style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>지우기</button>}
+              </div>
+              <div className="mt-1.5"><SignaturePad onChange={setPreviewSigData} /></div>
+            </div>
             <div className="mt-4">
-              <Btn kind="ghost" full onClick={() => setContractPreviewOpen(false)}>닫고 계속 수정하기</Btn>
+              <Btn kind="ghost" full onClick={() => { setContractPreviewOpen(false); setPreviewSigData(null); }}>닫고 계속 수정하기</Btn>
             </div>
           </>
         )}
