@@ -206,6 +206,17 @@ async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
 // 근로계약서 HTML 생성 — 업로드해주신 실제 양식 문구를 그대로 재현함.
 // sig가 있으면 "서명 또는 인" 9곳 전부에 그 서명 이미지를 자동으로 반복 삽입,
 // seal이 있으면 대표이사 도장 자리에 자동 삽입. 둘 다 없으면 빈 밑줄로 남겨둠(서명 전 미리보기용).
+// 관리자가 입력란을 비워두면, 입력창에 보여주던 "예시 문구"가 그대로 실제 값으로 쓰이게 하기 위한 기본값
+const CONTRACT_FIELD_DEFAULTS = {
+  workDaysLabel: "주6일(월~토)", offDayLabel: "주휴일(일)",
+  hoursLabel: "2.0시간(6:00~8:00)", breakLabel: "10분(자율적)", netHoursLabel: "1시간50분(주당 11시간)",
+  wageNote: "(기본급)/월48시간=15,000원(통상시급)",
+};
+function fillContractDefaults(f) {
+  const out = { ...f };
+  Object.keys(CONTRACT_FIELD_DEFAULTS).forEach((k) => { if (!out[k] || !out[k].trim()) out[k] = CONTRACT_FIELD_DEFAULTS[k]; });
+  return out;
+}
 function buildContractHtml(c) {
   const sigTag = (h = 34) => c.sig
     ? `<img src="${c.sig}" style="height:${h}px; vertical-align:middle;" />`
@@ -7405,7 +7416,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   };
   const [contractReqBusy, setContractReqBusy] = useState(false);
   const submitContractRequest = () => {
-    const f = contractReqEdit;
+    const f = fillContractDefaults(contractReqEdit);
     if (!f.contractEnd) { setToast("계약 종료일을 입력해 주세요"); return; }
     if (!f.baseAmount) { setToast("기본급을 입력해 주세요"); return; }
     const site = sites.find((s) => s.id === f.siteId);
@@ -8674,20 +8685,24 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 미리보기</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 10 }}>서명·도장은 아직 안 찍힌 상태로 보여드려요.</div>
             <div style={{ maxHeight: 480, overflowY: "auto", border: `1px solid ${C.line}`, background: "#fff" }}>
+              {(() => {
+                const f = fillContractDefaults(contractReqEdit);
+                return (
               <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161%" }}
                 dangerouslySetInnerHTML={{ __html: buildContractHtml({
                   companyName: data.settings.companyName || "", companyRepName: data.settings.companyRepName || "", companyAddress: data.settings.companyAddress || "",
-                  workerName: contractReqEdit.workerName, workerAddress: workers.find((w) => w.id === contractReqEdit.workerId)?.address || "",
-                  workerPhone: workers.find((w) => w.id === contractReqEdit.workerId)?.phone || "",
-                  ssn: contractReqEdit.ssn, hireDate: contractReqEdit.contractStart,
-                  contractStart: contractReqEdit.contractStart, contractEnd: contractReqEdit.contractEnd,
-                  siteName: sites.find((s) => s.id === contractReqEdit.siteId)?.name || "",
-                  workDaysLabel: contractReqEdit.workDaysLabel, offDayLabel: contractReqEdit.offDayLabel,
-                  hoursLabel: contractReqEdit.hoursLabel, breakLabel: contractReqEdit.breakLabel, netHoursLabel: contractReqEdit.netHoursLabel,
-                  baseAmount: contractReqEdit.baseAmount, wageNote: contractReqEdit.wageNote, payDayLabel: contractReqEdit.payDayLabel,
+                  workerName: f.workerName, workerAddress: workers.find((w) => w.id === f.workerId)?.address || "",
+                  workerPhone: workers.find((w) => w.id === f.workerId)?.phone || "",
+                  ssn: f.ssn, hireDate: f.contractStart,
+                  contractStart: f.contractStart, contractEnd: f.contractEnd,
+                  siteName: sites.find((s) => s.id === f.siteId)?.name || "",
+                  workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel,
+                  hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
+                  baseAmount: f.baseAmount, wageNote: f.wageNote, payDayLabel: f.payDayLabel,
                   signDateLabel: `${parseKey(dKey(new Date())).getFullYear()}년 ${parseKey(dKey(new Date())).getMonth() + 1}월 ${parseKey(dKey(new Date())).getDate()}일 (서명 시점 날짜로 자동 표시됨)`,
                   sig: null, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
+                ); })()}
             </div>
             <div className="mt-4">
               <Btn kind="ghost" full onClick={() => setContractPreviewOpen(false)}>닫고 계속 수정하기</Btn>
