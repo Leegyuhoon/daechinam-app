@@ -29,10 +29,14 @@ export default async (req, context) => {
         return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "Content-Type": "application/json", ...CORS } });
       }
       const contentType = (result.metadata && result.metadata.contentType) || "image/jpeg";
-      return new Response(result.data, {
-        status: 200,
-        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=31536000, immutable", ...CORS },
-      });
+      const headers = { "Content-Type": contentType, "Cache-Control": "public, max-age=31536000, immutable", ...CORS };
+      // ?download=1 이 붙어 있으면(다운로드 버튼용), 브라우저가 그냥 보여주지 않고 실제로 저장하도록 강제함
+      if (url.searchParams.get("download")) {
+        const rawName = url.searchParams.get("filename") || "file";
+        const safeName = rawName.replace(/[\\/:*?"<>|]/g, "_");
+        headers["Content-Disposition"] = `attachment; filename="${encodeURIComponent(safeName)}"`;
+      }
+      return new Response(result.data, { status: 200, headers });
     }
 
     if (req.method === "POST") {
