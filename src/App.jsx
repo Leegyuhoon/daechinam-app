@@ -268,6 +268,13 @@ function fillContractDefaults(f) {
   return out;
 }
 function buildContractHtml(c) {
+  // 날짜를 원본 양식과 동일한 "2026년 6월 18일" 형식으로 (YYYY-MM-DD 그대로 노출 안 되게)
+  const koDate = (ymd) => {
+    if (!ymd) return "";
+    const [y, m, d] = ymd.split("-").map(Number);
+    if (!y || !m || !d) return ymd;
+    return `${y}년 ${m}월 ${d}일`;
+  };
   const sigTag = (h = 26) => c.sig
     ? `<img src="${c.sig}" style="height:${h}px; max-width:90px; object-fit:contain; vertical-align:-14px; margin:0 4px;" />`
     : `<span style="display:inline-block; width:90px; border-bottom:1px solid #000; margin:0 4px;">&nbsp;</span>`;
@@ -294,7 +301,7 @@ function buildContractHtml(c) {
         <td style="${td} text-align:center; font-weight:700;">성 명</td>
         <td style="${td} font-weight:700;">${c.workerName}</td>
         <td style="${td} text-align:center; font-weight:700;">주민번호</td>
-        <td style="${td} font-family:'Courier New',monospace; letter-spacing:0.5px; white-space:nowrap;">${c.ssn || ""}</td>
+        <td style="${td} letter-spacing:0.8px; white-space:nowrap;">${c.ssn || ""}</td>
       </tr>
       <tr>
         <td style="${td} text-align:center; font-weight:700;">주 소</td>
@@ -304,12 +311,12 @@ function buildContractHtml(c) {
         <td style="${td} text-align:center; font-weight:700;">연락처</td>
         <td style="${td}">${c.workerPhone || ""}</td>
         <td style="${td} text-align:center; font-weight:700;">입사일</td>
-        <td style="${td}">${c.hireDate || ""}</td>
+        <td style="${td}">${koDate(c.hireDate)}</td>
       </tr>
     </table>
 
     <div style="font-weight:900; margin-top:10px;">1. 근로계약기간</div>
-    <div>&nbsp;- ${c.contractStart} ~ ${c.contractEnd}</div>
+    <div>&nbsp;- ${koDate(c.contractStart)} ~ ${koDate(c.contractEnd)}</div>
 
     <div style="font-weight:900; margin-top:8px;">2. 근무장소/업무내용:갑의 사업장 및 갑이 지정하는 장소 /(${c.siteName})</div>
     <div>① 업무상 필요가 있는 경우 업무 내용을 변경 또는 일시적으로 다른 부서의 업무 지원을 요청할 수 있다. 을은 이에 동의한다.&nbsp;&nbsp;&nbsp;${agreeLine(1)}</div>
