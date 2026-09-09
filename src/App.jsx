@@ -368,7 +368,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -426,6 +426,17 @@ function migrate(p) {
   ];
   d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
   d.contractRequests = Array.isArray(d.contractRequests) ? d.contractRequests : [];
+  d.workerContracts = Array.isArray(d.workerContracts) ? d.workerContracts : [];
+  // 예전 버전엔 근무자당 계약서 파일 하나만 저장됐는데, 그것도 이력에 한 번 편입시켜서 안 사라지게 함
+  (d.workers || []).forEach((w) => {
+    if (w.contractFileId && !d.workerContracts.some((c) => c.fileId === w.contractFileId)) {
+      d.workerContracts.push({
+        id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
+        contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "",
+        createdAt: w.contractSignedAt || new Date(0).toISOString(), source: w.contractSignedAt ? "signed" : "uploaded",
+      });
+    }
+  });
   if (d.settings.contractCompanyName == null) d.settings.contractCompanyName = "주식회사 이엘씨";
   return d;
 }
@@ -1256,10 +1267,15 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       });
       const blob = await htmlToPdfBlob(html, 780);
       const fileId = await uploadPdfBlob(blob, `근로계약서_${myContractRequest.workerName}.pdf`);
+      const signedAt = new Date().toISOString();
       const ok = await saveConfirmed((d) => ({
         ...d,
-        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: new Date().toISOString() } : w)),
+        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: `근로계약서_${myContractRequest.workerName}.pdf`, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
         contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
+        workerContracts: [...(d.workerContracts || []), {
+          id: uid(), workerId: worker.id, workerName: myContractRequest.workerName, fileId, fileName: `근로계약서_${myContractRequest.workerName}.pdf`,
+          contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, createdAt: signedAt, source: "signed",
+        }],
       }));
       if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
       setToast("근로계약서 서명이 완료됐습니다");
@@ -7468,7 +7484,20 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null,
       contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
-    update((d) => ({ ...d, workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w] }));
+    update((d) => {
+      const prev = d.workers.find((x) => x.id === w.id);
+      // 관리자가 직접 새 PDF를 첨부한 경우(자동 서명 흐름이 아닌 경우)도 이력에 남겨서 안 사라지게 함
+      const isNewManualUpload = w.contractFileId && w.contractFileId !== prev?.contractFileId && !w.contractSignedAt;
+      const newHistoryEntry = isNewManualUpload ? [{
+        id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
+        contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "", createdAt: new Date().toISOString(), source: "uploaded",
+      }] : [];
+      return {
+        ...d,
+        workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w],
+        workerContracts: [...(d.workerContracts || []), ...newHistoryEntry],
+      };
+    });
     setWEdit(null); setToast("근무자를 저장했습니다");
   };
   const delWorker = () => {
@@ -8447,6 +8476,32 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
                     이름·주소·연락처 등은 자동으로 채워지고, 근무시간·임금만 입력하면 돼요. 근무자가 앱에서 서명하면 도장까지 자동으로 찍힌 PDF가 여기에 바로 저장돼요.
                   </div>
+                  {(() => {
+                    const history = (data.contractHistory || data.workerContracts || []).filter((h) => h.workerId === wEdit.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                    if (history.length === 0) return null;
+                    return (
+                      <div className="mt-3">
+                        <div style={{ borderTop: `1px solid ${C.line}`, margin: "10px 0" }} />
+                        <Eyebrow>지난 계약서 이력 ({history.length}건)</Eyebrow>
+                        <div className="flex flex-col gap-1.5 mt-2">
+                          {history.map((h) => (
+                            <a key={h.id} href={photoUrl(h.fileId)} target="_blank" rel="noreferrer"
+                              className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: C.aquaDeep }}>
+                                  {h.contractStart || "?"} ~ {h.contractEnd || "?"}
+                                </div>
+                                <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
+                                  {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleDateString("ko-KR")}
+                                </div>
+                              </div>
+                              <Download size={14} color={C.sub} style={{ flexShrink: 0 }} />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
