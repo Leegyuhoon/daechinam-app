@@ -508,20 +508,11 @@ function migrate(p) {
   d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
   d.contractRequests = Array.isArray(d.contractRequests) ? d.contractRequests : [];
   d.workerContracts = Array.isArray(d.workerContracts) ? d.workerContracts : [];
-  // 예전 버전엔 근무자당 계약서 파일 하나만 저장됐는데, 그것도 이력에 한 번 편입시켜서 안 사라지게 함.
-  // 단, 이건 "예전 데이터를 딱 한 번만" 이력으로 옮기는 보정이라 플래그로 한 번만 실행되게 함 —
-  // 안 그러면 사용자가 "현재 계약서"의 이력 항목을 지워도, 다음에 불러올 때마다 이 보정이 다시 살려내는 문제가 있었음.
-  if (!d.settings._contractHistoryBackfilled) {
-    (d.workers || []).forEach((w) => {
-      if (w.contractFileId && !d.workerContracts.some((c) => c.fileId === w.contractFileId)) {
-        d.workerContracts.push({
-          id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
-          contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "",
-          createdAt: w.contractSignedAt || new Date(0).toISOString(), source: w.contractSignedAt ? "signed" : "uploaded",
-        });
-      }
-    });
-    d.settings._contractHistoryBackfilled = true;
+  // "지난 계약서 이력" 기능은 여러 문제가 반복돼서 완전히 없애기로 함 — 근무자당 "현재 계약서" 하나만 유지.
+  // 기존에 쌓여있던 이력 데이터는 한 번에 정리함(그 근무자의 현재 계약서 자체는 그대로 유지됨).
+  if (!d.settings._contractHistoryRemoved) {
+    d.workerContracts = [];
+    d.settings._contractHistoryRemoved = true;
   }
   if (d.settings.contractCompanyName == null) d.settings.contractCompanyName = "주식회사 이엘씨";
   return d;
@@ -1361,10 +1352,6 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         ...d,
         workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: fname, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
         contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
-        workerContracts: [...(d.workerContracts || []), {
-          id: uid(), workerId: worker.id, workerName: myContractRequest.workerName, fileId, fileName: fname,
-          contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, createdAt: signedAt, source: "signed",
-        }],
       }));
       if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
       setContractDoneFileId(fileId);
@@ -7550,36 +7537,6 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 근로계약서 서명 요청 — 관리자가 세부 항목을 입력하면 근무자 화면에 "서명해주세요" 요청이 뜸.
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
-  const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
-  const deleteContractHistoryItem = async (item) => {
-    if (!window.confirm("이 계약서를 목록에서 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
-    const mut = (d) => ({
-      ...d,
-      // id뿐 아니라 fileId로도 같이 걸러냄 — 혹시 그 사이 자동보정이 같은 파일을 다른 id로 다시 만들었어도 확실히 같이 지워짐
-      workerContracts: (d.workerContracts || []).filter((x) => x.id !== item.id && x.fileId !== item.fileId),
-      // 이게 그 근무자의 "현재 계약서"였다면, 그 연결도 같이 끊어서 자동보정이 다시 살려내지 않게 함
-      workers: d.workers.map((w) => (w.contractFileId === item.fileId ? { ...w, contractFileId: null, contractFileName: "", contractSignedAt: null } : w)),
-    });
-    update(mut);
-    // 지금 열려있는 편집 화면(wEdit)에도 그 예전 파일 정보가 그대로 남아있으면,
-    // 그 상태로 "저장"을 눌렀을 때 방금 지운 걸 도로 덮어써버리는 문제가 있었음 — 그래서 화면 상태도 같이 지워줌
-    if (wEdit && wEdit.contractFileId === item.fileId) {
-      setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null, contractFileTouched: true }));
-    }
-    // 화면엔 바로 지워진 것처럼 보이지만, 실제로 서버 저장이 조용히 실패하면 나중에 다시 불러올 때 되살아날 수 있음.
-    // 그래서 잠깐 기다렸다가 서버에서 다시 읽어와 "진짜로 없어졌는지" 확인하고, 안 됐으면 최대 2번 더 재시도함.
-    let ok = false;
-    for (let i = 0; i < 3 && !ok; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      try {
-        const check = await loadShared();
-        const fresh = check ? migrate(check) : null;
-        if (fresh && !(fresh.workerContracts || []).some((x) => x.fileId === item.fileId)) { ok = true; break; }
-      } catch (e) {}
-      if (!ok && i < 2) update(mut); // 서버에 아직 남아있으면 최신본 기준으로 다시 한번 지우기 시도
-    }
-    setToast(ok ? "삭제했습니다 (서버 저장 확인 완료)" : "삭제 확인에 실패했어요 — 인터넷 연결을 확인하고 다시 시도해 주세요");
-  };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
   const openContractRequest = (w) => {
@@ -7654,22 +7611,15 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     const mut = (d) => {
       const prev = d.workers.find((x) => x.id === w.id);
       // 계약서 파일(첨부/서명 상태)은, 이번 편집 화면에서 관리자가 실제로 손댄 경우(새로 첨부 또는 X로 삭제)에만 반영함.
-      // 안 그러면, 이 편집창을 열어둔 사이에 다른 경로(휴지통 삭제 등)로 서버 쪽이 바뀌어도
+      // 안 그러면, 이 편집창을 열어둔 사이에 다른 경로로 서버 쪽이 바뀌어도
       // "저장"을 누르는 순간 화면에 남아있던 예전 값으로 도로 덮어써버리는 문제가 있었음 — 그래서 분리함.
       const contractFields = wasContractTouched
         ? { contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null }
         : { contractFileId: prev?.contractFileId ?? null, contractFileName: prev?.contractFileName ?? "", contractSignedAt: prev?.contractSignedAt ?? null };
       const wFinal = { ...w, ...contractFields };
-      // 관리자가 직접 새 PDF를 첨부한 경우(자동 서명 흐름이 아닌 경우)도 이력에 남겨서 안 사라지게 함
-      const isNewManualUpload = wasContractTouched && wFinal.contractFileId && wFinal.contractFileId !== prev?.contractFileId && !wFinal.contractSignedAt;
-      const newHistoryEntry = isNewManualUpload ? [{
-        id: uid(), workerId: wFinal.id, workerName: wFinal.name, fileId: wFinal.contractFileId, fileName: wFinal.contractFileName || "계약서.pdf",
-        contractStart: wFinal.contractStartDate || "", contractEnd: wFinal.contractEndDate || "", createdAt: new Date().toISOString(), source: "uploaded",
-      }] : [];
       return {
         ...d,
         workers: wEdit.id ? d.workers.map((x) => (x.id === wFinal.id ? wFinal : x)) : [...d.workers, wFinal],
-        workerContracts: [...(d.workerContracts || []), ...newHistoryEntry],
       };
     };
     update(mut);
@@ -8699,45 +8649,6 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
                     이름·주소·연락처 등은 자동으로 채워지고, 근무시간·임금만 입력하면 돼요. 근무자가 앱에서 서명하면 도장까지 자동으로 찍힌 PDF가 여기에 바로 저장돼요.
                   </div>
-                  {(() => {
-                    const history = (data.workerContracts || []).filter((h) => h.workerId === wEdit.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-                    if (history.length === 0) return null;
-                    const preview = history.slice(0, 3);
-                    return (
-                      <div className="mt-3">
-                        <div style={{ borderTop: `1px solid ${C.line}`, margin: "10px 0" }} />
-                        <div className="flex items-center justify-between">
-                          <Eyebrow>지난 계약서 이력 ({history.length}건)</Eyebrow>
-                          {history.length > 3 && (
-                            <button onClick={() => setContractHistoryViewerId(wEdit.id)} style={{ fontSize: 11, color: C.aquaDeep, fontWeight: 800 }}>전체보기</button>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-1.5 mt-2">
-                          {preview.map((h) => (
-                            <div key={h.id} className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
-                              <div onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ minWidth: 0, cursor: "pointer", flex: 1 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: C.aquaDeep }}>
-                                  {h.contractStart || "?"} ~ {h.contractEnd || "?"}
-                                </div>
-                                <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
-                                  {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleDateString("ko-KR")}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2.5" style={{ flexShrink: 0 }}>
-                                <Download size={14} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
-                                <Trash2 size={14} color={C.coral} onClick={() => deleteContractHistoryItem(h)} style={{ cursor: "pointer" }} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {history.length > 3 && (
-                          <button onClick={() => setContractHistoryViewerId(wEdit.id)} className="w-full mt-1.5" style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, padding: "6px 0", textAlign: "center" }}>
-                            +{history.length - 3}건 더 보기
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
                 </>
               )}
             </div>
@@ -9101,51 +9012,6 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       </Modal>
 
       {/* 근로계약서 이력 전체보기 (월별 정리) */}
-      <Modal open={!!contractHistoryViewerId} onClose={() => setContractHistoryViewerId(null)}>
-        {contractHistoryViewerId && (() => {
-          const w = workers.find((x) => x.id === contractHistoryViewerId);
-          const all = (data.workerContracts || []).filter((h) => h.workerId === contractHistoryViewerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-          const groups = {};
-          all.forEach((h) => {
-            const ym = h.createdAt.slice(0, 7);
-            if (!groups[ym]) groups[ym] = [];
-            groups[ym].push(h);
-          });
-          const months = Object.keys(groups).sort().reverse();
-          return (
-            <>
-              <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{w?.name} 계약서 전체 이력</div>
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>총 {all.length}건 · 월별로 정리했어요</div>
-              <div style={{ maxHeight: 480, overflowY: "auto" }}>
-                {months.map((ym) => (
-                  <div key={ym} className="mb-4">
-                    <div style={{ fontSize: 12.5, fontWeight: 900, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>{ymLabel(ym)} ({groups[ym].length}건)</div>
-                    <div className="flex flex-col gap-1.5 mt-1.5">
-                      {groups[ym].map((h) => (
-                        <div key={h.id} className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}` }}>
-                          <div onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ minWidth: 0, cursor: "pointer", flex: 1 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 700, color: C.aquaDeep }}>
-                              {h.contractStart || "?"} ~ {h.contractEnd || "?"}
-                            </div>
-                            <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
-                              {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
-                            <Download size={15} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
-                            <Trash2 size={15} color={C.coral} onClick={() => deleteContractHistoryItem(h)} style={{ cursor: "pointer" }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <Btn kind="ghost" full onClick={() => setContractHistoryViewerId(null)}>닫기</Btn>
-            </>
-          );
-        })()}
-      </Modal>
 
       <Modal open={!!pinEdit} onClose={() => setPinEdit(null)} title="관리자 PIN 변경">
         {pinEdit && (
