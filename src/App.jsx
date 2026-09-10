@@ -1348,12 +1348,19 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       const blob = await htmlToPdfBlob(html, 780);
       const fileId = await uploadPdfBlob(blob, fname);
       const signedAt = new Date().toISOString();
-      const ok = await saveConfirmed((d) => ({
-        ...d,
-        workers: d.workers.map((w) => (w.id === worker.id ? { ...w, contractFileId: fileId, contractFileName: fname, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
-        contractRequests: (d.contractRequests || []).filter((x) => x.id !== myContractRequest.id), // 주민번호 등 앱 데이터에서 완전히 제거
-      }));
-      if (!ok) { setToast("저장에 실패했어요 — 다시 시도해 주세요"); setContractSignBusy(false); return; }
+      const targetWorkerId = worker.id, targetReqId = myContractRequest.id;
+      const ok = await saveConfirmedVerified(
+        (d) => ({
+          ...d,
+          workers: d.workers.map((w) => (w.id === targetWorkerId ? { ...w, contractFileId: fileId, contractFileName: fname, contractStartDate: myContractRequest.contractStart, contractEndDate: myContractRequest.contractEnd, contractSignedAt: signedAt } : w)),
+          contractRequests: (d.contractRequests || []).filter((x) => x.id !== targetReqId), // 주민번호 등 앱 데이터에서 완전히 제거
+        }),
+        (fresh) => {
+          const w = fresh.workers.find((x) => x.id === targetWorkerId);
+          return !!w && w.contractFileId === fileId;
+        }
+      );
+      if (!ok) { setToast("저장 확인에 실패했어요 — 인터넷 연결을 확인하고 다시 시도해 주세요"); setContractSignBusy(false); return; }
       setContractDoneFileId(fileId);
       setContractSigData(null);
     } catch (e) {
@@ -7600,7 +7607,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
     });
   };
   const [contractReqBusy, setContractReqBusy] = useState(false);
-  const submitContractRequest = () => {
+  const submitContractRequest = async () => {
     const f = fillContractDefaults(contractReqEdit);
     const validWageItems = (f.wageItems || []).filter((it) => it.label.trim() && it.amount !== "");
     if (!f.contractEnd) { setToast("계약 종료일을 입력해 주세요"); return; }
@@ -7622,9 +7629,23 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       probationOn: !!f.probationOn, probationMonths: f.probationMonths, probationPayPercent: f.probationPayPercent, probationEnd,
       createdAt: new Date().toISOString(),
     };
-    update((d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] }));
-    setToast(f.id ? "수정한 내용으로 다시 보냈습니다" : "근로계약서 서명 요청을 보냈습니다 — 근무자 화면에 알림이 떠요");
+    const mut = (d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] });
+    update(mut);
     setContractReqEdit(null);
+    // 실제로 서버에 반영됐는지 확인 — 안 됐으면 근무자 화면에 영영 안 뜰 수 있으니 반드시 확인함
+    let ok = false;
+    for (let i = 0; i < 3 && !ok; i++) {
+      await new Promise((res) => setTimeout(res, 1000));
+      try {
+        const check = await loadShared();
+        const fresh = check ? migrate(check) : null;
+        if (fresh && (fresh.contractRequests || []).some((x) => x.id === req.id)) { ok = true; break; }
+      } catch (e) {}
+      if (!ok && i < 2) update(mut);
+    }
+    setToast(ok
+      ? (f.id ? "수정한 내용으로 다시 보냈습니다 (서버 저장 확인 완료)" : "근로계약서 서명 요청을 보냈습니다 — 근무자 화면에 알림이 떠요")
+      : "요청 저장이 서버에 반영되지 않았어요 — 다시 시도해 주세요");
   };
 
   const saveWorker = async () => {
