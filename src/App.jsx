@@ -3186,6 +3186,7 @@ function AdminGate({ data, update, setToast, onPass }) {
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
 function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLock, onRefresh }) {
   const [view, setView] = useState("records");
+  const [settingsAutoOpenReqId, setSettingsAutoOpenReqId] = useState(null); // 배너 눌렀을 때 설정에서 바로 열어줄 서명요청 id
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
   const [refreshing, setRefreshing] = useState(false);
 
@@ -3239,7 +3240,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       {pendingContractSigns.length > 0 && view !== "settings" && (
-        <button onClick={() => goView("settings")} className="mx-4 mt-3 flex items-center gap-2" style={{ background: "#E0F2FE", padding: "10px 13px" }}>
+        <button onClick={() => { setSettingsAutoOpenReqId(pendingContractSigns[0].id); goView("settings"); }} className="mx-4 mt-3 flex items-center gap-2" style={{ background: "#E0F2FE", padding: "10px 13px" }}>
           <FileText size={15} color="#0369A1" />
           <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, textAlign: "left" }}>
             {pendingContractSigns.map((r) => r.workerName).join(", ")}님 근로계약서 서명 대기 중이에요
@@ -3287,7 +3288,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
       {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
       {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
       {view === "notices" && <NoticeAdminView data={data} update={update} setToast={setToast} />}
-      {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} />}
+      {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} autoOpenContractReqId={settingsAutoOpenReqId} onAutoOpenHandled={() => setSettingsAutoOpenReqId(null)} />}
     </div>
   );
 }
@@ -7303,7 +7304,7 @@ function PayrollBook({ data, ym, onClose, setToast, onOpenSlip }) {
 }
 
 /* ─────────────────────────  설정  ───────────────────────── */
-function SettingsView({ data, update, dev, updateDev, setToast }) {
+function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContractReqId, onAutoOpenHandled }) {
   const { workers, sites, settings } = data;
   const [wEdit, setWEdit] = useState(null);
   const [sEdit, setSEdit] = useState(null);
@@ -7552,6 +7553,14 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       probationOn: !!r.probationOn, probationMonths: r.probationMonths || "3", probationPayPercent: r.probationPayPercent || "90",
     });
   };
+  // 배너("OOO님 서명 대기 중이에요")를 눌러서 설정 화면으로 들어온 경우, 그 요청을 자동으로 바로 열어줌
+  useEffect(() => {
+    if (!autoOpenContractReqId) return;
+    const r = (data.contractRequests || []).find((x) => x.id === autoOpenContractReqId);
+    if (r) openEditPendingRequest(r);
+    onAutoOpenHandled && onAutoOpenHandled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenContractReqId]);
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
   const openContractRequest = (w) => {
