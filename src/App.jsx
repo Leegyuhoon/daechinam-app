@@ -264,14 +264,6 @@ const CONTRACT_FIELD_DEFAULTS = {
 function fillContractDefaults(f) {
   const out = { ...f };
   Object.keys(CONTRACT_FIELD_DEFAULTS).forEach((k) => { if (!out[k] || !out[k].trim()) out[k] = CONTRACT_FIELD_DEFAULTS[k]; });
-  // 기본급 항목의 "내역"이 비어 있으면, 예전에 쓰던 기본 산정식 문구를 그대로 채워줌
-  if (Array.isArray(out.wageItems)) {
-    out.wageItems = out.wageItems.map((it, i) => (
-      i === 0 && it.label.trim() === "기본급" && !it.note?.trim()
-        ? { ...it, note: "(기본급)/월48시간=15,000원(통상시급)" }
-        : it
-    ));
-  }
   return out;
 }
 function buildContractHtml(c) {
