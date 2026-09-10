@@ -7546,6 +7546,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
   const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
+  const deleteContractHistoryItem = (id) => {
+    if (!window.confirm("이 계약서를 목록에서 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
+    update((d) => ({ ...d, workerContracts: (d.workerContracts || []).filter((x) => x.id !== id) }));
+    setToast("삭제했습니다");
+  };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
   const openContractRequest = (w) => {
@@ -8623,9 +8628,8 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                         </div>
                         <div className="flex flex-col gap-1.5 mt-2">
                           {preview.map((h) => (
-                            <div key={h.id} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)}
-                              className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px", cursor: "pointer" }}>
-                              <div style={{ minWidth: 0 }}>
+                            <div key={h.id} className="flex items-center justify-between" style={{ background: C.tile, padding: "8px 10px" }}>
+                              <div onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ minWidth: 0, cursor: "pointer", flex: 1 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: C.aquaDeep }}>
                                   {h.contractStart || "?"} ~ {h.contractEnd || "?"}
                                 </div>
@@ -8633,7 +8637,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                                   {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleDateString("ko-KR")}
                                 </div>
                               </div>
-                              <Download size={14} color={C.sub} style={{ flexShrink: 0 }} />
+                              <div className="flex items-center gap-2.5" style={{ flexShrink: 0 }}>
+                                <Download size={14} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
+                                <Trash2 size={14} color={C.coral} onClick={() => deleteContractHistoryItem(h.id)} style={{ cursor: "pointer" }} />
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -9029,9 +9036,8 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     <div style={{ fontSize: 12.5, fontWeight: 900, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>{ymLabel(ym)} ({groups[ym].length}건)</div>
                     <div className="flex flex-col gap-1.5 mt-1.5">
                       {groups[ym].map((h) => (
-                        <div key={h.id} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)}
-                          className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}`, cursor: "pointer" }}>
-                          <div style={{ minWidth: 0 }}>
+                        <div key={h.id} className="flex items-center justify-between" style={{ background: C.tile, padding: "9px 10px", border: `1px solid ${C.line}` }}>
+                          <div onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ minWidth: 0, cursor: "pointer", flex: 1 }}>
                             <div style={{ fontSize: 12.5, fontWeight: 700, color: C.aquaDeep }}>
                               {h.contractStart || "?"} ~ {h.contractEnd || "?"}
                             </div>
@@ -9039,7 +9045,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                               {h.source === "signed" ? "본인 서명" : "관리자 직접 첨부"} · {new Date(h.createdAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
                             </div>
                           </div>
-                          <Download size={15} color={C.sub} style={{ flexShrink: 0 }} />
+                          <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
+                            <Download size={15} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
+                            <Trash2 size={15} color={C.coral} onClick={() => deleteContractHistoryItem(h.id)} style={{ cursor: "pointer" }} />
+                          </div>
                         </div>
                       ))}
                     </div>
