@@ -7628,7 +7628,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     setContractReqEdit(null);
   };
 
-  const saveWorker = () => {
+  const saveWorker = async () => {
     if (!wEdit.name.trim()) { setToast("이름을 입력하세요"); return; }
     const opt = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
     const siteIds = wEdit.siteIds || [];
@@ -7649,17 +7649,19 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       address: (wEdit.address || "").trim(),
       contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
-    update((d) => {
+    const wasContractTouched = !!wEdit.contractFileTouched;
+    const targetFileId = wEdit.contractFileId || null;
+    const mut = (d) => {
       const prev = d.workers.find((x) => x.id === w.id);
       // 계약서 파일(첨부/서명 상태)은, 이번 편집 화면에서 관리자가 실제로 손댄 경우(새로 첨부 또는 X로 삭제)에만 반영함.
       // 안 그러면, 이 편집창을 열어둔 사이에 다른 경로(휴지통 삭제 등)로 서버 쪽이 바뀌어도
       // "저장"을 누르는 순간 화면에 남아있던 예전 값으로 도로 덮어써버리는 문제가 있었음 — 그래서 분리함.
-      const contractFields = wEdit.contractFileTouched
+      const contractFields = wasContractTouched
         ? { contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null }
         : { contractFileId: prev?.contractFileId ?? null, contractFileName: prev?.contractFileName ?? "", contractSignedAt: prev?.contractSignedAt ?? null };
       const wFinal = { ...w, ...contractFields };
       // 관리자가 직접 새 PDF를 첨부한 경우(자동 서명 흐름이 아닌 경우)도 이력에 남겨서 안 사라지게 함
-      const isNewManualUpload = wEdit.contractFileTouched && wFinal.contractFileId && wFinal.contractFileId !== prev?.contractFileId && !wFinal.contractSignedAt;
+      const isNewManualUpload = wasContractTouched && wFinal.contractFileId && wFinal.contractFileId !== prev?.contractFileId && !wFinal.contractSignedAt;
       const newHistoryEntry = isNewManualUpload ? [{
         id: uid(), workerId: wFinal.id, workerName: wFinal.name, fileId: wFinal.contractFileId, fileName: wFinal.contractFileName || "계약서.pdf",
         contractStart: wFinal.contractStartDate || "", contractEnd: wFinal.contractEndDate || "", createdAt: new Date().toISOString(), source: "uploaded",
@@ -7669,8 +7671,24 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         workers: wEdit.id ? d.workers.map((x) => (x.id === wFinal.id ? wFinal : x)) : [...d.workers, wFinal],
         workerContracts: [...(d.workerContracts || []), ...newHistoryEntry],
       };
-    });
-    setWEdit(null); setToast("근무자를 저장했습니다");
+    };
+    update(mut);
+    setWEdit(null);
+    if (!wasContractTouched) { setToast("근무자를 저장했습니다"); return; }
+    // 계약서 파일을 새로 첨부/삭제한 경우엔, 화면엔 바로 반영된 것처럼 보여도 실제 서버 저장이 조용히
+    // 실패하면 나중에 사라진 것처럼 보일 수 있어서, 잠깐 기다렸다가 서버에서 다시 읽어와 확인하고 필요하면 재시도함.
+    let ok = false;
+    for (let i = 0; i < 3 && !ok; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        const check = await loadShared();
+        const fresh = check ? migrate(check) : null;
+        const savedWorker = fresh?.workers.find((x) => x.id === w.id);
+        if (savedWorker && savedWorker.contractFileId === targetFileId) { ok = true; break; }
+      } catch (e) {}
+      if (!ok && i < 2) update(mut);
+    }
+    setToast(ok ? "근무자를 저장했습니다 (계약서 파일 저장 확인 완료)" : "계약서 파일 저장이 서버에 반영되지 않았어요 — 다시 첨부해 주세요");
   };
   const delWorker = () => {
     update((d) => ({
@@ -8017,6 +8035,39 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
           )}
         </Tile>
       </Sec>
+
+      {/* 서명 대기 중인 근로계약서 요청 */}
+      {(data.contractRequests || []).length > 0 && (
+        <Sec title={`근로계약서 서명 대기 중 (${(data.contractRequests || []).length}건)`}>
+          <Tile>
+            <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
+              근무자가 아직 서명을 완료하지 않은 요청이에요. 더 이상 필요 없으면 취소할 수 있어요.
+            </div>
+          </Tile>
+          {(data.contractRequests || []).map((r) => (
+            <Tile key={r.id} style={{ padding: "12px 14px" }}>
+              <div className="flex items-center justify-between">
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{r.workerName}</div>
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>
+                    {r.contractStart} ~ {r.contractEnd} · {r.siteName || "현장 미지정"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
+                    {new Date(r.createdAt).toLocaleDateString("ko-KR")} 요청됨
+                  </div>
+                </div>
+                <button onClick={() => {
+                  if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
+                  update((d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) }));
+                  setToast("요청을 취소했습니다");
+                }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700, flexShrink: 0 }}>
+                  <X size={13} /> 취소
+                </button>
+              </div>
+            </Tile>
+          ))}
+        </Sec>
+      )}
 
       {/* 용품 구매 정보(자주 사는 품목 미리 등록) */}
       <Sec title="일일체크리스트 항목" right={
