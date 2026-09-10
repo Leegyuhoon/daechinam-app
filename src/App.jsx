@@ -7537,6 +7537,21 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 근로계약서 서명 요청 — 관리자가 세부 항목을 입력하면 근무자 화면에 "서명해주세요" 요청이 뜸.
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
+  // 이미 보낸 서명 요청(아직 서명 안 된 것)을 다시 열어서 내용을 고치거나 취소할 수 있게 함
+  const openEditPendingRequest = (r) => {
+    const matchedSite = !r.siteIsCustom ? sites.find((s) => s.name === r.siteName) : null;
+    setContractReqEdit({
+      id: r.id, // 있으면 "수정" 모드로 동작 — 저장 시 이 id의 요청을 그대로 갱신
+      workerId: r.workerId, workerName: r.workerName, workerAddress: r.workerAddress || "",
+      contractStart: r.contractStart, contractEnd: r.contractEnd,
+      siteId: matchedSite?.id || "", siteMode: matchedSite ? "site" : "custom", siteCustom: matchedSite ? "" : (r.siteName || ""),
+      jobDesc: r.jobDesc || "", ssn: r.ssn || "",
+      workDaysLabel: r.workDaysLabel || "", offDayLabel: r.offDayLabel || "", hoursLabel: r.hoursLabel || "", breakLabel: r.breakLabel || "", netHoursLabel: r.netHoursLabel || "",
+      wageItems: r.wageItems && r.wageItems.length > 0 ? r.wageItems.map((it) => ({ ...it, id: it.id || uid(), amount: String(it.amount) })) : [{ id: uid(), label: "기본급", amount: "", note: "" }],
+      payDayLabel: r.payDayLabel || "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다.",
+      probationOn: !!r.probationOn, probationMonths: r.probationMonths || "3", probationPayPercent: r.probationPayPercent || "90",
+    });
+  };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
   const openContractRequest = (w) => {
@@ -7570,7 +7585,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       const d = parseKey(f.contractStart); d.setMonth(d.getMonth() + (Number(f.probationMonths) || 3)); return dKey(d);
     })() : null;
     const req = {
-      id: uid(), workerId: f.workerId, workerName: f.workerName,
+      id: f.id || uid(), workerId: f.workerId, workerName: f.workerName,
       workerAddress: f.workerAddress || worker?.address || "", workerPhone: worker?.phone || "",
       contractStart: f.contractStart, contractEnd: f.contractEnd,
       siteName, siteIsCustom: f.siteMode === "custom", jobDesc: (f.jobDesc || "").trim(), ssn: f.ssn.trim(),
@@ -7581,7 +7596,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       createdAt: new Date().toISOString(),
     };
     update((d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] }));
-    setToast("근로계약서 서명 요청을 보냈습니다 — 근무자 화면에 알림이 떠요");
+    setToast(f.id ? "수정한 내용으로 다시 보냈습니다" : "근로계약서 서명 요청을 보냈습니다 — 근무자 화면에 알림이 떠요");
     setContractReqEdit(null);
   };
 
@@ -7991,11 +8006,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
         <Sec title={`근로계약서 서명 대기 중 (${(data.contractRequests || []).length}건)`}>
           <Tile>
             <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6 }}>
-              근무자가 아직 서명을 완료하지 않은 요청이에요. 더 이상 필요 없으면 취소할 수 있어요.
+              근무자가 아직 서명을 완료하지 않은 요청이에요. 눌러서 내용을 고쳐 다시 보내거나, 취소할 수 있어요.
             </div>
           </Tile>
           {(data.contractRequests || []).map((r) => (
-            <Tile key={r.id} style={{ padding: "12px 14px" }}>
+            <Tile key={r.id} onClick={() => openEditPendingRequest(r)} style={{ padding: "12px 14px" }}>
               <div className="flex items-center justify-between">
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{r.workerName}</div>
@@ -8006,13 +8021,19 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     {new Date(r.createdAt).toLocaleDateString("ko-KR")} 요청됨
                   </div>
                 </div>
-                <button onClick={() => {
-                  if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
-                  update((d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) }));
-                  setToast("요청을 취소했습니다");
-                }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700, flexShrink: 0 }}>
-                  <X size={13} /> 취소
-                </button>
+                <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
+                  <span className="flex items-center gap-1" style={{ fontSize: 12, color: C.aquaDeep, fontWeight: 700 }}>
+                    <Pencil size={12} /> 수정
+                  </span>
+                  <button onClick={(e) => {
+                    e.stopPropagation();
+                    if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
+                    update((d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) }));
+                    setToast("요청을 취소했습니다");
+                  }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>
+                    <X size={13} /> 취소
+                  </button>
+                </div>
               </div>
             </Tile>
           ))}
@@ -8835,7 +8856,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       <Modal open={!!contractReqEdit} onClose={() => setContractReqEdit(null)}>
         {contractReqEdit && (
           <>
-            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>근로계약서 작성</div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{contractReqEdit.id ? "서명 요청 수정" : "근로계약서 작성"}</div>
             <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 4 }}>{contractReqEdit.workerName}님</div>
             <div style={{ fontSize: 11, color: "#9D174D", background: "#FDF2F8", padding: 8, marginBottom: 10, lineHeight: 1.5 }}>
               주민번호는 계약서 생성에만 쓰이고, 근무자가 서명을 완료하면 앱에는 저장되지 않고 사라져요.
@@ -8960,7 +8981,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
             <div className="grid grid-cols-3 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>취소</Btn>
               <Btn kind="ghost" full onClick={() => setContractPreviewOpen(true)}>미리보기</Btn>
-              <Btn full onClick={submitContractRequest}>서명 요청 보내기</Btn>
+              <Btn full onClick={submitContractRequest}>{contractReqEdit.id ? "수정해서 다시 보내기" : "서명 요청 보내기"}</Btn>
             </div>
           </>
         )}
