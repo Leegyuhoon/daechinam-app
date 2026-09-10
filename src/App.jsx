@@ -7560,6 +7560,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       // 이게 그 근무자의 "현재 계약서"였다면, 그 연결도 같이 끊어서 자동보정이 다시 살려내지 않게 함
       workers: d.workers.map((w) => (w.contractFileId === item.fileId ? { ...w, contractFileId: null, contractFileName: "", contractSignedAt: null } : w)),
     }));
+    // 지금 열려있는 편집 화면(wEdit)에도 그 예전 파일 정보가 그대로 남아있으면,
+    // 그 상태로 "저장"을 눌렀을 때 방금 지운 걸 도로 덮어써버리는 문제가 있었음 — 그래서 화면 상태도 같이 지워줌
+    if (wEdit && wEdit.contractFileId === item.fileId) {
+      setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null }));
+    }
     setToast("삭제했습니다");
   };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
