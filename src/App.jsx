@@ -8034,11 +8034,23 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                   <span className="flex items-center gap-1" style={{ fontSize: 12, color: C.aquaDeep, fontWeight: 700 }}>
                     <Pencil size={12} /> 수정
                   </span>
-                  <button onClick={(e) => {
+                  <button onClick={async (e) => {
                     e.stopPropagation();
                     if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
-                    update((d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) }));
-                    setToast("요청을 취소했습니다");
+                    const mut = (d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) });
+                    update(mut);
+                    // 화면엔 바로 지워진 것처럼 보여도 서버 저장이 조용히 실패하면 다시 나타날 수 있어서, 실제로 반영됐는지 확인함
+                    let ok = false;
+                    for (let i = 0; i < 3 && !ok; i++) {
+                      await new Promise((res) => setTimeout(res, 1000));
+                      try {
+                        const check = await loadShared();
+                        const fresh = check ? migrate(check) : null;
+                        if (fresh && !(fresh.contractRequests || []).some((x) => x.id === r.id)) { ok = true; break; }
+                      } catch (err) {}
+                      if (!ok && i < 2) update(mut);
+                    }
+                    setToast(ok ? "요청을 취소했습니다" : "취소가 서버에 반영되지 않았어요 — 인터넷 연결을 확인하고 다시 시도해 주세요");
                   }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>
                     <X size={13} /> 취소
                   </button>
