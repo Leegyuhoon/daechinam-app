@@ -323,8 +323,9 @@ function buildContractHtml(c) {
 
     <div style="font-weight:900; margin-top:10px;">1. 근로계약기간</div>
     <div>&nbsp;- ${koDate(c.contractStart)} ~ ${koDate(c.contractEnd)}</div>
+    ${c.probationOn ? `<div>- 을의 업무 적합성, 능력, 자질을 평가하는 수습기간 ${c.probationMonths || 3}개월(${koDate(c.contractStart)}.~${koDate(c.probationEnd)}.)을 두고, 평가 결과 적합하지 않은 경우 본채용을 거절할 수 있다.</div>` : ""}
 
-    <div style="font-weight:900; margin-top:8px;">2. 근무장소/업무내용:갑의 사업장 및 갑이 지정하는 장소 /(${c.siteName})</div>
+    <div style="font-weight:900; margin-top:8px;">2. 근무장소/업무내용: ${c.siteName}${c.jobDesc ? ` / ${c.jobDesc}` : ""}</div>
     <div>① 업무상 필요가 있는 경우 업무 내용을 변경 또는 일시적으로 다른 부서의 업무 지원을 요청할 수 있다. 을은 이에 동의한다.</div>
     ${agreeLine()}
     <div>② "을"은 항상 단정한 복장과 직원으로서의 자질을 갖추고 품위를 유지하여야 한다.</div>
@@ -370,6 +371,7 @@ function buildContractHtml(c) {
     <div>⑧ 퇴직금은 1주 소정근로시간이 15시간 이상이며, 1년 이상 계속 근로한 직원이 퇴직 시 지급하며 퇴직연금에 가입 처리할 수 있다.</div>
     <div>⑨ 월 중간퇴사할 경우 금품청산은 임금지급일까지 연장하기로 동의한다.</div>
     ${agreeLine()}
+    ${c.probationOn ? `<div>${c.probationMonths || 3}개월을 수습기간으로 정하며 수습기간동안 월급여의 ${c.probationPayPercent || 90}%지급에 동의한다</div>${agreeLine()}` : ""}
 
     <div style="font-weight:900; margin-top:8px;">6. 연차유급휴가: 1주 평균 소정근로시간이 15시간 이상인 직원에 대해 근로기준법에 따라 지급한다.</div>
 
@@ -1343,6 +1345,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
         workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
         wageItems: myContractRequest.wageItems, payDayLabel: myContractRequest.payDayLabel,
+        siteIsCustom: myContractRequest.siteIsCustom, jobDesc: myContractRequest.jobDesc, probationOn: myContractRequest.probationOn, probationMonths: myContractRequest.probationMonths, probationPayPercent: myContractRequest.probationPayPercent, probationEnd: myContractRequest.probationEnd,
         signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
         sig: contractSigData, seal: settings.companySealFileId ? photoUrl(settings.companySealFileId) : null,
       });
@@ -2297,6 +2300,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                   contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
                   workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
                   wageItems: myContractRequest.wageItems, payDayLabel: myContractRequest.payDayLabel,
+                  siteIsCustom: myContractRequest.siteIsCustom, jobDesc: myContractRequest.jobDesc, probationOn: myContractRequest.probationOn, probationMonths: myContractRequest.probationMonths, probationPayPercent: myContractRequest.probationPayPercent, probationEnd: myContractRequest.probationEnd,
                   signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
                   sig: contractSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
@@ -7555,10 +7559,11 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       workerId: w.id, workerName: w.name, workerAddress: w.address || "",
       contractStart: start,
       contractEnd: defaultEnd,
-      siteId, siteMode: "site", siteCustom: "", ssn: "",
+      siteId, siteMode: "site", siteCustom: "", jobDesc: "", ssn: "",
       workDaysLabel: "주6일(월~토)", offDayLabel: "주휴일", hoursLabel: "", breakLabel: "", netHoursLabel: "",
       wageItems: [{ id: uid(), label: "기본급", amount: "", note: "" }],
       payDayLabel: "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다.",
+      probationOn: false, probationMonths: "3", probationPayPercent: "90",
     });
   };
   const [contractReqBusy, setContractReqBusy] = useState(false);
@@ -7570,14 +7575,18 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     const site = sites.find((s) => s.id === f.siteId);
     const worker = workers.find((w) => w.id === f.workerId);
     const siteName = f.siteMode === "custom" ? (f.siteCustom || "").trim() : (site?.name || "");
+    const probationEnd = f.probationOn ? (() => {
+      const d = parseKey(f.contractStart); d.setMonth(d.getMonth() + (Number(f.probationMonths) || 3)); return dKey(d);
+    })() : null;
     const req = {
       id: uid(), workerId: f.workerId, workerName: f.workerName,
       workerAddress: f.workerAddress || worker?.address || "", workerPhone: worker?.phone || "",
       contractStart: f.contractStart, contractEnd: f.contractEnd,
-      siteName, ssn: f.ssn.trim(),
+      siteName, siteIsCustom: f.siteMode === "custom", jobDesc: (f.jobDesc || "").trim(), ssn: f.ssn.trim(),
       workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel, hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
       wageItems: validWageItems.map((it) => ({ label: it.label.trim(), amount: Number(it.amount) || 0, note: it.note || "" })),
       payDayLabel: f.payDayLabel,
+      probationOn: !!f.probationOn, probationMonths: f.probationMonths, probationPayPercent: f.probationPayPercent, probationEnd,
       createdAt: new Date().toISOString(),
     };
     update((d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] }));
@@ -8865,6 +8874,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                     placeholder="예: 미사정상어 학원" style={inputStyle} />
                 )}
               </Field>
+              <Field label="업무내용 (선택)">
+                <input value={contractReqEdit.jobDesc || ""} onChange={(e) => setContractReqEdit((f) => ({ ...f, jobDesc: e.target.value }))}
+                  placeholder="예: 사무업무 및 경리업무" style={inputStyle} />
+              </Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="근무 요일 표기">
                   <input value={contractReqEdit.workDaysLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, workDaysLabel: e.target.value }))} placeholder="예: 주6일(월~토)" style={inputStyle} />
@@ -8925,6 +8938,20 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Field label="지급일 조항">
                 <input value={contractReqEdit.payDayLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, payDayLabel: e.target.value }))} style={inputStyle} />
               </Field>
+              <div style={{ background: C.tileSoft, padding: 12 }}>
+                <Toggle label="수습기간 적용" first desc="적용하면 계약기간·임금 조항에 수습기간 문구가 자동으로 추가돼요."
+                  on={!!contractReqEdit.probationOn} onChange={(v) => setContractReqEdit((f) => ({ ...f, probationOn: v }))} />
+                {contractReqEdit.probationOn && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <Field label="수습 기간 (개월)">
+                      <input type="number" value={contractReqEdit.probationMonths} onChange={(e) => setContractReqEdit((f) => ({ ...f, probationMonths: e.target.value }))} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                    <Field label="수습 중 지급률 (%)">
+                      <input type="number" value={contractReqEdit.probationPayPercent} onChange={(e) => setContractReqEdit((f) => ({ ...f, probationPayPercent: e.target.value }))} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>취소</Btn>
@@ -8955,9 +8982,12 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   ssn: f.ssn, hireDate: f.contractStart,
                   contractStart: f.contractStart, contractEnd: f.contractEnd,
                   siteName: f.siteMode === "custom" ? (f.siteCustom || "") : (sites.find((s) => s.id === f.siteId)?.name || ""),
+                  jobDesc: f.jobDesc || "",
                   workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel,
                   hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
                   wageItems: f.wageItems, payDayLabel: f.payDayLabel,
+                  probationOn: f.probationOn, probationMonths: f.probationMonths, probationPayPercent: f.probationPayPercent,
+                  probationEnd: f.probationOn ? (() => { const d = parseKey(f.contractStart); d.setMonth(d.getMonth() + (Number(f.probationMonths) || 3)); return dKey(d); })() : null,
                   signDateLabel: `${parseKey(dKey(new Date())).getFullYear()}년 ${parseKey(dKey(new Date())).getMonth() + 1}월 ${parseKey(dKey(new Date())).getDate()}일 (서명 시점 날짜로 자동 표시됨)`,
                   sig: previewSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
