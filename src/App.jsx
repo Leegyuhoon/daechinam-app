@@ -508,16 +508,21 @@ function migrate(p) {
   d.dailyChecklists = Array.isArray(d.dailyChecklists) ? d.dailyChecklists : [];
   d.contractRequests = Array.isArray(d.contractRequests) ? d.contractRequests : [];
   d.workerContracts = Array.isArray(d.workerContracts) ? d.workerContracts : [];
-  // 예전 버전엔 근무자당 계약서 파일 하나만 저장됐는데, 그것도 이력에 한 번 편입시켜서 안 사라지게 함
-  (d.workers || []).forEach((w) => {
-    if (w.contractFileId && !d.workerContracts.some((c) => c.fileId === w.contractFileId)) {
-      d.workerContracts.push({
-        id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
-        contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "",
-        createdAt: w.contractSignedAt || new Date(0).toISOString(), source: w.contractSignedAt ? "signed" : "uploaded",
-      });
-    }
-  });
+  // 예전 버전엔 근무자당 계약서 파일 하나만 저장됐는데, 그것도 이력에 한 번 편입시켜서 안 사라지게 함.
+  // 단, 이건 "예전 데이터를 딱 한 번만" 이력으로 옮기는 보정이라 플래그로 한 번만 실행되게 함 —
+  // 안 그러면 사용자가 "현재 계약서"의 이력 항목을 지워도, 다음에 불러올 때마다 이 보정이 다시 살려내는 문제가 있었음.
+  if (!d.settings._contractHistoryBackfilled) {
+    (d.workers || []).forEach((w) => {
+      if (w.contractFileId && !d.workerContracts.some((c) => c.fileId === w.contractFileId)) {
+        d.workerContracts.push({
+          id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
+          contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "",
+          createdAt: w.contractSignedAt || new Date(0).toISOString(), source: w.contractSignedAt ? "signed" : "uploaded",
+        });
+      }
+    });
+    d.settings._contractHistoryBackfilled = true;
+  }
   if (d.settings.contractCompanyName == null) d.settings.contractCompanyName = "주식회사 이엘씨";
   return d;
 }
