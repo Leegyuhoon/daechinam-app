@@ -7539,6 +7539,24 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
   // 이미 보낸 서명 요청(아직 서명 안 된 것)을 다시 열어서 내용을 고치거나 취소할 수 있게 함
+  const cancelContractRequest = async (r) => {
+    if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
+    const mut = (d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) });
+    update(mut);
+    setContractReqEdit(null); // 편집 화면이 열려있었다면 같이 닫아줌
+    // 화면엔 바로 지워진 것처럼 보여도 서버 저장이 조용히 실패하면 다시 나타날 수 있어서, 실제로 반영됐는지 확인함
+    let ok = false;
+    for (let i = 0; i < 3 && !ok; i++) {
+      await new Promise((res) => setTimeout(res, 1000));
+      try {
+        const check = await loadShared();
+        const fresh = check ? migrate(check) : null;
+        if (fresh && !(fresh.contractRequests || []).some((x) => x.id === r.id)) { ok = true; break; }
+      } catch (err) {}
+      if (!ok && i < 2) update(mut);
+    }
+    setToast(ok ? "요청을 취소했습니다" : "취소가 서버에 반영되지 않았어요 — 인터넷 연결을 확인하고 다시 시도해 주세요");
+  };
   const openEditPendingRequest = (r) => {
     const matchedSite = !r.siteIsCustom ? sites.find((s) => s.name === r.siteName) : null;
     setContractReqEdit({
@@ -8034,24 +8052,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                   <span className="flex items-center gap-1" style={{ fontSize: 12, color: C.aquaDeep, fontWeight: 700 }}>
                     <Pencil size={12} /> 수정
                   </span>
-                  <button onClick={async (e) => {
-                    e.stopPropagation();
-                    if (!window.confirm(`${r.workerName}님에게 보낸 서명 요청을 취소할까요?`)) return;
-                    const mut = (d) => ({ ...d, contractRequests: (d.contractRequests || []).filter((x) => x.id !== r.id) });
-                    update(mut);
-                    // 화면엔 바로 지워진 것처럼 보여도 서버 저장이 조용히 실패하면 다시 나타날 수 있어서, 실제로 반영됐는지 확인함
-                    let ok = false;
-                    for (let i = 0; i < 3 && !ok; i++) {
-                      await new Promise((res) => setTimeout(res, 1000));
-                      try {
-                        const check = await loadShared();
-                        const fresh = check ? migrate(check) : null;
-                        if (fresh && !(fresh.contractRequests || []).some((x) => x.id === r.id)) { ok = true; break; }
-                      } catch (err) {}
-                      if (!ok && i < 2) update(mut);
-                    }
-                    setToast(ok ? "요청을 취소했습니다" : "취소가 서버에 반영되지 않았어요 — 인터넷 연결을 확인하고 다시 시도해 주세요");
-                  }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>
+                  <button onClick={(e) => { e.stopPropagation(); cancelContractRequest(r); }} className="flex items-center gap-1" style={{ fontSize: 12, color: C.coral, fontWeight: 700 }}>
                     <X size={13} /> 취소
                   </button>
                 </div>
@@ -9000,10 +9001,16 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 mt-4">
-              <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>취소</Btn>
+              <Btn kind="ghost" full onClick={() => setContractReqEdit(null)}>닫기</Btn>
               <Btn kind="ghost" full onClick={() => setContractPreviewOpen(true)}>미리보기</Btn>
               <Btn full onClick={submitContractRequest}>{contractReqEdit.id ? "수정해서 다시 보내기" : "서명 요청 보내기"}</Btn>
             </div>
+            {contractReqEdit.id && (
+              <button onClick={() => cancelContractRequest(contractReqEdit)} className="w-full flex items-center justify-center gap-1.5 mt-2.5"
+                style={{ padding: "11px 0", background: "#FDF2F2", color: C.coral, fontSize: 13, fontWeight: 800 }}>
+                <X size={14} /> 이 요청 취소하기 (근무자한테 안 보이게 됨)
+              </button>
+            )}
           </>
         )}
       </Modal>
