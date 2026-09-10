@@ -1685,6 +1685,20 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const [noticeListOpen, setNoticeListOpen] = useState(false);
   const [noticeReadViewer, setNoticeReadViewer] = useState(null);
 
+  // 어떤 화면(자동 팝업이든, 나중에 다시 찾아본 목록이든)에서 봤든 상관없이,
+  // "확인" 버튼을 실제로 눌렀을 때만 확인자 명단에 기록됨
+  const markNoticeRead = (noticeId) => {
+    if (!noticeId) return;
+    update((d) => ({
+      ...d,
+      notices: (d.notices || []).map((n) => {
+        if (n.id !== noticeId) return n;
+        const readBy = n.readBy || [];
+        if (readBy.some((r) => r.workerId === worker.id)) return n; // 이미 기록됨
+        return { ...n, readBy: [...readBy, { workerId: worker.id, workerName: worker.name, readAt: new Date().toISOString() }] };
+      }),
+    }));
+  };
   const dismissNotice = () => {
     if (noticeShown) {
       try {
@@ -1693,17 +1707,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         seen[`${noticeShown.id}:${today}`] = true;
         localStorage.setItem(seenKey, JSON.stringify(seen));
       } catch (e) {}
-      // 관리자가 "누가 확인했는지" 볼 수 있도록 공유 데이터에도 기록
-      const noticeId = noticeShown.id;
-      update((d) => ({
-        ...d,
-        notices: (d.notices || []).map((n) => {
-          if (n.id !== noticeId) return n;
-          const readBy = n.readBy || [];
-          if (readBy.some((r) => r.workerId === worker.id)) return n; // 이미 기록됨
-          return { ...n, readBy: [...readBy, { workerId: worker.id, workerName: worker.name, readAt: new Date().toISOString() }] };
-        }),
-      }));
+      markNoticeRead(noticeShown.id); // 관리자가 "누가 확인했는지" 볼 수 있도록 공유 데이터에도 기록
     }
     if (noticeQueue.length > 0) {
       setNoticeShown(noticeQueue[0]);
@@ -2979,7 +2983,13 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               노출 기간 {noticeReadViewer.startDate} ~ {noticeReadViewer.endDate}
             </div>
             <div className="mt-5">
-              <Btn full kind="ghost" onClick={() => setNoticeReadViewer(null)}>닫기</Btn>
+              {(noticeReadViewer.readBy || []).some((r) => r.workerId === worker.id) ? (
+                <div className="flex items-center justify-center gap-1.5" style={{ padding: "13px 0", background: "#EAF3DE", color: "#3B6D11", fontSize: 14, fontWeight: 800 }}>
+                  <Check size={16} strokeWidth={3} /> 확인 완료
+                </div>
+              ) : (
+                <Btn full onClick={() => { markNoticeRead(noticeReadViewer.id); setNoticeReadViewer(null); }}>확인</Btn>
+              )}
             </div>
           </>
         )}
