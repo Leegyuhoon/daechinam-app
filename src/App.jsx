@@ -7538,7 +7538,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
       if (!res.ok) throw new Error("upload failed");
       const { id: fileId } = await res.json();
-      setWEdit((f) => ({ ...f, contractFileId: fileId, contractFileName: file.name }));
+      setWEdit((f) => ({ ...f, contractFileId: fileId, contractFileName: file.name, contractFileTouched: true }));
       setToast("근로계약서를 첨부했습니다 (저장을 눌러야 최종 반영돼요)");
     } catch (e) {
       setToast("업로드에 실패했어요 — 인터넷 연결을 확인해 주세요");
@@ -7563,7 +7563,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
     // 지금 열려있는 편집 화면(wEdit)에도 그 예전 파일 정보가 그대로 남아있으면,
     // 그 상태로 "저장"을 눌렀을 때 방금 지운 걸 도로 덮어써버리는 문제가 있었음 — 그래서 화면 상태도 같이 지워줌
     if (wEdit && wEdit.contractFileId === item.fileId) {
-      setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null }));
+      setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null, contractFileTouched: true }));
     }
     setToast("삭제했습니다");
   };
@@ -7634,20 +7634,26 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
-      contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null,
       contractStartDate: wEdit.contractStartDate || "", contractEndDate: wEdit.contractEndDate || "",
     };
     update((d) => {
       const prev = d.workers.find((x) => x.id === w.id);
+      // 계약서 파일(첨부/서명 상태)은, 이번 편집 화면에서 관리자가 실제로 손댄 경우(새로 첨부 또는 X로 삭제)에만 반영함.
+      // 안 그러면, 이 편집창을 열어둔 사이에 다른 경로(휴지통 삭제 등)로 서버 쪽이 바뀌어도
+      // "저장"을 누르는 순간 화면에 남아있던 예전 값으로 도로 덮어써버리는 문제가 있었음 — 그래서 분리함.
+      const contractFields = wEdit.contractFileTouched
+        ? { contractFileId: wEdit.contractFileId || null, contractFileName: wEdit.contractFileName || "", contractSignedAt: wEdit.contractSignedAt || null }
+        : { contractFileId: prev?.contractFileId ?? null, contractFileName: prev?.contractFileName ?? "", contractSignedAt: prev?.contractSignedAt ?? null };
+      const wFinal = { ...w, ...contractFields };
       // 관리자가 직접 새 PDF를 첨부한 경우(자동 서명 흐름이 아닌 경우)도 이력에 남겨서 안 사라지게 함
-      const isNewManualUpload = w.contractFileId && w.contractFileId !== prev?.contractFileId && !w.contractSignedAt;
+      const isNewManualUpload = wEdit.contractFileTouched && wFinal.contractFileId && wFinal.contractFileId !== prev?.contractFileId && !wFinal.contractSignedAt;
       const newHistoryEntry = isNewManualUpload ? [{
-        id: uid(), workerId: w.id, workerName: w.name, fileId: w.contractFileId, fileName: w.contractFileName || "계약서.pdf",
-        contractStart: w.contractStartDate || "", contractEnd: w.contractEndDate || "", createdAt: new Date().toISOString(), source: "uploaded",
+        id: uid(), workerId: wFinal.id, workerName: wFinal.name, fileId: wFinal.contractFileId, fileName: wFinal.contractFileName || "계약서.pdf",
+        contractStart: wFinal.contractStartDate || "", contractEnd: wFinal.contractEndDate || "", createdAt: new Date().toISOString(), source: "uploaded",
       }] : [];
       return {
         ...d,
-        workers: wEdit.id ? d.workers.map((x) => (x.id === w.id ? w : x)) : [...d.workers, w],
+        workers: wEdit.id ? d.workers.map((x) => (x.id === wFinal.id ? wFinal : x)) : [...d.workers, wFinal],
         workerContracts: [...(d.workerContracts || []), ...newHistoryEntry],
       };
     });
@@ -8597,7 +8603,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                       </div>
                     )}
                   </div>
-                  <button onClick={() => setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null }))} style={{ flexShrink: 0 }}>
+                  <button onClick={() => setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null, contractFileTouched: true }))} style={{ flexShrink: 0 }}>
                     <X size={15} color={C.sub} />
                   </button>
                 </div>
