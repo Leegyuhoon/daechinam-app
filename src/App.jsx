@@ -260,11 +260,18 @@ async function downloadHtmlAsPdf(html, filename, widthPx = 800) {
 const CONTRACT_FIELD_DEFAULTS = {
   workDaysLabel: "주6일(월~토)", offDayLabel: "주휴일(일)",
   hoursLabel: "2.0시간(6:00~8:00)", breakLabel: "10분(자율적)", netHoursLabel: "1시간50분(주당 11시간)",
-  wageNote: "(기본급)/월48시간=15,000원(통상시급)",
 };
 function fillContractDefaults(f) {
   const out = { ...f };
   Object.keys(CONTRACT_FIELD_DEFAULTS).forEach((k) => { if (!out[k] || !out[k].trim()) out[k] = CONTRACT_FIELD_DEFAULTS[k]; });
+  // 기본급 항목의 "내역"이 비어 있으면, 예전에 쓰던 기본 산정식 문구를 그대로 채워줌
+  if (Array.isArray(out.wageItems)) {
+    out.wageItems = out.wageItems.map((it, i) => (
+      i === 0 && it.label.trim() === "기본급" && !it.note?.trim()
+        ? { ...it, note: "(기본급)/월48시간=15,000원(통상시급)" }
+        : it
+    ));
+  }
   return out;
 }
 function buildContractHtml(c) {
@@ -359,8 +366,8 @@ function buildContractHtml(c) {
     ${agreeLine()}
     <table style="width:100%; border-collapse:collapse; margin:6px 0;">
       <tr><td style="${td} text-align:center; font-weight:700; width:80px;">구분</td><td style="${td} text-align:center; font-weight:700; width:90px;">금액(원)</td><td style="${td} text-align:center; font-weight:700;">내역</td></tr>
-      <tr><td style="${td}">기본급</td><td style="${td} text-align:right;">${money(c.baseAmount)}</td><td style="${td}">${c.wageNote || ""}</td></tr>
-      <tr><td style="${td} font-weight:700;">월급 총액</td><td style="${td} text-align:right; font-weight:700;">${money(c.baseAmount)}</td><td style="${td}"></td></tr>
+      ${(c.wageItems || []).map((it) => `<tr><td style="${td}">${it.label}</td><td style="${td} text-align:right;">${money(it.amount)}</td><td style="${td}">${it.note || ""}</td></tr>`).join("")}
+      <tr><td style="${td} font-weight:700;">월급 총액</td><td style="${td} text-align:right; font-weight:700;">${money((c.wageItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0))}</td><td style="${td}"></td></tr>
     </table>
     <div>② 지급일: ${c.payDayLabel || "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다."}</div>
     <div>③ 지급방법 : 을의 예금통장으로 입금</div>
@@ -1343,7 +1350,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
         contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
         workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
-        baseAmount: myContractRequest.baseAmount, wageNote: myContractRequest.wageNote, payDayLabel: myContractRequest.payDayLabel,
+        wageItems: myContractRequest.wageItems, payDayLabel: myContractRequest.payDayLabel,
         signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
         sig: contractSigData, seal: settings.companySealFileId ? photoUrl(settings.companySealFileId) : null,
       });
@@ -2297,7 +2304,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                   ssn: myContractRequest.ssn, hireDate: myContractRequest.contractStart,
                   contractStart: myContractRequest.contractStart, contractEnd: myContractRequest.contractEnd, siteName: myContractRequest.siteName,
                   workDaysLabel: myContractRequest.workDaysLabel, offDayLabel: myContractRequest.offDayLabel, hoursLabel: myContractRequest.hoursLabel, breakLabel: myContractRequest.breakLabel, netHoursLabel: myContractRequest.netHoursLabel,
-                  baseAmount: myContractRequest.baseAmount, wageNote: myContractRequest.wageNote, payDayLabel: myContractRequest.payDayLabel,
+                  wageItems: myContractRequest.wageItems, payDayLabel: myContractRequest.payDayLabel,
                   signDateLabel: `${parseKey(today).getFullYear()}년 ${parseKey(today).getMonth() + 1}월 ${parseKey(today).getDate()}일`,
                   sig: contractSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
@@ -7556,25 +7563,29 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
       workerId: w.id, workerName: w.name, workerAddress: w.address || "",
       contractStart: start,
       contractEnd: defaultEnd,
-      siteId, ssn: "",
+      siteId, siteMode: "site", siteCustom: "", ssn: "",
       workDaysLabel: "주6일(월~토)", offDayLabel: "주휴일", hoursLabel: "", breakLabel: "", netHoursLabel: "",
-      baseAmount: "", wageNote: "", payDayLabel: "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다.",
+      wageItems: [{ id: uid(), label: "기본급", amount: "", note: "" }],
+      payDayLabel: "매월 1일부터 말일까지 계산하여 (익월 10일) 지급한다.",
     });
   };
   const [contractReqBusy, setContractReqBusy] = useState(false);
   const submitContractRequest = () => {
     const f = fillContractDefaults(contractReqEdit);
+    const validWageItems = (f.wageItems || []).filter((it) => it.label.trim() && it.amount !== "");
     if (!f.contractEnd) { setToast("계약 종료일을 입력해 주세요"); return; }
-    if (!f.baseAmount) { setToast("기본급을 입력해 주세요"); return; }
+    if (validWageItems.length === 0) { setToast("임금 항목을 한 개 이상 입력해 주세요"); return; }
     const site = sites.find((s) => s.id === f.siteId);
     const worker = workers.find((w) => w.id === f.workerId);
+    const siteName = f.siteMode === "custom" ? (f.siteCustom || "").trim() : (site?.name || "");
     const req = {
       id: uid(), workerId: f.workerId, workerName: f.workerName,
       workerAddress: f.workerAddress || worker?.address || "", workerPhone: worker?.phone || "",
       contractStart: f.contractStart, contractEnd: f.contractEnd,
-      siteName: site?.name || "", ssn: f.ssn.trim(),
+      siteName, ssn: f.ssn.trim(),
       workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel, hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
-      baseAmount: Number(f.baseAmount) || 0, wageNote: f.wageNote, payDayLabel: f.payDayLabel,
+      wageItems: validWageItems.map((it) => ({ label: it.label.trim(), amount: Number(it.amount) || 0, note: it.note || "" })),
+      payDayLabel: f.payDayLabel,
       createdAt: new Date().toISOString(),
     };
     update((d) => ({ ...d, contractRequests: [...(d.contractRequests || []).filter((x) => x.workerId !== f.workerId), req] }));
@@ -8846,10 +8857,21 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   <input type="date" value={contractReqEdit.contractEnd} onChange={(e) => setContractReqEdit((f) => ({ ...f, contractEnd: e.target.value }))} style={inputStyle} />
                 </Field>
               </div>
-              <Field label="근무장소(현장)">
-                <select value={contractReqEdit.siteId} onChange={(e) => setContractReqEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                  {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+              <Field label="근무장소">
+                <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+                  {[["site", "현장에서 선택"], ["custom", "직접 입력"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setContractReqEdit((f) => ({ ...f, siteMode: k }))}
+                      style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: (contractReqEdit.siteMode || "site") === k ? C.aquaDeep : C.tileSoft, color: (contractReqEdit.siteMode || "site") === k ? "#fff" : C.sub }}>{l}</button>
+                  ))}
+                </div>
+                {(contractReqEdit.siteMode || "site") === "site" ? (
+                  <select value={contractReqEdit.siteId} onChange={(e) => setContractReqEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                    {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : (
+                  <input value={contractReqEdit.siteCustom || ""} onChange={(e) => setContractReqEdit((f) => ({ ...f, siteCustom: e.target.value }))}
+                    placeholder="예: 미사정상어 학원" style={inputStyle} />
+                )}
               </Field>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="근무 요일 표기">
@@ -8870,13 +8892,43 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
               <Field label="실근로시간 표기">
                 <input value={contractReqEdit.netHoursLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, netHoursLabel: e.target.value }))} placeholder="예: 1시간50분(주당 11시간)" style={inputStyle} />
               </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="기본급(월, 원)">
-                  <input type="number" value={contractReqEdit.baseAmount} onChange={(e) => setContractReqEdit((f) => ({ ...f, baseAmount: e.target.value }))} style={inputStyle} />
-                </Field>
-                <Field label="임금 산정 내역">
-                  <input value={contractReqEdit.wageNote} onChange={(e) => setContractReqEdit((f) => ({ ...f, wageNote: e.target.value }))} placeholder="예: (기본급)/월48시간=15,000원" style={inputStyle} />
-                </Field>
+              <div>
+                <Eyebrow>임금 항목 (기본급 외에 식대·수당 등 자유롭게 추가 가능)</Eyebrow>
+                <div className="flex flex-col gap-2 mt-2">
+                  {(contractReqEdit.wageItems || []).map((it, i) => (
+                    <div key={it.id} style={{ background: C.tileSoft, padding: 10 }}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <input value={it.label} onChange={(e) => {
+                          const items = [...contractReqEdit.wageItems]; items[i] = { ...it, label: e.target.value };
+                          setContractReqEdit((f) => ({ ...f, wageItems: items }));
+                        }} placeholder="예: 기본급, 식대, 직책수당" style={{ ...inputStyle, background: C.tile, flex: 1 }} />
+                        {contractReqEdit.wageItems.length > 1 && (
+                          <button onClick={() => setContractReqEdit((f) => ({ ...f, wageItems: f.wageItems.filter((_, idx) => idx !== i) }))}><X size={16} color={C.sub} /></button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="number" value={it.amount} onChange={(e) => {
+                          const items = [...contractReqEdit.wageItems]; items[i] = { ...it, amount: e.target.value };
+                          setContractReqEdit((f) => ({ ...f, wageItems: items }));
+                        }} placeholder="금액(원)" style={{ ...inputStyle, background: C.tile }} />
+                        <input value={it.note} onChange={(e) => {
+                          const items = [...contractReqEdit.wageItems]; items[i] = { ...it, note: e.target.value };
+                          setContractReqEdit((f) => ({ ...f, wageItems: items }));
+                        }} placeholder="내역 (선택, 예: 월48시간=15,000원)" style={{ ...inputStyle, background: C.tile }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setContractReqEdit((f) => ({ ...f, wageItems: [...(f.wageItems || []), { id: uid(), label: "", amount: "", note: "" }] }))}
+                  className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+                  <Plus size={13} /> 임금 항목 추가
+                </button>
+                <div className="flex items-center justify-between mt-2" style={{ background: C.tileSoft, padding: "8px 10px" }}>
+                  <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>월급 총액 (자동 합계)</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>
+                    {money((contractReqEdit.wageItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0))}원
+                  </span>
+                </div>
               </div>
               <Field label="지급일 조항">
                 <input value={contractReqEdit.payDayLabel} onChange={(e) => setContractReqEdit((f) => ({ ...f, payDayLabel: e.target.value }))} style={inputStyle} />
@@ -8910,10 +8962,10 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                   workerPhone: workers.find((w) => w.id === f.workerId)?.phone || "",
                   ssn: f.ssn, hireDate: f.contractStart,
                   contractStart: f.contractStart, contractEnd: f.contractEnd,
-                  siteName: sites.find((s) => s.id === f.siteId)?.name || "",
+                  siteName: f.siteMode === "custom" ? (f.siteCustom || "") : (sites.find((s) => s.id === f.siteId)?.name || ""),
                   workDaysLabel: f.workDaysLabel, offDayLabel: f.offDayLabel,
                   hoursLabel: f.hoursLabel, breakLabel: f.breakLabel, netHoursLabel: f.netHoursLabel,
-                  baseAmount: f.baseAmount, wageNote: f.wageNote, payDayLabel: f.payDayLabel,
+                  wageItems: f.wageItems, payDayLabel: f.payDayLabel,
                   signDateLabel: `${parseKey(dKey(new Date())).getFullYear()}년 ${parseKey(dKey(new Date())).getMonth() + 1}월 ${parseKey(dKey(new Date())).getDate()}일 (서명 시점 날짜로 자동 표시됨)`,
                   sig: previewSigData, seal: data.settings.companySealFileId ? photoUrl(data.settings.companySealFileId) : null,
                 }) }} />
