@@ -7551,21 +7551,34 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
   const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
-  const deleteContractHistoryItem = (item) => {
+  const deleteContractHistoryItem = async (item) => {
     if (!window.confirm("이 계약서를 목록에서 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
-    update((d) => ({
+    const mut = (d) => ({
       ...d,
       // id뿐 아니라 fileId로도 같이 걸러냄 — 혹시 그 사이 자동보정이 같은 파일을 다른 id로 다시 만들었어도 확실히 같이 지워짐
       workerContracts: (d.workerContracts || []).filter((x) => x.id !== item.id && x.fileId !== item.fileId),
       // 이게 그 근무자의 "현재 계약서"였다면, 그 연결도 같이 끊어서 자동보정이 다시 살려내지 않게 함
       workers: d.workers.map((w) => (w.contractFileId === item.fileId ? { ...w, contractFileId: null, contractFileName: "", contractSignedAt: null } : w)),
-    }));
+    });
+    update(mut);
     // 지금 열려있는 편집 화면(wEdit)에도 그 예전 파일 정보가 그대로 남아있으면,
     // 그 상태로 "저장"을 눌렀을 때 방금 지운 걸 도로 덮어써버리는 문제가 있었음 — 그래서 화면 상태도 같이 지워줌
     if (wEdit && wEdit.contractFileId === item.fileId) {
       setWEdit((f) => ({ ...f, contractFileId: null, contractFileName: "", contractSignedAt: null, contractFileTouched: true }));
     }
-    setToast("삭제했습니다");
+    // 화면엔 바로 지워진 것처럼 보이지만, 실제로 서버 저장이 조용히 실패하면 나중에 다시 불러올 때 되살아날 수 있음.
+    // 그래서 잠깐 기다렸다가 서버에서 다시 읽어와 "진짜로 없어졌는지" 확인하고, 안 됐으면 최대 2번 더 재시도함.
+    let ok = false;
+    for (let i = 0; i < 3 && !ok; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        const check = await loadShared();
+        const fresh = check ? migrate(check) : null;
+        if (fresh && !(fresh.workerContracts || []).some((x) => x.fileId === item.fileId)) { ok = true; break; }
+      } catch (e) {}
+      if (!ok && i < 2) update(mut); // 서버에 아직 남아있으면 최신본 기준으로 다시 한번 지우기 시도
+    }
+    setToast(ok ? "삭제했습니다 (서버 저장 확인 완료)" : "삭제 확인에 실패했어요 — 인터넷 연결을 확인하고 다시 시도해 주세요");
   };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
   const [previewSigData, setPreviewSigData] = useState(null); // 미리보기에서 위치 확인용 테스트 서명(저장 안 됨)
