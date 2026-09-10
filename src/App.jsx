@@ -7551,9 +7551,15 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
   // 주민번호는 계약서 생성 이 순간에만 쓰고, 서명 완료 즉시 요청 자체를 삭제해서 앱 데이터에 남기지 않음.
   const [contractReqEdit, setContractReqEdit] = useState(null);
   const [contractHistoryViewerId, setContractHistoryViewerId] = useState(null); // 전체 계약서 이력을 보고 있는 근무자 id
-  const deleteContractHistoryItem = (id) => {
+  const deleteContractHistoryItem = (item) => {
     if (!window.confirm("이 계약서를 목록에서 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
-    update((d) => ({ ...d, workerContracts: (d.workerContracts || []).filter((x) => x.id !== id) }));
+    update((d) => ({
+      ...d,
+      // id뿐 아니라 fileId로도 같이 걸러냄 — 혹시 그 사이 자동보정이 같은 파일을 다른 id로 다시 만들었어도 확실히 같이 지워짐
+      workerContracts: (d.workerContracts || []).filter((x) => x.id !== item.id && x.fileId !== item.fileId),
+      // 이게 그 근무자의 "현재 계약서"였다면, 그 연결도 같이 끊어서 자동보정이 다시 살려내지 않게 함
+      workers: d.workers.map((w) => (w.contractFileId === item.fileId ? { ...w, contractFileId: null, contractFileName: "", contractSignedAt: null } : w)),
+    }));
     setToast("삭제했습니다");
   };
   const [contractPreviewOpen, setContractPreviewOpen] = useState(false);
@@ -8644,7 +8650,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                               </div>
                               <div className="flex items-center gap-2.5" style={{ flexShrink: 0 }}>
                                 <Download size={14} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
-                                <Trash2 size={14} color={C.coral} onClick={() => deleteContractHistoryItem(h.id)} style={{ cursor: "pointer" }} />
+                                <Trash2 size={14} color={C.coral} onClick={() => deleteContractHistoryItem(h)} style={{ cursor: "pointer" }} />
                               </div>
                             </div>
                           ))}
@@ -9052,7 +9058,7 @@ function SettingsView({ data, update, dev, updateDev, setToast }) {
                           </div>
                           <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
                             <Download size={15} color={C.sub} onClick={() => triggerDownload(h.fileId, h.fileName || "근로계약서.pdf", setToast)} style={{ cursor: "pointer" }} />
-                            <Trash2 size={15} color={C.coral} onClick={() => deleteContractHistoryItem(h.id)} style={{ cursor: "pointer" }} />
+                            <Trash2 size={15} color={C.coral} onClick={() => deleteContractHistoryItem(h)} style={{ cursor: "pointer" }} />
                           </div>
                         </div>
                       ))}
