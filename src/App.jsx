@@ -5181,7 +5181,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       const rowsHtml = rows.map(({ w, net, days, times, pay, blocks }) => `
         <tr>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}${w.fixedSalary ? ' <span style="font-size:10px; color:#71767D;">(월급제)</span>' : ""}</td>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${isShiftMode ? `${times}타임` : `${days}일`}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${isShiftMode ? `${times + (blocks || 0)}타임` : `${days}일`}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net)}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${blocks || "—"}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${w.fixedSalary ? money(w.fixedMonthlyPay || 0) : money(pay)}원</td>
@@ -5205,7 +5205,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
             <tfoot>
               <tr style="border-top:2px solid #1D232A;">
                 <td style="padding:10px 6px; font-weight:900;">합계 (${rows.length}명)</td>
-                <td style="padding:10px 6px; text-align:right; font-weight:900;">${isShiftMode ? `${tot.times}타임` : `${tot.days}일`}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${isShiftMode ? `${tot.times + tot.blocks}타임` : `${tot.days}일`}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${hmc(tot.net)}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${tot.blocks || "—"}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900; color:#D8503F;">${money(tot.pay)}원</td>
@@ -5467,7 +5467,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                             {statDetail === "pay" ? `${money(r.pay)}원`
                               : statDetail === "ot" ? `+${minStr(r.otMin)} (${r.blocks}회)`
                               : statDetail === "short" ? `−${minStr(r.shortMin)}`
-                              : isShiftMode ? `${r.times}회 · ${hmc(r.net)}` : hmc(r.net)}
+                              : isShiftMode ? `${r.times + r.blocks}회 · ${hmc(r.net)}` : hmc(r.net)}
                           </span>
                         </div>
                       </Tile>
@@ -6202,18 +6202,20 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
         <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
           <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{isFixed ? "총 근무일수" : agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{isFixed ? agg.days : agg.shift ? agg.times : hmc(agg.net)}{(isFixed || agg.shift) && <span style={{ fontSize: 14 }}>{isFixed ? "일" : "회"}</span>}</Num></div>
-            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{isFixed ? hmc(agg.net) + " 근무" : agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{isFixed ? agg.days : agg.shift ? agg.times + agg.blocks : hmc(agg.net)}{(isFixed || agg.shift) && <span style={{ fontSize: 14 }}>{isFixed ? "일" : "회"}</span>}</Num></div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
+              {isFixed ? hmc(agg.net) + " 근무" : agg.shift ? (agg.blocks > 0 ? `기본 ${agg.times}회 + 추가인정 ${agg.blocks}회` : `${agg.days}일 출근`) : hm(agg.net)}
+            </div>
           </Tile>
           <Tile style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{isFixed || agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
             <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{isFixed || agg.shift ? hmc(agg.net) : agg.days}{!(isFixed || agg.shift) && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
-              {isFixed ? (agg.days ? `1일 평균 ${minStr((agg.net / agg.days) * 60)}` : "기록 없음") : agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
+              {isFixed ? (agg.days ? `1일 평균 ${minStr((agg.net / agg.days) * 60)}` : "기록 없음") : (agg.times + agg.blocks) ? `1타임 평균 ${minStr((agg.net / (agg.times + agg.blocks)) * 60)}` : "기록 없음"}
             </div>
           </Tile>
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
-            <Eyebrow>{isFixed ? "추가근무" : agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
+            <Eyebrow>{isFixed ? "추가근무" : agg.shift ? `추가 인정 ${agg.blocks}회 (총 타임 수에 포함됨)` : "추가근무"}</Eyebrow>
             <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={16} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
             {agg.shift && !isFixed && <div style={{ color: C.sub, fontSize: 11, marginTop: 3, whiteSpace: "nowrap" }}>{money(agg.otPay)}원</div>}
           </Tile>
@@ -7214,7 +7216,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ label: "기본급", amount: p.base }])
         .forEach((it) => L.push(`${it.label}    ${money(it.amount)}원`));
     } else if (agg.shift) {
-      L.push(`근무 타임  ${agg.times}회 (${agg.days}일)`);
+      L.push(`근무 타임  ${agg.times + agg.blocks}회 (기본 ${agg.times}회 + 추가인정 ${agg.blocks}회 · ${agg.days}일)`);
       L.push(`근무시간   ${hm(agg.net)}`);
       if (agg.blocks) L.push(`추가 인정  ${agg.blocks}회 (+${minStr(agg.otMin)})`);
       if (agg.shortMin > 0) L.push(`부족시간   -${minStr(agg.shortMin)} (지급 반영 없음)`);
@@ -7345,8 +7347,8 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           ? [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
              ["초과 누계", `+${minStr(agg.otMin)}`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
           : agg.shift
-          ? [["근무 타임", `${agg.times}회`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["추가 인정", `${agg.blocks}회`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
+          ? [["근무 타임", `${agg.times + agg.blocks}회`, C.text], ["근무시간", hmc(agg.net), C.text],
+             ["└ 추가 인정 포함", `${agg.blocks}회`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
           : [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
              ["추가근무", `+${hmc(agg.ot)}`, C.blue], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? C.red : C.sub]]
         ).map(([k, v, col]) => (
