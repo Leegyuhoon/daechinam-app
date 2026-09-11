@@ -733,6 +733,7 @@ function fixedSalaryLine(worker) {
 }
 function aggregate(records, worker, settings) {
   const shift = settings.payMode === "shift";
+  const isFixedWorker = !!worker?.fixedSalary; // 정규직은 회사가 타임제여도, 부족/초과 계산은 항상 "1일 기준시간 비교" 방식으로
   const std = worker?.stdHours ?? settings.stdHours;
   const sh = worker?.shiftHours ?? settings.shiftHours;
   const byDate = {};
@@ -768,14 +769,14 @@ function aggregate(records, worker, settings) {
       b.wageSum += rp.wage * p.net; // 같은 날 여러 현장(시급 다름) 근무 시 시간가중 평균 시급용
       if (p.holiday) { holidayNet += p.net; holidayPay += p.pay; }
     }
-    if (shift) {
+    if (shift && !isFixedWorker) {
       if (!p.holiday && !p.flat) { base += p.base; otPay += p.otPay; }
       blocks += p.blocks;
       otMin += p.otMin; shortMin += p.shortMin; overMin += p.overMin;
     }
   });
 
-  if (!shift) {
+  if (!shift || isFixedWorker) {
     const hMult = settings.holidayMultiplier || 1.5;
     holidayPay = 0;
     Object.entries(byDate).forEach(([date, b]) => {
@@ -6245,7 +6246,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
             {isFixed ? (() => {
               // 정규직은 매일 거의 같은 시간을 일해서, 보통 막대그래프로는 전부 비슷비슷해 눈에 안 들어옴.
               // 그래서 "기준시간과의 차이(분)"만 위(초과)/아래(부족)로 튀어나오게 그려서, 이상한 날만 한눈에 띄게 함.
-              const diffs = dayList.map(([d, v]) => [d, Math.round((v.net - v.target) * 60)]);
+              const diffs = dayList.map(([d, v]) => [d, Math.round((v.net - agg.std) * 60)]);
               const maxAbs = Math.max(10, ...diffs.map(([, m]) => Math.abs(m)));
               return (
                 <div className="flex items-stretch gap-0.5 mt-3" style={{ height: 74 }}>
