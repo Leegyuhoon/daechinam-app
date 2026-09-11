@@ -6081,7 +6081,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
             </div>
             <div style={{ color: C.onDarkSub, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {labelOf(mode, anchor)} · {agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+              {labelOf(mode, anchor)} · {worker.fixedSalary ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원` : agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
             </div>
           </div>
         </div>
@@ -7117,7 +7117,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
         </div>
         <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-          {agg.shift
+          {worker.fixedSalary
+            ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원`
+            : agg.shift
             ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
             : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
         </div>
@@ -8008,7 +8010,9 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                     const ids = w.siteIds || (w.siteId ? [w.siteId] : []);
                     const names = ids.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
                     return names.length ? names.join(" · ") : "현장 미지정";
-                  })()} · {settings.payMode === "shift"
+                  })()} · {w.fixedSalary
+                    ? `월 고정급여 ${money(w.fixedMonthlyPay || 0)}원`
+                    : settings.payMode === "shift"
                     ? `1타임 ${w.shiftHours ?? settings.shiftHours}h / ${money(w.shiftPay ?? settings.shiftPay)}원`
                     : `${money(w.wage ?? settings.wage)}원/h · 1일 ${w.stdHours ?? settings.stdHours}h`}
                 </div>
