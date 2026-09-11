@@ -661,7 +661,7 @@ const KR_HOLIDAYS = {
   ],
 };
 
-function calcRec(rec, settings) {
+function calcRec(rec, worker, settings) {
   if (!rec.clockOut) return { open: true, gross: 0, brk: 0, net: 0 };
   const i = new Date(rec.clockIn).getTime();
   let o = new Date(rec.clockOut).getTime();
@@ -669,6 +669,7 @@ function calcRec(rec, settings) {
   const gross = (o - i) / 3600000;
   let brk = 0;
   if (rec.breakMinutes != null) brk = rec.breakMinutes / 60;
+  else if (worker?.fixedSalary && worker?.fixedBreakMinutes != null) brk = Number(worker.fixedBreakMinutes) / 60; // 정규직은 개인별 고정 휴게시간 우선
   else if (settings.payMode !== "shift" && settings.autoBreak) brk = autoBreakH(gross);
   return { open: false, gross, brk, net: Math.max(0, gross - brk) };
 }
@@ -686,7 +687,7 @@ function resolvePay(worker, siteId, settings) {
 
 /* 기록 한 건(= 한 타임)의 판정과 금액 */
 function calcPay(rec, worker, settings) {
-  const c = calcRec(rec, settings);
+  const c = calcRec(rec, worker, settings);
   if (c.open) return { ...c, open: true, pay: 0 };
   const holiday = isHoliday(rec.date, settings);
   // 일회성 근무(고정 금액)는 시급/타임 계산을 건너뛰고 지정한 금액을 그대로 사용
@@ -1474,7 +1475,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         // 본인 기본 1타임만큼은 정상 지급 확정, 초과분은 관리자의 균등/비례 분배 대상으로 남겨둠(중복 계산 방지)
         recs2 = recs2.map((r) => (recs.some((x) => x.id === r.id) ? { ...r, capBase: true } : r));
       }
-      const totalNet = recs.reduce((sum, r) => sum + calcRec(r, d.settings).net, 0);
+      const totalNet = recs.reduce((sum, r) => sum + calcRec(r, worker, d.settings).net, 0);
       const rp = resolvePay(worker, recs[0]?.siteId, d.settings);
       const baseHours = d.settings.payMode === "shift" ? rp.shiftHours : rp.stdHours;
       const excessHours = mixed ? Math.max(0, totalNet - baseHours) : totalNet;
@@ -7847,6 +7848,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       fixedSalary: !!wEdit.fixedSalary,
       fixedSalaryItems: (wEdit.fixedSalaryItems || []).filter((it) => it.label.trim() && it.amount !== "").map((it) => ({ id: it.id || uid(), label: it.label.trim(), amount: Number(it.amount) || 0 })),
       fixedMonthlyPay: (wEdit.fixedSalaryItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
+      fixedBreakMinutes: opt(wEdit.fixedBreakMinutes),
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
@@ -8992,6 +8994,19 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                     <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>
                       {money((wEdit.fixedSalaryItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0))}원
                     </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-2.5">
+                    <Field label="휴게시간 (분)">
+                      <input type="number" value={wEdit.fixedBreakMinutes ?? ""} placeholder="예: 60"
+                        onChange={(e) => setWEdit({ ...wEdit, fixedBreakMinutes: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                    <Field label="1일 순수 근무시간 (휴게 제외)">
+                      <input type="number" step="0.5" value={wEdit.stdHours ?? ""} placeholder="예: 8"
+                        onChange={(e) => setWEdit({ ...wEdit, stdHours: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
+                    예: 09:00~18:00(9시간) 계약에 휴게 1시간이 포함되어 있다면, 휴게시간엔 60(분), 1일 순수 근무시간엔 8(시간)을 입력하세요. 이렇게 맞춰두면 실제 8시간 근무를 "부족"으로 잘못 표시하지 않아요.
                   </div>
                 </div>
               )}
