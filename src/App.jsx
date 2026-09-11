@@ -734,7 +734,7 @@ function fixedSalaryLine(worker) {
 function aggregate(records, worker, settings) {
   const shift = settings.payMode === "shift";
   const isFixedWorker = !!worker?.fixedSalary; // 정규직은 회사가 타임제여도, 부족/초과 계산은 항상 "1일 기준시간 비교" 방식으로
-  const std = worker?.stdHours ?? settings.stdHours;
+  const std = (worker?.stdHours != null && worker.stdHours > 0) ? worker.stdHours : (settings.stdHours > 0 ? settings.stdHours : 8);
   const sh = worker?.shiftHours ?? settings.shiftHours;
   const byDate = {};
   let net = 0, pay = 0, times = 0, base = 0, otPay = 0, blocks = 0;
@@ -750,6 +750,26 @@ function aggregate(records, worker, settings) {
     if (p.open) return;
     const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부
     const isPureOneOff = !isCover && r.flatPay != null; // 대신근무가 아닌, 순수 일회성 현장 근무
+
+    if (isCover && r.capBase) {
+      // "본인 기본근무 + 대체근무"가 하루에 섞여서 확정된 기록: 실제로는 이 시간 중
+      // 본인 기본 몫(1타임 또는 1일 소정근로)은 "정상 근무"이고, 그 이후 초과분만 진짜 "대신 근무"임.
+      // 예전엔 이 레코드 전체를 통째로 "대신근무"로만 잡아서, 총 타임수에서 본인 기본 몫이 통째로
+      // 빠지고, 대신근무 카드엔 "시간은 전체인데 금액은 캡핑된 1타임분"이라 서로 안 맞았음.
+      const ownHours = shift ? sh : std;
+      const extraHours = Math.max(0, p.net - ownHours);
+      if (extraHours > 0.001) {
+        const fullP = calcPay({ ...r, capBase: false }, worker, settings); // capBase 없었다면 나왔을 전체 금액
+        coverCount++; coverMin += extraHours * 60; coverPay += Math.max(0, fullP.pay - p.pay);
+      }
+      const rp2 = resolvePay(worker, r.siteId, settings);
+      const ownNet = Math.min(p.net, ownHours);
+      times++; net += ownNet; pay += p.pay; // p.pay는 이미 본인 몫만큼만 캡핑된 금액
+      const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
+      b2.net += ownNet; b2.times++; b2.target += shift ? sh : 0;
+      if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
+      return;
+    }
     if (isCover) {
       coverCount++; coverMin += p.net * 60; coverPay += p.pay;
       return; // 실제 근무시간(net/times)·지급합계(pay)에는 포함하지 않음
@@ -6331,9 +6351,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                           <div style={{ flex: 1, position: "relative", width: "100%" }}>
                             <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
                             {m >= 0 ? (
-                              <div style={{ position: "absolute", bottom: "50%", left: "18%", right: "18%", height: `${(m / maxAbs) * 40}px`, background: C.blue, minHeight: m > 0 ? 2 : 0, borderRadius: "2px 2px 0 0" }} />
+                              <div style={{ position: "absolute", bottom: "50%", left: "18%", right: "18%", height: `${Math.min(24, (m / maxAbs) * 24)}px`, background: C.blue, minHeight: m > 0 ? 2 : 0, borderRadius: "2px 2px 0 0" }} />
                             ) : (
-                              <div style={{ position: "absolute", top: "50%", left: "18%", right: "18%", height: `${(-m / maxAbs) * 40}px`, background: C.red, borderRadius: "0 0 2px 2px" }} />
+                              <div style={{ position: "absolute", top: "50%", left: "18%", right: "18%", height: `${Math.min(24, (-m / maxAbs) * 24)}px`, background: C.red, borderRadius: "0 0 2px 2px" }} />
                             )}
                           </div>
                           <div style={{ height: 20, display: "flex", alignItems: "flex-start", overflow: "visible" }}>
