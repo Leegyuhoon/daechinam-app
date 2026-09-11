@@ -1180,12 +1180,18 @@ export default function App() {
   //  안 그러면 버튼을 눌러 저장이 큐에 들어간 바로 그 순간 탭 전환 등으로 새로고침이 끼어들어서,
   //  아직 반영 안 된 예전 데이터로 화면을 덮어써버리는 문제가 있었음.)
   const refreshShared = useCallback((force) => {
-    if (!force && Date.now() - lastLocalWriteRef.current < 15000) return Promise.resolve();
+    const sinceWrite = Date.now() - lastLocalWriteRef.current;
+    if (!force && sinceWrite < 15000) return Promise.resolve();
     return enqueueWrite(async (isFirstInBatch) => {
       // 큐에 아직 처리되지 않은 다른 저장 작업이 밀려있으면(=배치의 첫 번째가 아니면), 이 새로고침은 그냥 건너뜀.
       // 그 저장 작업들이 끝나면 어차피 최신 상태가 되니, 굳이 서버의(그 저장들이 아직 반영 안 된) 오래된 값으로
       // 지금 화면에 쌓여있는 로컬의 최신 변경사항을 덮어쓸 필요가 없음 — 오히려 덮어쓰면 방금 누른 게 사라져 보임.
       if (!isFirstInBatch) return;
+      // 저장소 특성상, 저장이 성공한 직후 곧바로 다시 읽으면 아주 잠깐(몇 초) 옛날 값이 나올 수 있음.
+      // 그래서 강제 새로고침이라도, 방금(5초 이내) 로컬에서 뭔가 저장했다면 그만큼 남은 시간을 기다렸다가 읽음 —
+      // 안 그러면 방금 누른 게 잠깐 원래대로 보였다가 나중에 저절로 다시 맞는 값으로 바뀌는 것처럼 보임.
+      const minDelay = 5000;
+      if (sinceWrite < minDelay) await new Promise((res) => setTimeout(res, minDelay - sinceWrite));
       try {
         const r = await loadShared();
         if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
