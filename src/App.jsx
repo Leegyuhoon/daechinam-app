@@ -5696,14 +5696,14 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
                   <Num size={17}>{hmc(net)}</Num>
-                  <div style={{ marginTop: 1 }}><Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num></div>
+                  {!w.fixedSalary && <div style={{ marginTop: 1 }}><Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num></div>}
                 </div>
               </div>
               <div className="mt-2.5 flex items-center gap-2">
                 <div style={{ flex: 1, height: 5, background: C.line }}>
                   <div style={{ width: `${(net / maxNet) * 100}%`, height: "100%", background: C.aquaDeep }} />
                 </div>
-                {blocks > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>추가 {blocks}회</span>}
+                {blocks > 0 && !w.fixedSalary && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>추가 {blocks}회</span>}
                 {shortMin > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.red, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>−{minStr(shortMin)}</span>}
               </div>
               {coverCount > 0 && (
@@ -5951,7 +5951,12 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   // 고정 수당(팀장수당·주유수당 등)은 "월" 단위 개념이라 월별 조회일 때만 반영
   const allowances = mode === "month" ? (worker?.allowances || []).filter((a) => Number(a.amount) > 0) : [];
   const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
-  const totalPay = agg.pay + (agg.coverPay || 0) + (agg.oneOffPay || 0) + allowanceTotal;
+  const isFixed = !!worker?.fixedSalary;
+  // 정규직(월급 고정)은 "월" 단위로 정해진 금액이라, 일/주 단위 조회에서는 지급액을 굳이 쪼개서 보여주지 않음
+  // (그 기간의 근무 시간 자체는 그대로 보여줌 — 얼마나 일했는지 확인 용도).
+  const totalPay = isFixed
+    ? (mode === "month" ? Number(worker.fixedMonthlyPay || 0) + (agg.coverPay || 0) + (agg.oneOffPay || 0) + allowanceTotal : null)
+    : agg.pay + (agg.coverPay || 0) + (agg.oneOffPay || 0) + allowanceTotal;
 
   const [exportBusy, setExportBusy] = useState(false);
   const downloadWorkerCsv = () => {
@@ -6126,7 +6131,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
             <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={16} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
-            {agg.shift && <div style={{ color: C.sub, fontSize: 11, marginTop: 3, whiteSpace: "nowrap" }}>{money(agg.otPay)}원</div>}
+            {agg.shift && !isFixed && <div style={{ color: C.sub, fontSize: 11, marginTop: 3, whiteSpace: "nowrap" }}>{money(agg.otPay)}원</div>}
           </Tile>
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
             <Eyebrow>부족시간 누계</Eyebrow>
@@ -6181,6 +6186,14 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           </div>
         </Modal>
 
+        {isFixed && mode !== "month" ? (
+          (agg.coverCount > 0 || agg.oneOffCount > 0) && (
+            <div className="mt-2" style={{ background: C.tile, padding: 14, borderRadius: RADIUS, boxShadow: SHADOW_SM }}>
+              <Eyebrow>정규직은 월급이 고정이라, 이 기간의 금액은 따로 안 나뉘어요</Eyebrow>
+              <div className="mt-1.5" style={{ fontSize: 13, color: C.sub }}>대신근무·일회성 근무로 추가된 금액만 아래처럼 별도로 계산돼요. 전체 지급액은 "월" 단위로 조회해 주세요.</div>
+            </div>
+          )
+        ) : (
         <div className="mt-2" style={{
           background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
           padding: 18, borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
@@ -6188,7 +6201,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
           <div className="mt-1.5" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}><Num size={26} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 15 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-            {agg.shift
+            {isFixed
+              ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원${(agg.coverCount > 0 || agg.oneOffCount > 0) ? " + 대신·일회성 근무분" : ""}`
+              : agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
               : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
           </div>
@@ -6203,6 +6218,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
             </div>
           )}
         </div>
+        )}
         {mode !== "month" && (worker?.allowances || []).some((a) => Number(a.amount) > 0) && (
           <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
             이 근무자는 고정 수당이 등록돼 있어요. 월별 보기로 전환하면 여기에 함께 표시·계산돼요.
@@ -7144,7 +7160,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       <div className="mt-5"><Eyebrow>지급 내역</Eyebrow></div>
       <div style={{ marginTop: 4 }}>
         {p.isFixedSalary ? (
-          <LineItem k="월 고정급여 (정규직)" sub="출퇴근 시간과 무관하게 고정 지급" v={`${money(p.base)}원`} />
+          (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ id: "base", label: "기본급 (월 고정)", amount: p.base }]).map((it) => (
+            <LineItem key={it.id} k={it.label} sub={it.label.includes("기본급") ? "출퇴근 시간과 무관하게 고정 지급" : undefined} v={`${money(it.amount)}원`} />
+          ))
         ) : agg.shift ? (
           <>
             <LineItem k="기본 타임" sub={`${agg.times}회 × ${money(worker.shiftPay ?? data.settings.shiftPay)}원`} v={`${money(agg.base)}원`} />
@@ -7794,7 +7812,9 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
-      fixedSalary: !!wEdit.fixedSalary, fixedMonthlyPay: opt(wEdit.fixedMonthlyPay),
+      fixedSalary: !!wEdit.fixedSalary,
+      fixedSalaryItems: (wEdit.fixedSalaryItems || []).filter((it) => it.label.trim() && it.amount !== "").map((it) => ({ id: it.id || uid(), label: it.label.trim(), amount: Number(it.amount) || 0 })),
+      fixedMonthlyPay: (wEdit.fixedSalaryItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
@@ -8904,15 +8924,43 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
 
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, marginBottom: 4 }}>아래는 이 근무자의 기본 급여예요 (현장 구분 없이 적용).</div>
             <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
-              <Toggle label="정규직 (매달 고정 월급)" first
-                desc="출퇴근 시간과 상관없이 매달 같은 금액을 기본급으로 지급해요. 출퇴근 기록은 확인용으로 그대로 남아요."
-                on={!!wEdit.fixedSalary} onChange={(v) => setWEdit({ ...wEdit, fixedSalary: v })} />
+              <Toggle label="월급 총액 (정규직)" first
+                desc="출퇴근 시간과 상관없이 매달 같은 금액을 지급해요. 출퇴근 기록은 확인용으로 그대로 남아요."
+                on={!!wEdit.fixedSalary} onChange={(v) => setWEdit((f) => ({
+                  ...f, fixedSalary: v,
+                  fixedSalaryItems: f.fixedSalaryItems && f.fixedSalaryItems.length > 0 ? f.fixedSalaryItems : [{ id: uid(), label: "기본급", amount: "" }],
+                }))} />
               {wEdit.fixedSalary && (
                 <div className="mt-2.5">
-                  <Field label="월 고정급여 (원)">
-                    <input type="number" value={wEdit.fixedMonthlyPay ?? ""} placeholder="예: 2500000"
-                      onChange={(e) => setWEdit({ ...wEdit, fixedMonthlyPay: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
-                  </Field>
+                  <div className="flex flex-col gap-2">
+                    {(wEdit.fixedSalaryItems || []).map((it, i) => (
+                      <div key={it.id} style={{ background: C.tile, padding: 10 }}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <input value={it.label} onChange={(e) => {
+                            const items = [...wEdit.fixedSalaryItems]; items[i] = { ...it, label: e.target.value };
+                            setWEdit({ ...wEdit, fixedSalaryItems: items });
+                          }} placeholder="예: 기본급, 식대, 직책수당" style={{ ...inputStyle, background: C.tileSoft, flex: 1 }} />
+                          {wEdit.fixedSalaryItems.length > 1 && (
+                            <button onClick={() => setWEdit({ ...wEdit, fixedSalaryItems: wEdit.fixedSalaryItems.filter((_, idx) => idx !== i) })}><X size={16} color={C.sub} /></button>
+                          )}
+                        </div>
+                        <input type="number" value={it.amount} onChange={(e) => {
+                          const items = [...wEdit.fixedSalaryItems]; items[i] = { ...it, amount: e.target.value };
+                          setWEdit({ ...wEdit, fixedSalaryItems: items });
+                        }} placeholder="금액(원)" style={{ ...inputStyle, background: C.tileSoft }} />
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setWEdit((f) => ({ ...f, fixedSalaryItems: [...(f.fixedSalaryItems || []), { id: uid(), label: "", amount: "" }] }))}
+                    className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
+                    <Plus size={13} /> 항목 추가 (식대 등)
+                  </button>
+                  <div className="flex items-center justify-between mt-2" style={{ background: C.tile, padding: "8px 10px" }}>
+                    <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>월급 총액 (자동 합계)</span>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>
+                      {money((wEdit.fixedSalaryItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0))}원
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
