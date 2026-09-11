@@ -50,19 +50,49 @@ const KEY = "cleanwork:v1";        // 공유 — 근무자·현장·기록
 const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
 
 /* 공유 데이터: 서버(Netlify Function + Blobs)에 저장 — 모든 기기가 같은 걸 봄 */
+let lastKnownEtag = null; // 서버에 마지막으로 확인한 데이터 버전(etag) — 저장할 때 "그 사이 다른 기기가 먼저 안 바꿨는지" 확인하는 데 씀
+class ConflictError extends Error {}
 async function loadShared() {
   const res = await fetch("/api/data");
   if (!res.ok) throw new Error("shared load failed");
+  const etag = res.headers.get("etag");
+  if (etag) lastKnownEtag = etag;
   const text = await res.text();
   return text && text !== "null" ? JSON.parse(text) : null;
 }
 async function saveShared(obj) {
+  const headers = { "Content-Type": "application/json" };
+  if (lastKnownEtag) headers["If-Match"] = lastKnownEtag;
   const res = await fetch("/api/data", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(obj),
   });
+  if (res.status === 409) {
+    // 내가 마지막으로 봤던 버전 그대로가 아니었음 — 다른 기기(휴대폰/PC 등)가 그 사이 먼저 저장했다는 뜻.
+    // 여기서 그냥 덮어쓰면 그 기기의 변경사항이 사라지므로, 대신 실패시켜서 호출한 쪽이 최신본을 다시
+    // 받아와 내 변경사항을 그 위에 재적용해서 다시 시도하게 함.
+    throw new ConflictError("conflict");
+  }
   if (!res.ok) throw new Error("shared save failed");
+  const etag = res.headers.get("etag");
+  if (etag) lastKnownEtag = etag;
+}
+// 저장을 시도하다가 다른 기기와 충돌(버전 불일치)이 나면, 최신본을 다시 받아와서 mut를 그 위에
+// 재적용해 다시 저장을 시도함 — 여러 기기(휴대폰+PC 등)에서 동시에 저장해도 한쪽이 사라지지 않게 하는 핵심 로직.
+async function saveWithConflictRetry(base, mut, maxRetries = 5) {
+  let current = base;
+  for (let i = 0; i <= maxRetries; i++) {
+    const next = typeof mut === "function" ? mut(current) : mut;
+    try {
+      await saveShared(next);
+      return next;
+    } catch (e) {
+      if (!(e instanceof ConflictError) || i === maxRetries) throw e;
+      const latest = await loadShared();
+      current = latest ? migrate(latest) : current;
+    }
+  }
 }
 
 /* 개인(기기) 데이터: 이 브라우저에만 저장 — localStorage 사용 */
@@ -1087,8 +1117,7 @@ export default function App() {
             if (latest) base = migrate(latest);
           } catch (e) {}
         }
-        const next = typeof mut === "function" ? mut(base) : mut;
-        await saveShared(next);
+        const next = await saveWithConflictRetry(base, mut);
         // 저장하자마자 바로 믿지 않고, 잠깐 기다렸다가 서버에서 다시 읽어와서 실제로 반영됐는지 확인함.
         // 출퇴근은 돈과 직결된 유일한 증거라서, 느리더라도 이 확인 과정을 두 번(시간차를 두고) 반드시 거침 —
         // 1차 확인 직후에 다른 곳에서 뒤늦게 덮어쓰는 경우까지 잡아내기 위함.
@@ -1143,9 +1172,10 @@ export default function App() {
             if (latest) base = migrate(latest);
           } catch (e) {}
         }
-        const finalNext = typeof mut === "function" ? mut(base) : mut;
+        // 다른 기기(휴대폰+PC 등)가 거의 동시에 저장하면, 서버가 버전 충돌을 감지해서 거절할 수 있음 —
+        // 그러면 최신본을 다시 받아와서 내 변경사항을 그 위에 재적용해 자동으로 다시 시도함.
+        const finalNext = await saveWithConflictRetry(base, mut);
         dataRef.current = finalNext; setData(finalNext);
-        await saveShared(finalNext);
       } catch (e) {
         setToast("저장 실패 — 인터넷 연결을 확인해 주세요");
       }
@@ -1162,8 +1192,7 @@ export default function App() {
           if (latest) base = migrate(latest);
         } catch (e) {}
       }
-      const next = typeof mut === "function" ? mut(base) : mut;
-      await saveShared(next);
+      const next = await saveWithConflictRetry(base, mut);
       dataRef.current = next; setData(next);
       lastLocalWriteRef.current = Date.now();
       return true;
