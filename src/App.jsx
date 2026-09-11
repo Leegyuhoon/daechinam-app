@@ -6282,17 +6282,23 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 </div>
               );
             })() : (
-            <div className="flex items-end gap-0.5 mt-3" style={{ height: 74 }}>
-              {dayList.map(([d, v]) => (
-                <div key={d} style={{ flex: 1, height: "100%" }} className="flex flex-col justify-end" title={`${d} ${hmc(v.net)}`}>
-                  <div style={{ height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2 }} />
-                </div>
-              ))}
-            </div>
-            )}
-            {!isFixed && (
-            <div className="flex justify-between mt-1.5" style={{ color: C.onDarkSub, fontSize: 10, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-              <span>{dayList[0][0].slice(5)}</span><span>{dayList[dayList.length - 1][0].slice(5)}</span>
+            <div className="mt-2.5">
+              <div className="flex items-center flex-wrap gap-x-3 gap-y-1" style={{ fontSize: 10, color: C.onDarkSub }}>
+                <span className="flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: C.aqua, display: "inline-block" }} />기준 이상 근무</span>
+                <span className="flex items-center gap-1"><span style={{ width: 8, height: 8, borderRadius: 2, background: C.red, display: "inline-block" }} />기준 미달</span>
+              </div>
+              <div style={{ fontSize: 10, color: C.onDarkSub, marginTop: 3 }}>
+                {agg.shift ? `기준선 = 타임당 ${agg.sh}시간 × 그날 타임 수` : `기준선 = 1일 ${agg.std}시간`} · 막대가 높을수록 그날 실제 근무시간이 많은 거예요
+              </div>
+              <div className="flex items-end gap-0.5 mt-2.5" style={{ height: 90 }}>
+                {dayList.map(([d, v]) => (
+                  <div key={d} style={{ flex: 1, height: "100%", minWidth: 0 }} className="flex flex-col items-center justify-end">
+                    <span style={{ fontSize: 8.5, fontWeight: 900, color: v.net >= v.target ? C.aqua : C.red, whiteSpace: "nowrap", marginBottom: 2 }}>{hmc(v.net)}</span>
+                    <div style={{ width: "100%", height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2, borderRadius: "2px 2px 0 0" }} />
+                    <div style={{ fontSize: 8.5, color: C.onDarkSub, marginTop: 3, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
             </div>
             )}
           </div>
