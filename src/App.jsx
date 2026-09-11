@@ -5129,11 +5129,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       const company = settings.companyName || "";
       const rowsHtml = rows.map(({ w, net, days, times, pay, blocks }) => `
         <tr>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}${w.fixedSalary ? ' <span style="font-size:10px; color:#71767D;">(월급제)</span>' : ""}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${isShiftMode ? `${times}타임` : `${days}일`}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net)}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${blocks || "—"}</td>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${money(pay)}원</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${w.fixedSalary ? money(w.fixedMonthlyPay || 0) : money(pay)}원</td>
         </tr>`).join("");
       const html = `
         <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
@@ -6598,7 +6598,11 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
             <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(weekAgg.net)}</Num></div>
-            <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
+            {worker.fixedSalary ? (
+              <div style={{ fontSize: 9.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>월급 고정 · 금액은 월별 조회</div>
+            ) : (
+              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
+            )}
             {(weekAgg.coverCount > 0 || weekAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
                 {weekAgg.coverCount > 0 && <div>대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}</div>}
@@ -6615,7 +6619,11 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
             <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(monthAgg.net)}</Num></div>
-            <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
+            {worker.fixedSalary ? (
+              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(worker.fixedMonthlyPay || 0)}원 (월급 고정)</div>
+            ) : (
+              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
+            )}
             {(monthAgg.coverCount > 0 || monthAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
                 {monthAgg.coverCount > 0 && <div>대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}</div>}
@@ -6722,10 +6730,15 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
               })()
             ) : (
               <>
-                {selRecs.length > 1 && (
+                {selRecs.length > 1 && (worker.fixedSalary ? selRecs.some((r) => calcPay(r, worker, settings).flat) : true) && (
                   <div className="flex items-center justify-between mt-2.5" style={{ background: C.tileSoft, padding: "8px 10px" }}>
-                    <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>이날 총 {selRecs.length}건 합계</span>
-                    <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>{money(selRecs.reduce((sum, r) => sum + calcPay(r, worker, settings).pay, 0))}원</span>
+                    <span style={{ fontSize: 11.5, color: C.sub, fontWeight: 700 }}>{worker.fixedSalary ? "이날 대신근무·일회성 합계" : "이날 총 " + selRecs.length + "건 합계"}</span>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>
+                      {money(selRecs.reduce((sum, r) => {
+                        const pr = calcPay(r, worker, settings);
+                        return sum + (worker.fixedSalary && !pr.flat ? 0 : pr.pay);
+                      }, 0))}원
+                    </span>
                   </div>
                 )}
                 <div className="flex flex-col gap-2 mt-2.5">
@@ -6751,7 +6764,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
                           {r.clockOut && ` · ${hmc(p.net)}`}
                         </div>
-                        {r.clockOut && (
+                        {r.clockOut && !(worker.fixedSalary && !p.flat) && (
                           <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
                             {p.pending
                               ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
@@ -6771,7 +6784,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 </div>
                 <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, flexShrink: 0 }}>이날 합계</span>
-                  <span style={{ fontSize: 13, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{hmc(selDayAgg.net)} · {money(selDayAgg.pay)}원</span>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {hmc(selDayAgg.net)}{!worker.fixedSalary && ` · ${money(selDayAgg.pay)}원`}
+                  </span>
                 </div>
               </>
             )}
@@ -7015,7 +7030,11 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
     const L = [];
     if (company) L.push(company);
     L.push(`[${ymLabel(ym)} 근무 정산서]`, `${worker.name} 님`, "");
-    if (agg.shift) {
+    if (p.isFixedSalary) {
+      L.push(`근무일수  ${agg.days}일`, `근무시간  ${hm(agg.net)}`, "");
+      (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ label: "기본급", amount: p.base }])
+        .forEach((it) => L.push(`${it.label}    ${money(it.amount)}원`));
+    } else if (agg.shift) {
       L.push(`근무 타임  ${agg.times}회 (${agg.days}일)`);
       L.push(`근무시간   ${hm(agg.net)}`);
       if (agg.blocks) L.push(`추가 인정  ${agg.blocks}회 (+${minStr(agg.otMin)})`);
