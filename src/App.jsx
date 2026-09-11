@@ -6342,7 +6342,18 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                     ) : (
                       <>
                         <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
-                        {!p.open && agg.shift && (
+                        {!p.open && worker.fixedSalary && (
+                          <div style={{ marginTop: 3 }}>
+                            {(() => {
+                              const std = worker.stdHours ?? settings.stdHours;
+                              const diffMin = Math.round((p.net - std) * 60);
+                              if (diffMin > 0) return <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 5px" }}>추가 {minStr(diffMin)}</span>;
+                              if (diffMin < 0) return <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.red, padding: "2px 5px" }}>부족 −{minStr(-diffMin)}</span>;
+                              return <span style={{ fontSize: 10, fontWeight: 800, color: C.sub, border: `1px solid ${C.line}`, padding: "1px 5px" }}>정확</span>;
+                            })()}
+                          </div>
+                        )}
+                        {!p.open && !worker.fixedSalary && agg.shift && (
                           <>
                             <div style={{ marginTop: 3 }}>
                               {p.blocks > 0 ? (
@@ -6358,7 +6369,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                             <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
                           </>
                         )}
-                        {!p.open && !agg.shift && (
+                        {!p.open && !worker.fixedSalary && !agg.shift && (
                           <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
                         )}
                       </>
@@ -7837,10 +7848,19 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
     const allowances = (wEdit.allowances || [])
       .filter((a) => a.label && a.label.trim())
       .map((a) => ({ id: a.id || uid(), label: a.label.trim(), amount: Number(a.amount) || 0 }));
+    // 정규직은 "1일 순수 근무시간"을 직접 입력받지 않고, 계약 출퇴근 시각·휴게시간으로부터 자동 계산해서 넣음
+    let fixedStdHours = null;
+    if (wEdit.fixedSalary) {
+      const [sh, sm] = (wEdit.fixedWorkStart ?? "09:00").split(":").map(Number);
+      const [eh, em] = (wEdit.fixedWorkEnd ?? "18:00").split(":").map(Number);
+      let diffMin = (eh * 60 + em) - (sh * 60 + sm);
+      if (diffMin < 0) diffMin += 24 * 60;
+      fixedStdHours = Math.max(0, (diffMin - (Number(wEdit.fixedBreakMinutes) || 0)) / 60);
+    }
     const w = {
       id: wEdit.id || uid(), name: wEdit.name.trim(),
       siteIds, siteId: siteIds[0] || null, // siteId는 하위호환용(대표 현장)
-      wage: opt(wEdit.wage), stdHours: opt(wEdit.stdHours),
+      wage: opt(wEdit.wage), stdHours: wEdit.fixedSalary ? fixedStdHours : opt(wEdit.stdHours),
       shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
@@ -7849,6 +7869,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       fixedSalaryItems: (wEdit.fixedSalaryItems || []).filter((it) => it.label.trim() && it.amount !== "").map((it) => ({ id: it.id || uid(), label: it.label.trim(), amount: Number(it.amount) || 0 })),
       fixedMonthlyPay: (wEdit.fixedSalaryItems || []).reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
       fixedBreakMinutes: opt(wEdit.fixedBreakMinutes),
+      fixedWorkStart: wEdit.fixedWorkStart || "09:00", fixedWorkEnd: wEdit.fixedWorkEnd || "18:00",
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
@@ -8996,18 +9017,33 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-2.5">
+                    <Field label="계약 출근시각">
+                      <input type="time" value={wEdit.fixedWorkStart ?? "09:00"}
+                        onChange={(e) => setWEdit({ ...wEdit, fixedWorkStart: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                    <Field label="계약 퇴근시각">
+                      <input type="time" value={wEdit.fixedWorkEnd ?? "18:00"}
+                        onChange={(e) => setWEdit({ ...wEdit, fixedWorkEnd: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                    </Field>
+                  </div>
+                  <div className="mt-2.5">
                     <Field label="휴게시간 (분)">
                       <input type="number" value={wEdit.fixedBreakMinutes ?? ""} placeholder="예: 60"
                         onChange={(e) => setWEdit({ ...wEdit, fixedBreakMinutes: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
                     </Field>
-                    <Field label="1일 순수 근무시간 (휴게 제외)">
-                      <input type="number" step="0.5" value={wEdit.stdHours ?? ""} placeholder="예: 8"
-                        onChange={(e) => setWEdit({ ...wEdit, stdHours: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
-                    </Field>
                   </div>
-                  <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
-                    예: 09:00~18:00(9시간) 계약에 휴게 1시간이 포함되어 있다면, 휴게시간엔 60(분), 1일 순수 근무시간엔 8(시간)을 입력하세요. 이렇게 맞춰두면 실제 8시간 근무를 "부족"으로 잘못 표시하지 않아요.
-                  </div>
+                  {(() => {
+                    const [sh, sm] = (wEdit.fixedWorkStart ?? "09:00").split(":").map(Number);
+                    const [eh, em] = (wEdit.fixedWorkEnd ?? "18:00").split(":").map(Number);
+                    let diffMin = (eh * 60 + em) - (sh * 60 + sm);
+                    if (diffMin < 0) diffMin += 24 * 60; // 야간근무 등 자정 넘어가는 경우
+                    const netH = Math.max(0, (diffMin - (Number(wEdit.fixedBreakMinutes) || 0)) / 60);
+                    return (
+                      <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+                        계약 근무 {(diffMin / 60).toFixed(1)}시간 − 휴게 {Number(wEdit.fixedBreakMinutes) || 0}분 = <b style={{ color: C.text }}>실 근무 {netH.toFixed(1)}시간</b> · 이 시간을 기준으로 매일 추가·부족 시간을 판단해요.
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
