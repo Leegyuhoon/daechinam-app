@@ -1058,7 +1058,17 @@ export default function App() {
   }, []);
 
   const lastLocalWriteRef = useRef(0);
-  const saveConfirmedVerified = useCallback(async (mut, verifyFn, maxAttempts = 3) => {
+  // 여러 저장 요청(버튼 여러 개를 빠르게 누르는 경우 등)이 동시에 진행되면,
+  // 각자 "저장 직전 서버 최신본을 읽어오는" 시점이 서로 겹쳐서, 나중에 끝난 저장이 먼저 것을 덮어써버리는
+  // 경합(race condition)이 생길 수 있었음 — 그래서 아래 세 함수(update/saveConfirmed/saveConfirmedVerified) 전부
+  // 이 하나의 줄(큐)에 연결해서, 항상 하나씩 순서대로만(이전 저장이 완전히 끝난 뒤에) 처리되게 함.
+  const writeQueueRef = useRef(Promise.resolve());
+  const enqueueWrite = (fn) => {
+    const run = writeQueueRef.current.then(fn, fn); // 앞선 작업이 실패해도 다음 작업은 이어서 진행
+    writeQueueRef.current = run.catch(() => {});
+    return run;
+  };
+  const saveConfirmedVerified = useCallback((mut, verifyFn, maxAttempts = 3) => enqueueWrite(async () => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         let base = dataRef.current;
@@ -1103,30 +1113,31 @@ export default function App() {
     }
     setToast("저장 확인에 실패했어요 — 인터넷 연결을 확인하고 다시 눌러주세요");
     return false;
-  }, []);
-  const update = useCallback(async (mut) => {
+  }), []);
+  const update = useCallback((mut) => {
     // 화면은 일단 즉시 반응하도록 지금 알고 있는 내용 기준으로 먼저 반영(빠른 반응)
     const optimistic = typeof mut === "function" ? mut(dataRef.current) : mut;
     dataRef.current = optimistic; setData(optimistic);
     lastLocalWriteRef.current = Date.now();
-    // 실제 서버에 쓰기 직전엔, 다른 기기(근무자 폰 등)가 그 사이에 저장했을 수 있는 최신 내용을
-    // 다시 받아와서 그 위에 내 변경사항을 다시 적용함 — 이렇게 해야 서로 덮어쓰기로 사라지는 걸 막을 수 있음.
-    try {
-      let base = optimistic;
+    // 실제 서버 저장은 큐에 줄 세워서, 이전에 진행 중이던 다른 저장이 완전히 끝난 뒤에만 시작함
+    return enqueueWrite(async () => {
       try {
-        const latest = await loadShared();
-        if (latest) base = migrate(latest);
-      } catch (e) {}
-      const finalNext = typeof mut === "function" ? mut(base) : mut;
-      dataRef.current = finalNext; setData(finalNext);
-      await saveShared(finalNext);
-    } catch (e) {
-      setToast("저장 실패 — 인터넷 연결을 확인해 주세요");
-    }
+        let base = dataRef.current;
+        try {
+          const latest = await loadShared();
+          if (latest) base = migrate(latest);
+        } catch (e) {}
+        const finalNext = typeof mut === "function" ? mut(base) : mut;
+        dataRef.current = finalNext; setData(finalNext);
+        await saveShared(finalNext);
+      } catch (e) {
+        setToast("저장 실패 — 인터넷 연결을 확인해 주세요");
+      }
+    });
   }, []);
 
   // 출근·퇴근처럼 "실제로 저장됐는지"가 중요한 동작 전용 — 저장이 서버에 확인된 뒤에만 화면을 바꿈.
-  const saveConfirmed = useCallback(async (mut) => {
+  const saveConfirmed = useCallback((mut) => enqueueWrite(async () => {
     try {
       let base = dataRef.current;
       try {
@@ -1142,7 +1153,7 @@ export default function App() {
       setToast("저장에 실패했어요 — 인터넷 연결을 확인하고 다시 눌러주세요");
       return false;
     }
-  }, []);
+  }), []);
 
   // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
   // 단, 방금 이 화면에서 직접 저장한 지 얼마 안 됐으면 건너뜀 — 저장이 서버에 완전히 반영되기 전에
