@@ -756,13 +756,18 @@ function aggregate(records, worker, settings) {
       // 본인 기본 몫(1타임 또는 1일 소정근로)은 "정상 근무"이고, 그 이후 초과분만 진짜 "대신 근무"임.
       // 예전엔 이 레코드 전체를 통째로 "대신근무"로만 잡아서, 총 타임수에서 본인 기본 몫이 통째로
       // 빠지고, 대신근무 카드엔 "시간은 전체인데 금액은 캡핑된 1타임분"이라 서로 안 맞았음.
+      const rp2 = resolvePay(worker, r.siteId, settings);
       const ownHours = shift ? sh : std;
       const extraHours = Math.max(0, p.net - ownHours);
       if (extraHours > 0.001) {
-        const fullP = calcPay({ ...r, capBase: false }, worker, settings); // capBase 없었다면 나왔을 전체 금액
-        coverCount++; coverMin += extraHours * 60; coverPay += Math.max(0, fullP.pay - p.pay);
+        const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+        // 초과분(대신근무 몫)은 "추가근무 수당"이 아니라, 정상 타임/시급 단가 그대로 인정해야 정확함
+        // (예: 1타임 2시간을 더 일했으면 그만큼 1타임 정상 금액을 그대로 인정 — 소액의 추가수당이 아님)
+        const extraPay = shift
+          ? Math.round(extraHours / rp2.shiftHours) * rp2.shiftPay * hMult2
+          : extraHours * rp2.wage * hMult2;
+        coverCount++; coverMin += extraHours * 60; coverPay += extraPay;
       }
-      const rp2 = resolvePay(worker, r.siteId, settings);
       const ownNet = Math.min(p.net, ownHours);
       times++; net += ownNet; pay += p.pay; // p.pay는 이미 본인 몫만큼만 캡핑된 금액
       const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
@@ -6277,15 +6282,21 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>{labelOf(mode, anchor)} 기준 · {worker.name}</div>
           <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflowY: "auto" }}>
             {recs.filter((r) => wdStatDetail === "cover" ? (r.isExtra || !!r.coverForName) : (!r.isExtra && !r.coverForName && r.flatPay != null))
-              .sort((a, b) => b.date.localeCompare(a.date)).map((r) => (
-                <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
-                  <div className="flex items-center justify-between">
-                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}</span>
-                    <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{money(r.flatPay)}원</span>
+              .sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
+                const q = calcPay(r, worker, settings);
+                // flatPay(고정금액 승인 방식)로 등록된 것도 있고, 정상 출퇴근(clockIn/clockOut) 방식으로 등록된 것도 있어서,
+                // 실제 지급액은 항상 calcPay로 다시 계산한 값(q.pay)을 써야 정확함 — r.flatPay만 믿으면
+                // 정상 출퇴근 방식인 경우 그 필드가 비어있어서 늘 0원으로 잘못 나왔음.
+                return (
+                  <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
+                    <div className="flex items-center justify-between">
+                      <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}{!q.open && ` · ${hmc(q.net)}`}</span>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{q.open ? "진행중" : `${money(q.pay)}원`}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
                   </div>
-                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
-                </div>
-              ))}
+                );
+              })}
           </div>
         </Modal>
 
