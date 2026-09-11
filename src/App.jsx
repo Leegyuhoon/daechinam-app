@@ -1181,7 +1181,11 @@ export default function App() {
   //  아직 반영 안 된 예전 데이터로 화면을 덮어써버리는 문제가 있었음.)
   const refreshShared = useCallback((force) => {
     if (!force && Date.now() - lastLocalWriteRef.current < 15000) return Promise.resolve();
-    return enqueueWrite(async () => {
+    return enqueueWrite(async (isFirstInBatch) => {
+      // 큐에 아직 처리되지 않은 다른 저장 작업이 밀려있으면(=배치의 첫 번째가 아니면), 이 새로고침은 그냥 건너뜀.
+      // 그 저장 작업들이 끝나면 어차피 최신 상태가 되니, 굳이 서버의(그 저장들이 아직 반영 안 된) 오래된 값으로
+      // 지금 화면에 쌓여있는 로컬의 최신 변경사항을 덮어쓸 필요가 없음 — 오히려 덮어쓰면 방금 누른 게 사라져 보임.
+      if (!isFirstInBatch) return;
       try {
         const r = await loadShared();
         if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
