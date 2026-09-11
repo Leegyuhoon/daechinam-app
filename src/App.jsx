@@ -1158,13 +1158,17 @@ export default function App() {
   // 다른 기기에서 바뀐 내용(양도 요청, 사진 등)을 놓치지 않도록, 주기적으로 + 화면에 돌아올 때 자동 새로고침
   // 단, 방금 이 화면에서 직접 저장한 지 얼마 안 됐으면 건너뜀 — 저장이 서버에 완전히 반영되기 전에
   // 자동 새로고침이 옛날 버전으로 덮어써서 방금 등록한 내용이 사라지는 문제를 막기 위함.
-  // (force=true면 이 보호장치를 무시하고 무조건 새로고침함 — 사람이 직접 누르는 새로고침 버튼용)
-  const refreshShared = useCallback(async (force) => {
-    if (!force && Date.now() - lastLocalWriteRef.current < 15000) return;
-    try {
-      const r = await loadShared();
-      if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
-    } catch (e) {}
+  // (force=true면 이 시간 가드는 무시하지만, 그래도 "진행 중인 저장" 자체는 절대 앞지르지 않도록 같은 큐에 태움 —
+  //  안 그러면 버튼을 눌러 저장이 큐에 들어간 바로 그 순간 탭 전환 등으로 새로고침이 끼어들어서,
+  //  아직 반영 안 된 예전 데이터로 화면을 덮어써버리는 문제가 있었음.)
+  const refreshShared = useCallback((force) => {
+    if (!force && Date.now() - lastLocalWriteRef.current < 15000) return Promise.resolve();
+    return enqueueWrite(async () => {
+      try {
+        const r = await loadShared();
+        if (r) { const fresh = migrate(r); dataRef.current = fresh; setData(fresh); }
+      } catch (e) {}
+    });
   }, []);
   useEffect(() => {
     const t = setInterval(() => { if (document.visibilityState === "visible") refreshShared(); }, 20000);
