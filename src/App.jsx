@@ -1062,20 +1062,31 @@ export default function App() {
   // 각자 "저장 직전 서버 최신본을 읽어오는" 시점이 서로 겹쳐서, 나중에 끝난 저장이 먼저 것을 덮어써버리는
   // 경합(race condition)이 생길 수 있었음 — 그래서 아래 세 함수(update/saveConfirmed/saveConfirmedVerified) 전부
   // 이 하나의 줄(큐)에 연결해서, 항상 하나씩 순서대로만(이전 저장이 완전히 끝난 뒤에) 처리되게 함.
+  //
+  // 그런데 그것만으로는 부족했음: "끄기"처럼 현재값을 반전시키는(!x.active) 방식의 변경은, 매번 서버에서
+  // 새로 읽어온 값 위에 적용하다 보니 — 연달아 누른 두 번째 클릭이 큐에서 실행될 때, 서버에서 읽어온 값이
+  // "첫 번째 클릭이 아직 저장되기 전"의 옛날 값이면, 그 위에 첫 번째 클릭의 낙관적 결과가 통째로 씻겨나갔음.
+  // 그래서 지금 큐에 몇 개가 밀려있는지 추적해서, "배치의 첫 번째 작업"일 때만 서버와 동기화하고,
+  // 연달아 밀린 나머지 작업들은 서버 재조회 없이 "지금 로컬에 쌓여있는 최신 상태"를 그대로 이어받아 처리함.
   const writeQueueRef = useRef(Promise.resolve());
+  const pendingWritesRef = useRef(0);
   const enqueueWrite = (fn) => {
-    const run = writeQueueRef.current.then(fn, fn); // 앞선 작업이 실패해도 다음 작업은 이어서 진행
-    writeQueueRef.current = run.catch(() => {});
+    const isFirstInBatch = pendingWritesRef.current === 0;
+    pendingWritesRef.current++;
+    const run = writeQueueRef.current.then(() => fn(isFirstInBatch), () => fn(isFirstInBatch));
+    writeQueueRef.current = run.catch(() => {}).finally(() => { pendingWritesRef.current--; });
     return run;
   };
-  const saveConfirmedVerified = useCallback((mut, verifyFn, maxAttempts = 3) => enqueueWrite(async () => {
+  const saveConfirmedVerified = useCallback((mut, verifyFn, maxAttempts = 3) => enqueueWrite(async (isFirstInBatch) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         let base = dataRef.current;
-        try {
-          const latest = await loadShared();
-          if (latest) base = migrate(latest);
-        } catch (e) {}
+        if (isFirstInBatch || attempt > 1) {
+          try {
+            const latest = await loadShared();
+            if (latest) base = migrate(latest);
+          } catch (e) {}
+        }
         const next = typeof mut === "function" ? mut(base) : mut;
         await saveShared(next);
         // 저장하자마자 바로 믿지 않고, 잠깐 기다렸다가 서버에서 다시 읽어와서 실제로 반영됐는지 확인함.
@@ -1120,13 +1131,18 @@ export default function App() {
     dataRef.current = optimistic; setData(optimistic);
     lastLocalWriteRef.current = Date.now();
     // 실제 서버 저장은 큐에 줄 세워서, 이전에 진행 중이던 다른 저장이 완전히 끝난 뒤에만 시작함
-    return enqueueWrite(async () => {
+    return enqueueWrite(async (isFirstInBatch) => {
       try {
+        // 배치의 첫 작업만 서버와 동기화(다른 기기의 변경사항 반영). 연달아 밀린 나머지는
+        // 이미 로컬에 쌓여있는 최신 상태(앞선 낙관적 업데이트들 포함)를 그대로 이어받아야,
+        // "반전(toggle)" 방식의 변경이 서로 씻겨나가지 않음.
         let base = dataRef.current;
-        try {
-          const latest = await loadShared();
-          if (latest) base = migrate(latest);
-        } catch (e) {}
+        if (isFirstInBatch) {
+          try {
+            const latest = await loadShared();
+            if (latest) base = migrate(latest);
+          } catch (e) {}
+        }
         const finalNext = typeof mut === "function" ? mut(base) : mut;
         dataRef.current = finalNext; setData(finalNext);
         await saveShared(finalNext);
@@ -1137,13 +1153,15 @@ export default function App() {
   }, []);
 
   // 출근·퇴근처럼 "실제로 저장됐는지"가 중요한 동작 전용 — 저장이 서버에 확인된 뒤에만 화면을 바꿈.
-  const saveConfirmed = useCallback((mut) => enqueueWrite(async () => {
+  const saveConfirmed = useCallback((mut) => enqueueWrite(async (isFirstInBatch) => {
     try {
       let base = dataRef.current;
-      try {
-        const latest = await loadShared();
-        if (latest) base = migrate(latest);
-      } catch (e) {}
+      if (isFirstInBatch) {
+        try {
+          const latest = await loadShared();
+          if (latest) base = migrate(latest);
+        } catch (e) {}
+      }
       const next = typeof mut === "function" ? mut(base) : mut;
       await saveShared(next);
       dataRef.current = next; setData(next);
