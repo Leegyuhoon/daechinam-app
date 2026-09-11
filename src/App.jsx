@@ -783,9 +783,14 @@ function aggregate(records, worker, settings) {
       return; // 마찬가지로 실제 근무시간·지급합계에는 포함하지 않음
     }
     const rp = resolvePay(worker, r.siteId, settings);
-    times++; net += p.net; pay += p.pay;
+    // "1타임"이 근무자·현장마다 다를 수 있음(예: 이 사람은 이 현장에서 1타임=4시간/60,000원 —
+    // 회사 표준(2시간/30,000원)의 2배). 그동안 레코드 1건을 무조건 "1타임"으로만 세서,
+    // 이런 경우 실제로는 2타임어치인데 1타임으로 잘못 표시되고, 지급액(타임수×표준단가)과도 안 맞았음.
+    // 그래서 "그 레코드의 실제 1타임 금액이 회사 표준의 몇 배인지"를 가중치로 곱해서 셈.
+    const timeWeight = (shift && rp.shiftPay > 0 && settings.shiftPay > 0) ? (rp.shiftPay / settings.shiftPay) : 1;
+    times += timeWeight; net += p.net; pay += p.pay;
     const b = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
-    b.net += p.net; b.times++; b.target += shift ? sh : 0;
+    b.net += p.net; b.times += timeWeight; b.target += shift ? sh : 0;
     if (p.flat) {
       // 일회성 근무는 시간·요일과 무관하게 지정된 금액 그대로 — 시급 재계산 대상에서 제외
       b.flatNet += p.net; b.flatPay += p.pay; flatTotal += p.pay;
@@ -824,11 +829,16 @@ function aggregate(records, worker, settings) {
     Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
   }
 
+  // times는 "1타임 금액이 회사 표준의 몇 배인지"로 가중치를 줘서 계산했기 때문에 소수가 될 수 있음 —
+  // 실제로는 항상 정수 개념(몇 타임)이어야 하므로, 최종적으로 반올림해서 내보냄.
+  const roundedByDate = {};
+  Object.entries(byDate).forEach(([date, b]) => { roundedByDate[date] = { ...b, times: Math.round(b.times) }; });
+
   return {
-    net, days: Object.keys(byDate).length, times, pay, base, otPay, blocks,
+    net, days: Object.keys(byDate).length, times: Math.round(times), pay, base, otPay, blocks,
     otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
     holidayNet, holidayPay, holidayDays, holidayMultiplier: settings.holidayMultiplier || 1.5,
-    byDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
+    byDate: roundedByDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
     coverCount, coverMin, coverPay, oneOffCount, oneOffMin, oneOffPay,
   };
 }
