@@ -557,7 +557,10 @@ function payslipCalc(data, workerId, ym) {
     .sort((a, b) => a.date.localeCompare(b.date) || a.clockIn.localeCompare(b.clockIn));
   const agg = aggregate(recs, worker, data.settings);
   const adj = { ...EMPTY_ADJ, ...(data.adjustments[`${workerId}:${ym}`] || {}) };
-  const base = Math.round(agg.pay);
+  // 정규직(월급 고정)으로 등록된 근무자는, 출퇴근 시간으로 계산하지 않고 매달 같은 금액을 그대로 기본급으로 씀.
+  // 다만 출퇴근 기록 자체는 그대로 보여줘서(출근 확인용) 참고할 수 있게 함.
+  const isFixedSalary = !!worker?.fixedSalary;
+  const base = isFixedSalary ? Math.round(Number(worker.fixedMonthlyPay) || 0) : Math.round(agg.pay);
   const coverPay = Math.round(agg.coverPay || 0); // 대신 근무 — 정상 타임과 별도 항목으로 표시하되, 지급액에는 반드시 포함
   const oneOffPay = Math.round(agg.oneOffPay || 0); // 일회성 현장 근무 — 마찬가지
   const coverRecs = recs.filter((r) => r.isExtra || !!r.coverForName);
@@ -568,7 +571,7 @@ function payslipCalc(data, workerId, ym) {
   const gross = base + coverPay + oneOffPay + extra;
   const tax = adj.tax ? Math.floor((gross * 0.033) / 10) * 10 : 0;
   const deduct = Number(adj.deduct) || 0;
-  return { worker, recs, agg, adj, base, coverPay, oneOffPay, coverRecs, oneOffRecs, extra, allowances, allowanceTotal, gross, tax, deduct, net: gross - tax - deduct };
+  return { worker, recs, agg, adj, base, isFixedSalary, coverPay, oneOffPay, coverRecs, oneOffRecs, extra, allowances, allowanceTotal, gross, tax, deduct, net: gross - tax - deduct };
 }
 const ymLabel = (ym) => `${ym.slice(0, 4)}년 ${Number(ym.slice(5, 7))}월`;
 
@@ -4807,6 +4810,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
   const [detail, setDetail] = useState(null);
+  const [statusListPopup, setStatusListPopup] = useState(null); // { label, color, rows } - 여러 명일 때 목록 팝업
   const [slip, setSlip] = useState(null);   // { workerId, ym }
   const [book, setBook] = useState(null);   // ym
   const [q, setQ] = useState("");
@@ -5250,6 +5254,16 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
           </div>
         </button>
       )}
+      {(tot.coverCount > 0 || tot.oneOffCount > 0) && (
+        <div className="mx-4 mt-0.5" style={{ background: C.text, padding: "12px 13px" }}>
+          <div className="flex items-center justify-between gap-2" style={{ minWidth: 0 }}>
+            <Eyebrow dark>실제 총 지급액 (지급합계 + 대신근무 + 일회성)</Eyebrow>
+          </div>
+          <div className="mt-1" style={{ whiteSpace: "nowrap" }}>
+            <Num size={17} weight={900} color="#fff">{money(tot.pay + (tot.coverPay || 0) + (tot.oneOffPay || 0))}원</Num>
+          </div>
+        </div>
+      )}
       {pendingOneOffs.length > 0 && (
         <button onClick={() => setStatDetail("pendingOneOff")} className="pressable w-full text-left">
           <div className="mx-4 mt-0.5 flex items-center gap-2" style={{ background: "#FDF2F8", padding: "10px 13px" }}>
@@ -5488,16 +5502,20 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 
             <div className="grid gap-1.5 mb-3" style={{ gridTemplateColumns: `repeat(${boardRows.some((r) => r.status === "closure") ? 5 : 4}, 1fr)` }}>
               {[
-                ["complete", "정상 완료", ST.complete, boardRows.filter((r) => r.status === "complete").length],
-                ["incomplete", "퇴근 안 함", ST.incomplete, boardRows.filter((r) => r.status === "incomplete").length],
-                ["off", "휴무", ST.offRequested, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest").length],
-                ...(boardRows.some((r) => r.status === "closure") ? [["closure", "휴무기간", "#0369A1", boardRows.filter((r) => r.status === "closure").length]] : []),
-                ["absent", "결근/미출근", ST.absent, boardRows.filter((r) => r.status === "absent").length],
-              ].map(([k, l, col, n]) => (
-                <div key={k} style={{ background: C.tile, padding: "10px 6px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
-                  <div style={{ fontSize: 17, fontWeight: 900, color: col }}>{n}</div>
+                ["complete", "정상 완료", ST.complete, boardRows.filter((r) => r.status === "complete")],
+                ["incomplete", "퇴근 안 함", ST.incomplete, boardRows.filter((r) => r.status === "incomplete")],
+                ["off", "휴무", ST.offRequested, boardRows.filter((r) => r.status === "offRequested" || r.status === "offNoRequest")],
+                ...(boardRows.some((r) => r.status === "closure") ? [["closure", "휴무기간", "#0369A1", boardRows.filter((r) => r.status === "closure")]] : []),
+                ["absent", "결근/미출근", ST.absent, boardRows.filter((r) => r.status === "absent")],
+              ].map(([k, l, col, rows]) => (
+                <button key={k} onClick={() => {
+                  if (rows.length === 0) return;
+                  if (rows.length === 1) { setDetail(rows[0].w.id); return; }
+                  setStatusListPopup({ label: l, color: col, rows });
+                }} style={{ background: C.tile, padding: "10px 6px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM, textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 900, color: col }}>{rows.length}</div>
                   <div style={{ fontSize: 9.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>{l}</div>
-                </div>
+                </button>
               ))}
             </div>
 
@@ -5866,6 +5884,30 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setMarkOffFor(null)}>취소</Btn>
               <Btn full onClick={submitMarkOff}>휴무 처리하기</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* 출근현황판 - 상태별 여러 명 목록 팝업 */}
+      <Modal open={!!statusListPopup} onClose={() => setStatusListPopup(null)}>
+        {statusListPopup && (
+          <>
+            <div className="flex items-center gap-2">
+              <div style={{ width: 10, height: 10, borderRadius: 999, background: statusListPopup.color }} />
+              <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{statusListPopup.label} ({statusListPopup.rows.length}명)</div>
+            </div>
+            <div className="flex flex-col gap-1.5 mt-4">
+              {statusListPopup.rows.map(({ w, siteNames }) => (
+                <button key={w.id} onClick={() => { setStatusListPopup(null); setDetail(w.id); }}
+                  className="flex items-center justify-between pressable" style={{ background: C.tileSoft, padding: "12px 14px" }}>
+                  <div style={{ minWidth: 0, textAlign: "left" }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</div>
+                    {siteNames && siteNames.length > 0 && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>{siteNames.join(", ")}</div>}
+                  </div>
+                  <ChevronRight size={16} color={C.sub} style={{ flexShrink: 0 }} />
+                </button>
+              ))}
             </div>
           </>
         )}
@@ -6547,6 +6589,12 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 {weekAgg.oneOffCount > 0 && <div>일회성 현장 근무 {weekAgg.oneOffCount}회 · {minStr(weekAgg.oneOffMin)}</div>}
               </div>
             )}
+            {weekRecs.some((r) => !r.clockOut) && (
+              <button onClick={() => setSelDate(weekRecs.find((r) => !r.clockOut).date)} className="w-full text-left"
+                style={{ marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 10, color: ST.incomplete, fontWeight: 800 }}>⚠ 퇴근 안함 {weekRecs.filter((r) => !r.clockOut).length}건 · 눌러서 확인</span>
+              </button>
+            )}
           </div>
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
@@ -6557,6 +6605,12 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 {monthAgg.coverCount > 0 && <div>대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}</div>}
                 {monthAgg.oneOffCount > 0 && <div>일회성 현장 근무 {monthAgg.oneOffCount}회 · {minStr(monthAgg.oneOffMin)}</div>}
               </div>
+            )}
+            {monthRecs.some((r) => !r.clockOut) && (
+              <button onClick={() => setSelDate(monthRecs.find((r) => !r.clockOut).date)} className="w-full text-left"
+                style={{ marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 10, color: ST.incomplete, fontWeight: 800 }}>⚠ 퇴근 안함 {monthRecs.filter((r) => !r.clockOut).length}건 · 눌러서 확인</span>
+              </button>
             )}
           </div>
         </div>
@@ -7087,7 +7141,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       {/* 지급 · 공제 */}
       <div className="mt-5"><Eyebrow>지급 내역</Eyebrow></div>
       <div style={{ marginTop: 4 }}>
-        {agg.shift ? (
+        {p.isFixedSalary ? (
+          <LineItem k="월 고정급여 (정규직)" sub="출퇴근 시간과 무관하게 고정 지급" v={`${money(p.base)}원`} />
+        ) : agg.shift ? (
           <>
             <LineItem k="기본 타임" sub={`${agg.times}회 × ${money(worker.shiftPay ?? data.settings.shiftPay)}원`} v={`${money(agg.base)}원`} />
             {agg.blocks > 0 && <LineItem k="추가근무" sub={`${agg.blocks}회 × ${money(data.settings.otPay)}원`} v={`${money(agg.otPay)}원`} />}
@@ -7736,6 +7792,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
+      fixedSalary: !!wEdit.fixedSalary, fixedMonthlyPay: opt(wEdit.fixedMonthlyPay),
       code: wEdit.code || String(Math.floor(100000 + Math.random() * 900000)),
       phone: (wEdit.phone || "").trim(), bankName: (wEdit.bankName || "").trim(), accountNumber: (wEdit.accountNumber || "").trim(),
       address: (wEdit.address || "").trim(),
@@ -8842,7 +8899,20 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
             </Field>
 
             <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2, marginBottom: 4 }}>아래는 이 근무자의 기본 급여예요 (현장 구분 없이 적용).</div>
-            {settings.payMode === "shift" ? (
+            <div className="mb-3" style={{ background: C.tileSoft, border: `1px solid ${C.line}`, padding: 13 }}>
+              <Toggle label="정규직 (매달 고정 월급)" first
+                desc="출퇴근 시간과 상관없이 매달 같은 금액을 기본급으로 지급해요. 출퇴근 기록은 확인용으로 그대로 남아요."
+                on={!!wEdit.fixedSalary} onChange={(v) => setWEdit({ ...wEdit, fixedSalary: v })} />
+              {wEdit.fixedSalary && (
+                <div className="mt-2.5">
+                  <Field label="월 고정급여 (원)">
+                    <input type="number" value={wEdit.fixedMonthlyPay ?? ""} placeholder="예: 2500000"
+                      onChange={(e) => setWEdit({ ...wEdit, fixedMonthlyPay: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
+                  </Field>
+                </div>
+              )}
+            </div>
+            {wEdit.fixedSalary ? null : settings.payMode === "shift" ? (
               <div className="grid grid-cols-2 gap-2">
                 <Field label="1타임 시간 · 비우면 기본값">
                   <input type="number" step="0.5" value={wEdit.shiftHours ?? ""} placeholder={String(settings.shiftHours)}
