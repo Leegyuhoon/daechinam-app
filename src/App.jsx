@@ -751,33 +751,32 @@ function aggregate(records, worker, settings) {
     const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부
     const isPureOneOff = !isCover && r.flatPay != null; // 대신근무가 아닌, 순수 일회성 현장 근무
 
-    if (isCover && r.capBase) {
-      // "본인 기본근무 + 대체근무"가 하루에 섞여서 확정된 기록: 실제로는 이 시간 중
-      // 본인 기본 몫(1타임 또는 1일 소정근로)은 "정상 근무"이고, 그 이후 초과분만 진짜 "대신 근무"임.
-      // 예전엔 이 레코드 전체를 통째로 "대신근무"로만 잡아서, 총 타임수에서 본인 기본 몫이 통째로
-      // 빠지고, 대신근무 카드엔 "시간은 전체인데 금액은 캡핑된 1타임분"이라 서로 안 맞았음.
+    if (isCover) {
+      // "대신 근무"로 표시된 기록이라도, 실제 근무시간이 본인의 정상 1타임(또는 1일 소정근로)보다 길면
+      // 그 초과분만 진짜 "대신 근무"이고, 나머지(본인 기본 몫)는 정상 근무로 잡아야 정확함.
+      // 예전엔 "기본근무+대체근무 확정(capBase)" 창을 실제로 거친 기록에만 이 분리를 적용했는데,
+      // 그 확인 절차 자체가 잘 실행되지 않는 경우가 있어서, capBase 유무와 상관없이 항상 이 계산을 적용하도록 함.
       const rp2 = resolvePay(worker, r.siteId, settings);
       const ownHours = shift ? sh : std;
       const extraHours = Math.max(0, p.net - ownHours);
+      const ownNet = Math.min(p.net, ownHours);
       if (extraHours > 0.001) {
         const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
         // 초과분(대신근무 몫)은 "추가근무 수당"이 아니라, 정상 타임/시급 단가 그대로 인정해야 정확함
-        // (예: 1타임 2시간을 더 일했으면 그만큼 1타임 정상 금액을 그대로 인정 — 소액의 추가수당이 아님)
         const extraPay = shift
           ? Math.round(extraHours / rp2.shiftHours) * rp2.shiftPay * hMult2
           : extraHours * rp2.wage * hMult2;
         coverCount++; coverMin += extraHours * 60; coverPay += extraPay;
       }
-      const ownNet = Math.min(p.net, ownHours);
-      times++; net += ownNet; pay += p.pay; // p.pay는 이미 본인 몫만큼만 캡핑된 금액
-      const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
-      b2.net += ownNet; b2.times++; b2.target += shift ? sh : 0;
-      if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
+      if (ownNet > 0.001) {
+        // 본인 기본 몫은 "본인 몫만 캡핑된" 가상 계산(calcPay의 capBase 로직 재사용)으로 정확한 지급액을 구해서 정상근무에 반영
+        const capP = calcPay({ ...r, capBase: true }, worker, settings);
+        times++; net += ownNet; pay += capP.pay;
+        const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
+        b2.net += ownNet; b2.times++; b2.target += shift ? sh : 0;
+        if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
+      }
       return;
-    }
-    if (isCover) {
-      coverCount++; coverMin += p.net * 60; coverPay += p.pay;
-      return; // 실제 근무시간(net/times)·지급합계(pay)에는 포함하지 않음
     }
     if (isPureOneOff) {
       oneOffCount++; oneOffMin += p.net * 60; oneOffPay += p.pay;
