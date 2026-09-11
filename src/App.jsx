@@ -5099,18 +5099,27 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 
   const isShiftMode = settings.payMode === "shift";
   const tot = rows.reduce((a, r) => {
-    // 정규직은 aggregate()의 pay가 "출퇴근 시간 × 기본 시급" 같은 엉뚱한 값으로 나올 수 있어서
-    // (개인 시급을 따로 설정 안 하니까), 지급합계엔 그 값 대신 실제 월급 총액을 넣음.
-    // 월 단위로 볼 때만 월급 전체를 더하고, 일/주 단위에서는 어차피 못 쪼개니 지급합계에서 빼둠(시간은 그대로 집계됨).
-    const payForTotal = r.w.fixedSalary ? (mode === "month" ? Number(r.w.fixedMonthlyPay) || 0 : 0) : r.pay;
+    // "지급 합계"는 타임제/시급제 근무자만의 순수 계산값으로 유지함 — 정규직을 섞으면(개인 시급이 없어서
+    // 회사 기본 시급으로 엉뚱하게 계산된 값이 섞여) 숫자가 틀려짐. 그래서 정규직은 아예 빼고,
+    // 대신근무·일회성처럼 "정규직" 몫을 별도(fixedCount·fixedPay)로 완전히 분리해서 집계함.
+    if (r.w.fixedSalary) {
+      return {
+        ...a,
+        fixedCount: a.fixedCount + 1,
+        fixedPay: a.fixedPay + (mode === "month" ? Number(r.w.fixedMonthlyPay) || 0 : 0),
+        coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
+        oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
+      };
+    }
     return {
-      net: a.net + r.net, pay: a.pay + payForTotal, days: a.days + r.days, times: a.times + r.times,
+      ...a,
+      net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
       blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
       coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
       oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
     };
-  }, { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0 });
-  const maxNet = Math.max(1, ...rows.map((r) => r.net));
+  }, { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0, fixedCount: 0, fixedPay: 0 });
+  const maxNet = Math.max(1, ...rows.filter((r) => !r.w.fixedSalary).map((r) => r.net), 1);
 
   const downloadCsv = () => {
     const head = isShiftMode
@@ -5271,13 +5280,27 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
           </div>
         </button>
       )}
-      {(tot.coverCount > 0 || tot.oneOffCount > 0) && (
+      {tot.fixedCount > 0 && mode === "month" && (
+        <button onClick={() => setStatDetail("fixed")} className="pressable w-full text-left">
+          <div className="mx-4 mt-0.5" style={{ background: C.tile, padding: "12px 13px" }}>
+            <div className="flex items-center justify-between">
+              <Eyebrow>정규직 월급 (타임제 지급합계와 별도 집계)</Eyebrow>
+              <ChevronRight size={14} color={C.sub} />
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
+              <Num size={15} color={C.text}>{tot.fixedCount}명</Num>
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.fixedPay)}원</span>
+            </div>
+          </div>
+        </button>
+      )}
+      {(tot.coverCount > 0 || tot.oneOffCount > 0 || tot.fixedCount > 0) && (
         <div className="mx-4 mt-0.5" style={{ background: C.text, padding: "12px 13px" }}>
           <div className="flex items-center justify-between gap-2" style={{ minWidth: 0 }}>
-            <Eyebrow dark>실제 총 지급액 (지급합계 + 대신근무 + 일회성)</Eyebrow>
+            <Eyebrow dark>실제 총 지급액 (지급합계 + 대신근무 + 일회성 + 정규직)</Eyebrow>
           </div>
           <div className="mt-1" style={{ whiteSpace: "nowrap" }}>
-            <Num size={17} weight={900} color="#fff">{money(tot.pay + (tot.coverPay || 0) + (tot.oneOffPay || 0))}원</Num>
+            <Num size={17} weight={900} color="#fff">{money(tot.pay + (tot.coverPay || 0) + (tot.oneOffPay || 0) + (tot.fixedPay || 0))}원</Num>
           </div>
         </div>
       )}
@@ -5303,7 +5326,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       {/* 통계 상세보기 */}
       <Modal open={!!statDetail} onClose={() => setStatDetail(null)}>
         {statDetail && (() => {
-          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록", cover: "대신 근무 상세", oneOff: "일회성 현장 근무 상세" };
+          const titles = { times: isShiftMode ? "타임·근무시간 상세" : "근무시간 상세", pay: "지급 합계 상세", ot: "추가 인정 상세", short: "부족시간 상세", outside: "현장 밖 퇴근 기록", cover: "대신 근무 상세", oneOff: "일회성 현장 근무 상세", fixed: "정규직 월급 상세" };
           return (
             <>
               <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{titles[statDetail]}</div>
@@ -5391,9 +5414,24 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                   })}
                   {tot.oneOffCount === 0 && <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>해당 기록이 없어요.</div>}
                 </div>
+              ) : statDetail === "fixed" ? (
+                <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
+                  {rows.filter((r) => r.w.fixedSalary).sort((a, b) => (Number(b.w.fixedMonthlyPay) || 0) - (Number(a.w.fixedMonthlyPay) || 0)).map((r) => (
+                    <Tile key={r.w.id} onClick={() => { setStatDetail(null); setDetail(r.w.id); }} style={{ padding: "11px 13px" }}>
+                      <div className="flex items-center justify-between">
+                        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.w.name}</span>
+                        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.coral }}>{money(r.w.fixedMonthlyPay || 0)}원</span>
+                      </div>
+                    </Tile>
+                  ))}
+                  {rows.filter((r) => r.w.fixedSalary).length === 0 && (
+                    <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "8px 0" }}>해당 근무자가 없어요.</div></Tile>
+                  )}
+                </div>
               ) : (
                 <div className="flex flex-col gap-0.5" style={{ background: C.grout, maxHeight: 420, overflowY: "auto" }}>
                   {rows
+                    .filter((r) => !r.w.fixedSalary) // 정규직은 위의 "정규직 월급"으로 따로 다뤄서, 여기(타임제 지급합계 등)엔 안 섞음
                     .filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true)
                     .sort((a, b) => statDetail === "pay" ? b.pay - a.pay : statDetail === "ot" ? b.otMin - a.otMin : statDetail === "short" ? b.shortMin - a.shortMin : b.net - a.net)
                     .map((r) => (
@@ -5409,7 +5447,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                         </div>
                       </Tile>
                     ))}
-                  {rows.filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true).length === 0 && (
+                  {rows.filter((r) => !r.w.fixedSalary).filter((r) => statDetail === "ot" ? r.blocks > 0 : statDetail === "short" ? r.shortMin > 0 : true).length === 0 && (
                     <Tile><div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "8px 0" }}>해당 근무자가 없어요.</div></Tile>
                   )}
                 </div>
@@ -6264,27 +6302,30 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   <div style={{ fontSize: 10, color: C.onDarkSub, marginTop: 3 }}>
                     가운데 선 = 계약 기준 (1일 {agg.std.toFixed(1)}시간) · 선 위는 초과, 선 아래는 부족
                   </div>
-                  <div className="flex items-stretch gap-1 mt-2.5" style={{ height: 108 }}>
-                    {diffs.map(([d, m]) => (
-                      <div key={d} className="flex flex-col items-center" style={{ flex: 1, height: "100%", minWidth: 0 }}>
-                        <div style={{ height: 20, display: "flex", alignItems: "flex-end", overflow: "visible" }}>
-                          {m > 0 && <span style={{ fontSize: 8.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>+{minStr(m)}</span>}
+                  <div style={{ overflowX: "auto" }}>
+                    <div className="flex items-stretch gap-1" style={{ height: 108, minWidth: diffs.length * 32 }}>
+                      {diffs.map(([d, m]) => (
+                        <div key={d} className="flex flex-col items-center" style={{ flex: 1, height: "100%", minWidth: 30 }}>
+                          <div style={{ height: 20, display: "flex", alignItems: "flex-end", overflow: "visible" }}>
+                            {m > 0 && <span style={{ fontSize: 8.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>+{minStr(m)}</span>}
+                          </div>
+                          <div style={{ flex: 1, position: "relative", width: "100%" }}>
+                            <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
+                            {m >= 0 ? (
+                              <div style={{ position: "absolute", bottom: "50%", left: "18%", right: "18%", height: `${(m / maxAbs) * 40}px`, background: C.blue, minHeight: m > 0 ? 2 : 0, borderRadius: "2px 2px 0 0" }} />
+                            ) : (
+                              <div style={{ position: "absolute", top: "50%", left: "18%", right: "18%", height: `${(-m / maxAbs) * 40}px`, background: C.red, borderRadius: "0 0 2px 2px" }} />
+                            )}
+                          </div>
+                          <div style={{ height: 20, display: "flex", alignItems: "flex-start", overflow: "visible" }}>
+                            {m < 0 && <span style={{ fontSize: 8.5, fontWeight: 900, color: C.red, whiteSpace: "nowrap" }}>−{minStr(-m)}</span>}
+                          </div>
+                          <div style={{ fontSize: 9, color: C.onDarkSub, marginTop: 3, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
                         </div>
-                        <div style={{ flex: 1, position: "relative", width: "100%" }}>
-                          <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
-                          {m >= 0 ? (
-                            <div style={{ position: "absolute", bottom: "50%", left: "18%", right: "18%", height: `${(m / maxAbs) * 40}px`, background: C.blue, minHeight: m > 0 ? 2 : 0, borderRadius: "2px 2px 0 0" }} />
-                          ) : (
-                            <div style={{ position: "absolute", top: "50%", left: "18%", right: "18%", height: `${(-m / maxAbs) * 40}px`, background: C.red, borderRadius: "0 0 2px 2px" }} />
-                          )}
-                        </div>
-                        <div style={{ height: 20, display: "flex", alignItems: "flex-start", overflow: "visible" }}>
-                          {m < 0 && <span style={{ fontSize: 8.5, fontWeight: 900, color: C.red, whiteSpace: "nowrap" }}>−{minStr(-m)}</span>}
-                        </div>
-                        <div style={{ fontSize: 9, color: C.onDarkSub, marginTop: 3, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
+                  {diffs.length > 10 && <div style={{ fontSize: 9.5, color: C.onDarkSub, marginTop: 3 }}>← 좌우로 밀어서 전체를 볼 수 있어요</div>}
                 </div>
               );
             })() : (
@@ -6296,20 +6337,23 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               <div style={{ fontSize: 10, color: C.onDarkSub, marginTop: 3 }}>
                 {agg.shift ? `기준선 = 타임당 ${agg.sh}시간 × 그날 타임 수` : `기준선 = 1일 ${agg.std}시간`} · 막대가 높을수록 그날 실제 근무시간이 많은 거예요
               </div>
-              <div className="flex items-stretch gap-0.5 mt-2.5" style={{ height: agg.shift ? 108 : 96 }}>
-                {dayList.map(([d, v]) => (
-                  <div key={d} style={{ flex: 1, height: "100%", minWidth: 0 }} className="flex flex-col items-center">
-                    <div style={{ height: 14, display: "flex", alignItems: "flex-end" }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 900, color: v.net >= v.target ? C.aqua : C.red, whiteSpace: "nowrap" }}>{hmc(v.net)}</span>
+              <div style={{ overflowX: "auto" }}>
+                <div className="flex items-stretch gap-1" style={{ height: agg.shift ? 108 : 96, minWidth: dayList.length * 32 }}>
+                  {dayList.map(([d, v]) => (
+                    <div key={d} style={{ flex: 1, height: "100%", minWidth: 30 }} className="flex flex-col items-center">
+                      <div style={{ height: 14, display: "flex", alignItems: "flex-end" }}>
+                        <span style={{ fontSize: 8.5, fontWeight: 900, color: v.net >= v.target ? C.aqua : C.red, whiteSpace: "nowrap" }}>{hmc(v.net)}</span>
+                      </div>
+                      <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end" }}>
+                        <div style={{ width: "100%", height: `${Math.min(100, (v.net / maxDay) * 100)}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2, borderRadius: "2px 2px 0 0" }} />
+                      </div>
+                      {agg.shift && <div style={{ fontSize: 8, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{v.times}타임</div>}
+                      <div style={{ fontSize: 8.5, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
                     </div>
-                    <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end" }}>
-                      <div style={{ width: "100%", height: `${Math.min(100, (v.net / maxDay) * 100)}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2, borderRadius: "2px 2px 0 0" }} />
-                    </div>
-                    {agg.shift && <div style={{ fontSize: 8, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{v.times}타임</div>}
-                    <div style={{ fontSize: 8.5, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+              {dayList.length > 10 && <div style={{ fontSize: 9.5, color: C.onDarkSub, marginTop: 3 }}>← 좌우로 밀어서 전체를 볼 수 있어요</div>}
             </div>
             )}
           </div>
