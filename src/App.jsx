@@ -682,6 +682,7 @@ function resolvePay(worker, siteId, settings) {
     stdHours: ov?.stdHours ?? worker?.stdHours ?? settings.stdHours,
     shiftHours: ov?.shiftHours ?? worker?.shiftHours ?? settings.shiftHours,
     shiftPay: ov?.shiftPay ?? worker?.shiftPay ?? settings.shiftPay,
+    dailyShifts: ov?.dailyShifts ?? 1, // 이 근무자가 이 현장에서 "하루에 보통 몇 타임을 하는지" — 대신근무와 섞인 날 본인 몫을 정확히 구분하는 데 씀
   };
 }
 
@@ -747,8 +748,13 @@ function aggregate(records, worker, settings) {
   records.forEach((r) => {
     if (r.outFlag) flags++;
     const p = calcPay(r, worker, settings);
-    if (p.open) return;
     const isCover = r.isExtra || !!r.coverForName; // 대신 근무 여부
+    if (p.open) {
+      // 아직 퇴근 전(진행 중)이라 시간·금액은 계산할 수 없지만, "대신근무 몇 건"이라는 건수에는 반영해야
+      // 지금 진행 중인 대신근무까지 포함해서 정확한 횟수가 보임(끝난 뒤에 시간·금액이 채워짐)
+      if (isCover) coverCount++;
+      return;
+    }
     const isPureOneOff = !isCover && r.flatPay != null; // 대신근무가 아닌, 순수 일회성 현장 근무
 
     if (isCover) {
@@ -757,7 +763,10 @@ function aggregate(records, worker, settings) {
       // 예전엔 "기본근무+대체근무 확정(capBase)" 창을 실제로 거친 기록에만 이 분리를 적용했는데,
       // 그 확인 절차 자체가 잘 실행되지 않는 경우가 있어서, capBase 유무와 상관없이 항상 이 계산을 적용하도록 함.
       const rp2 = resolvePay(worker, r.siteId, settings);
-      const ownHours = shift ? sh : std;
+      // 본인 몫(=대신근무가 아닌 정상 몫)은 "1타임"으로 무조건 가정하면 안 됨 — 팀장처럼 하루에 여러
+      // 타임을 도는 사람도 있기 때문. 그래서 근무자 설정에 등록해둔 "이 현장에서 하루 기본 타임 수"를
+      // 기준으로 본인 몫을 계산함(설정 안 해뒀으면 기존처럼 1타임으로 취급).
+      const ownHours = shift ? sh * (rp2.dailyShifts || 1) : std;
       const extraHours = Math.max(0, p.net - ownHours);
       const ownNet = Math.min(p.net, ownHours);
       if (extraHours > 0.001) {
@@ -769,11 +778,14 @@ function aggregate(records, worker, settings) {
         coverCount++; coverMin += extraHours * 60; coverPay += extraPay;
       }
       if (ownNet > 0.001) {
-        // 본인 기본 몫은 "본인 몫만 캡핑된" 가상 계산(calcPay의 capBase 로직 재사용)으로 정확한 지급액을 구해서 정상근무에 반영
-        const capP = calcPay({ ...r, capBase: true }, worker, settings);
-        times++; net += ownNet; pay += capP.pay;
+        // 본인 기본 몫의 지급액도 "하루 기본 타임 수"만큼 정확히 계산함(1타임 고정 가정 대신)
+        const hMult3 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+        const ownPay = shift
+          ? Math.round(ownNet / rp2.shiftHours) * rp2.shiftPay * hMult3
+          : ownNet * rp2.wage * hMult3;
+        times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
         const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
-        b2.net += ownNet; b2.times++; b2.target += shift ? sh : 0;
+        b2.net += ownNet; b2.times += ownNet / (shift ? rp2.shiftHours : 1); b2.target += shift ? sh : 0;
         if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
       }
       return;
@@ -9278,11 +9290,13 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                       <div key={sid}>
                         <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text, marginBottom: 5 }}>{site.name}</div>
                         {settings.payMode === "shift" ? (
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-3 gap-2">
                             <input type="number" step="0.5" value={ov.shiftHours ?? ""} placeholder={`시간 (기본 ${wEdit.shiftHours || settings.shiftHours})`}
                               onChange={(e) => setOv({ shiftHours: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
                             <input type="number" value={ov.shiftPay ?? ""} placeholder={`지급액 (기본 ${wEdit.shiftPay || settings.shiftPay})`}
                               onChange={(e) => setOv({ shiftPay: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
+                            <input type="number" step="1" value={ov.dailyShifts ?? ""} placeholder="하루 타임 수 (기본 1)"
+                              onChange={(e) => setOv({ dailyShifts: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
                           </div>
                         ) : (
                           <input type="number" value={ov.wage ?? ""} placeholder={`시급 (기본 ${wEdit.wage || settings.wage})`}
