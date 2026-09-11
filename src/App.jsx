@@ -721,6 +721,15 @@ function calcPay(rec, worker, settings) {
   };
 }
 
+// 정규직(월급 고정) 근무자의 급여 구성을 "기본급 X · 식대 Y · 총 Z원" 형태로 요약 — 여러 화면에서 재사용
+function fixedSalaryLine(worker) {
+  const items = worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0
+    ? worker.fixedSalaryItems
+    : [{ label: "기본급", amount: worker.fixedMonthlyPay || 0 }];
+  const total = items.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+  if (items.length === 1) return `${items[0].label} ${money(items[0].amount)}원`;
+  return `${items.map((it) => `${it.label} ${money(it.amount)}원`).join(" · ")} · 총 ${money(total)}원`;
+}
 function aggregate(records, worker, settings) {
   const shift = settings.payMode === "shift";
   const std = worker?.stdHours ?? settings.stdHours;
@@ -5696,7 +5705,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
                   <Num size={17}>{hmc(net)}</Num>
-                  {!w.fixedSalary && <div style={{ marginTop: 1 }}><Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num></div>}
+                  <div style={{ marginTop: 1 }}>
+                    {w.fixedSalary
+                      ? <Num size={12.5} color={C.coral} weight={700}>{money(w.fixedMonthlyPay || 0)}원</Num>
+                      : <Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num>}
+                  </div>
                 </div>
               </div>
               <div className="mt-2.5 flex items-center gap-2">
@@ -6599,7 +6612,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
             <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(weekAgg.net)}</Num></div>
             {worker.fixedSalary ? (
-              <div style={{ fontSize: 9.5, color: C.sub, fontWeight: 700, marginTop: 2 }}>월급 고정 · 금액은 월별 조회</div>
+              <div style={{ fontSize: 9.5, color: C.coral, fontWeight: 800, marginTop: 2, lineHeight: 1.5 }}>{fixedSalaryLine(worker)}</div>
             ) : (
               <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
             )}
@@ -6620,7 +6633,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
             <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(monthAgg.net)}</Num></div>
             {worker.fixedSalary ? (
-              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(worker.fixedMonthlyPay || 0)}원 (월급 고정)</div>
+              <div style={{ fontSize: 9.5, color: C.coral, fontWeight: 800, marginTop: 2, lineHeight: 1.5 }}>{fixedSalaryLine(worker)}</div>
             ) : (
               <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
             )}
