@@ -682,7 +682,7 @@ function resolvePay(worker, siteId, settings) {
     stdHours: ov?.stdHours ?? worker?.stdHours ?? settings.stdHours,
     shiftHours: ov?.shiftHours ?? worker?.shiftHours ?? settings.shiftHours,
     shiftPay: ov?.shiftPay ?? worker?.shiftPay ?? settings.shiftPay,
-    dailyShifts: ov?.dailyShifts ?? 1, // 이 근무자가 이 현장에서 "하루에 보통 몇 타임을 하는지" — 대신근무와 섞인 날 본인 몫을 정확히 구분하는 데 씀
+    dailyShifts: ov?.dailyShifts ?? worker?.dailyShifts ?? 1, // 이 근무자가 이 현장에서 "하루에 보통 몇 타임을 하는지" — 대신근무와 섞인 날 본인 몫을 정확히 구분하는 데 씀
   };
 }
 
@@ -8067,7 +8067,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       id: wEdit.id || uid(), name: wEdit.name.trim(),
       siteIds, siteId: siteIds[0] || null, // siteId는 하위호환용(대표 현장)
       wage: opt(wEdit.wage), stdHours: wEdit.fixedSalary ? fixedStdHours : opt(wEdit.stdHours),
-      shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
+      shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay), dailyShifts: opt(wEdit.dailyShifts),
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
@@ -9254,7 +9254,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
               )}
             </div>
             {wEdit.fixedSalary ? null : settings.payMode === "shift" ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <Field label="1타임 시간 · 비우면 기본값">
                   <input type="number" step="0.5" value={wEdit.shiftHours ?? ""} placeholder={String(settings.shiftHours)}
                     onChange={(e) => setWEdit({ ...wEdit, shiftHours: e.target.value })} style={inputStyle} />
@@ -9263,11 +9263,20 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                   <input type="number" value={wEdit.shiftPay ?? ""} placeholder={String(settings.shiftPay)}
                     onChange={(e) => setWEdit({ ...wEdit, shiftPay: e.target.value })} style={inputStyle} />
                 </Field>
+                <Field label="하루 타임 수 · 기본 1">
+                  <input type="number" step="1" value={wEdit.dailyShifts ?? ""} placeholder="1"
+                    onChange={(e) => setWEdit({ ...wEdit, dailyShifts: e.target.value })} style={inputStyle} />
+                </Field>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 <Field label="시급 (원)"><input type="number" value={wEdit.wage ?? ""} placeholder={String(settings.wage)} onChange={(e) => setWEdit({ ...wEdit, wage: e.target.value })} style={inputStyle} /></Field>
                 <Field label="1일 소정근로 (시간)"><input type="number" step="0.5" value={wEdit.stdHours ?? ""} placeholder={String(settings.stdHours)} onChange={(e) => setWEdit({ ...wEdit, stdHours: e.target.value })} style={inputStyle} /></Field>
+              </div>
+            )}
+            {!wEdit.fixedSalary && settings.payMode === "shift" && (
+              <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
+                이 근무자가 평소 하루에 몇 타임을 뛰는지예요. 대신근무와 본인 근무가 하루에 섞였을 때, 이 값만큼은 "본인 몫"으로 정확히 구분하는 데 쓰여요.
               </div>
             )}
 
