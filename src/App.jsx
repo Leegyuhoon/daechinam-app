@@ -6199,11 +6199,35 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           </Tile>
         </div>
 
+        {/* 기본 지급 (타임제 지급액 또는 정규직 기본급+식대 등) */}
+        {isFixed ? (
+          (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ id: "base", label: "기본급", amount: worker.fixedMonthlyPay || 0 }]).map((it) => (
+            <div key={it.id} className="mt-0.5" style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
+              <div className="flex items-center justify-between gap-2" style={{ minWidth: 0 }}>
+                <Eyebrow>{it.label}{mode !== "month" ? " (월 단위로만 지급)" : ""}</Eyebrow>
+                <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{mode === "month" ? `${money(it.amount)}원` : "—"}</span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="mt-0.5" style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
+            <div className="flex items-center justify-between gap-2" style={{ minWidth: 0 }}>
+              <Eyebrow>{agg.shift ? "타임제 지급액" : "시급제 지급액"}</Eyebrow>
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.pay)}원</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
+              {agg.shift
+                ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
+                : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
+            </div>
+          </div>
+        )}
+
         {agg.coverCount > 0 && (
           <button onClick={() => setWdStatDetail("cover")} className="pressable w-full text-left mt-0.5">
             <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
               <div className="flex items-center justify-between">
-                <Eyebrow>대신 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
+                <Eyebrow>대신 근무 (상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
@@ -6214,10 +6238,10 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           </button>
         )}
         {agg.oneOffCount > 0 && (
-          <button onClick={() => setWdStatDetail("oneOff")} className="pressable w-full text-left mt-2">
+          <button onClick={() => setWdStatDetail("oneOff")} className="pressable w-full text-left mt-0.5">
             <div style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
               <div className="flex items-center justify-between">
-                <Eyebrow>일회성 현장 근무 (아래 지급액에 포함되어 있음 · 상세 보기)</Eyebrow>
+                <Eyebrow>일회성 현장 근무 (상세 보기)</Eyebrow>
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
@@ -6245,11 +6269,27 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           </div>
         </Modal>
 
+        {/* 고정 수당(팀장수당·주유수당 등) — 각각 개별 카드로, 월 단위 조회일 때만 */}
+        {mode === "month" && !isFixed && allowances.map((a) => (
+          <div key={a.id} className="mt-0.5" style={{ background: C.tile, padding: "12px 13px", borderRadius: RADIUS_SM, boxShadow: SHADOW_SM }}>
+            <div className="flex items-center justify-between gap-2" style={{ minWidth: 0 }}>
+              <Eyebrow>{a.label}</Eyebrow>
+              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(a.amount)}원</span>
+            </div>
+          </div>
+        ))}
+        {mode !== "month" && (worker?.allowances || []).some((a) => Number(a.amount) > 0) && (
+          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, marginBottom: 2, lineHeight: 1.5 }}>
+            이 근무자는 고정 수당이 등록돼 있어요. 월별 보기로 전환하면 여기에 함께 표시·계산돼요.
+          </div>
+        )}
+
+        {/* 지급해야 할 금액 — 위의 모든 항목을 합친 순수 총액 */}
         {isFixed && mode !== "month" ? (
           (agg.coverCount > 0 || agg.oneOffCount > 0) && (
             <div className="mt-2" style={{ background: C.tile, padding: 14, borderRadius: RADIUS, boxShadow: SHADOW_SM }}>
               <Eyebrow>정규직은 월급이 고정이라, 이 기간의 금액은 따로 안 나뉘어요</Eyebrow>
-              <div className="mt-1.5" style={{ fontSize: 13, color: C.sub }}>대신근무·일회성 근무로 추가된 금액만 아래처럼 별도로 계산돼요. 전체 지급액은 "월" 단위로 조회해 주세요.</div>
+              <div className="mt-1.5" style={{ fontSize: 13, color: C.sub }}>대신근무·일회성 근무로 추가된 금액만 위에 별도로 계산돼요. 전체 지급액은 "월" 단위로 조회해 주세요.</div>
             </div>
           )
         ) : (
@@ -6257,31 +6297,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
           padding: 18, borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
         }}>
-          <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액</div>
+          <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700 }}>지급해야 할 금액 (위 항목 전부 합산)</div>
           <div className="mt-1.5" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}><Num size={26} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 15 }}> 원</span></Num></div>
-          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-            {isFixed
-              ? `${fixedSalaryLine(worker)}${(agg.coverCount > 0 || agg.oneOffCount > 0) ? " + 대신·일회성 근무분" : ""}`
-              : agg.shift
-              ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
-              : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
-          </div>
-          {allowances.length > 0 && (
-            <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.25)" }}>
-              {allowances.map((a) => (
-                <div key={a.id} className="flex items-center justify-between" style={{ marginTop: 3 }}>
-                  <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: 700 }}>{a.label}</span>
-                  <span style={{ color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>+{money(a.amount)}원</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-        )}
-        {mode !== "month" && (worker?.allowances || []).some((a) => Number(a.amount) > 0) && (
-          <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.5 }}>
-            이 근무자는 고정 수당이 등록돼 있어요. 월별 보기로 전환하면 여기에 함께 표시·계산돼요.
-          </div>
         )}
 
         {dayList.length > 1 && (
@@ -6307,7 +6325,8 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       {diffs.map(([d, m]) => (
                         <div key={d} className="flex flex-col items-center" style={{ flex: 1, height: "100%", minWidth: 30 }}>
                           <div style={{ height: 20, display: "flex", alignItems: "flex-end", overflow: "visible" }}>
-                            {m > 0 && <span style={{ fontSize: 8.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>+{minStr(m)}</span>}
+                            {m > 0 ? <span style={{ fontSize: 8.5, fontWeight: 900, color: C.blue, whiteSpace: "nowrap" }}>+{minStr(m)}</span>
+                              : m === 0 ? <span style={{ fontSize: 8.5, fontWeight: 700, color: C.onDarkSub, whiteSpace: "nowrap" }}>정확</span> : null}
                           </div>
                           <div style={{ flex: 1, position: "relative", width: "100%" }}>
                             <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.3)" }} />
