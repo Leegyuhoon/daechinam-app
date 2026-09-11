@@ -6241,7 +6241,27 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
 
         {dayList.length > 1 && (
           <div className="mt-4" style={{ border: `1px solid ${C.lineDark}`, padding: 13 }}>
-            <Eyebrow dark>{isFixed ? `일자별 근무시간 · 1일 ${agg.std}시간 기준` : agg.shift ? `일자별 근무시간 · 타임당 ${agg.sh}시간 기준` : `일자별 근무시간 · 기준선 ${agg.std}시간`}</Eyebrow>
+            <Eyebrow dark>{isFixed ? `일자별 근무시간 · 1일 ${agg.std}시간 기준 (기준과 다른 날만 표시)` : agg.shift ? `일자별 근무시간 · 타임당 ${agg.sh}시간 기준` : `일자별 근무시간 · 기준선 ${agg.std}시간`}</Eyebrow>
+            {isFixed ? (() => {
+              // 정규직은 매일 거의 같은 시간을 일해서, 보통 막대그래프로는 전부 비슷비슷해 눈에 안 들어옴.
+              // 그래서 "기준시간과의 차이(분)"만 위(초과)/아래(부족)로 튀어나오게 그려서, 이상한 날만 한눈에 띄게 함.
+              const diffs = dayList.map(([d, v]) => [d, Math.round((v.net - v.target) * 60)]);
+              const maxAbs = Math.max(10, ...diffs.map(([, m]) => Math.abs(m)));
+              return (
+                <div className="flex items-stretch gap-0.5 mt-3" style={{ height: 74 }}>
+                  {diffs.map(([d, m]) => (
+                    <div key={d} style={{ flex: 1, height: "100%", position: "relative" }} title={`${d} ${m === 0 ? "정확" : m > 0 ? `+${minStr(m)}` : `−${minStr(-m)}`}`}>
+                      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255,255,255,0.18)" }} />
+                      {m >= 0 ? (
+                        <div style={{ position: "absolute", bottom: "50%", left: "15%", right: "15%", height: `${(m / maxAbs) * 37}px`, background: C.blue, minHeight: m > 0 ? 2 : 0 }} />
+                      ) : (
+                        <div style={{ position: "absolute", top: "50%", left: "15%", right: "15%", height: `${(-m / maxAbs) * 37}px`, background: C.red }} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })() : (
             <div className="flex items-end gap-0.5 mt-3" style={{ height: 74 }}>
               {dayList.map(([d, v]) => (
                 <div key={d} style={{ flex: 1, height: "100%" }} className="flex flex-col justify-end" title={`${d} ${hmc(v.net)}`}>
@@ -6249,6 +6269,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 </div>
               ))}
             </div>
+            )}
             <div className="flex justify-between mt-1.5" style={{ color: C.onDarkSub, fontSize: 10, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
               <span>{dayList[0][0].slice(5)}</span><span>{dayList[dayList.length - 1][0].slice(5)}</span>
             </div>
