@@ -6100,7 +6100,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
             </div>
             <div style={{ color: C.onDarkSub, fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {labelOf(mode, anchor)} · {worker.fixedSalary ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원` : agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
+              {labelOf(mode, anchor)} · {worker.fixedSalary ? fixedSalaryLine(worker) : agg.shift ? `1타임 ${agg.sh}시간 / ${money(worker.shiftPay ?? settings.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
             </div>
           </div>
         </div>
@@ -6131,19 +6131,19 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
       <div className="p-4">
         <div className="grid grid-cols-2 gap-0.5" style={{ background: C.grout }}>
           <Tile style={{ padding: 15, minWidth: 0 }}>
-            <Eyebrow>{agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
-            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{agg.shift ? agg.times : hmc(agg.net)}{agg.shift && <span style={{ fontSize: 14 }}>회</span>}</Num></div>
-            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
+            <Eyebrow>{isFixed ? "총 근무일수" : agg.shift ? "총 타임 수" : "총 근무시간"}</Eyebrow>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{isFixed ? agg.days : agg.shift ? agg.times : hmc(agg.net)}{(isFixed || agg.shift) && <span style={{ fontSize: 14 }}>{isFixed ? "일" : "회"}</span>}</Num></div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>{isFixed ? hmc(agg.net) + " 근무" : agg.shift ? `${agg.days}일 출근` : hm(agg.net)}</div>
           </Tile>
           <Tile style={{ padding: 15, minWidth: 0 }}>
-            <Eyebrow>{agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
-            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{agg.shift ? hmc(agg.net) : agg.days}{!agg.shift && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
+            <Eyebrow>{isFixed || agg.shift ? "실제 근무시간" : "총 근무일수"}</Eyebrow>
+            <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={18}>{isFixed || agg.shift ? hmc(agg.net) : agg.days}{!(isFixed || agg.shift) && <span style={{ fontSize: 14 }}>일</span>}</Num></div>
             <div style={{ color: C.sub, fontSize: 11.5, marginTop: 2 }}>
-              {agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
+              {isFixed ? (agg.days ? `1일 평균 ${minStr((agg.net / agg.days) * 60)}` : "기록 없음") : agg.times ? `1타임 평균 ${minStr((agg.net / agg.times) * 60)}` : "기록 없음"}
             </div>
           </Tile>
           <Tile soft style={{ padding: 15, minWidth: 0 }}>
-            <Eyebrow>{agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
+            <Eyebrow>{isFixed ? "추가근무" : agg.shift ? `추가 인정 ${agg.blocks}회` : "추가근무"}</Eyebrow>
             <div className="mt-1.5" style={{ whiteSpace: "nowrap" }}><Num size={16} weight={800} color={C.blue}>+{minStr(agg.otMin)}</Num></div>
             {agg.shift && !isFixed && <div style={{ color: C.sub, fontSize: 11, marginTop: 3, whiteSpace: "nowrap" }}>{money(agg.otPay)}원</div>}
           </Tile>
@@ -6216,7 +6216,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <div className="mt-1.5" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}><Num size={26} color="#fff" weight={900}>{money(totalPay)}<span style={{ fontSize: 15 }}> 원</span></Num></div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 13.5, marginTop: 5, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
             {isFixed
-              ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원${(agg.coverCount > 0 || agg.oneOffCount > 0) ? " + 대신·일회성 근무분" : ""}`
+              ? `${fixedSalaryLine(worker)}${(agg.coverCount > 0 || agg.oneOffCount > 0) ? " + 대신·일회성 근무분" : ""}`
               : agg.shift
               ? `타임 ${agg.times}회 × ${money(worker.shiftPay ?? settings.shiftPay)}원${agg.blocks ? ` + 추가 ${agg.blocks}회 × ${money(settings.otPay)}원` : ""}`
               : `${agg.net.toFixed(2)}시간 × ${money(agg.wage)}원${settings.otPremium && agg.ot > 0.01 ? " (연장 1.5배 포함)" : ""}`}
@@ -6241,7 +6241,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
 
         {dayList.length > 1 && (
           <div className="mt-4" style={{ border: `1px solid ${C.lineDark}`, padding: 13 }}>
-            <Eyebrow dark>{agg.shift ? `일자별 근무시간 · 타임당 ${agg.sh}시간 기준` : `일자별 근무시간 · 기준선 ${agg.std}시간`}</Eyebrow>
+            <Eyebrow dark>{isFixed ? `일자별 근무시간 · 1일 ${agg.std}시간 기준` : agg.shift ? `일자별 근무시간 · 타임당 ${agg.sh}시간 기준` : `일자별 근무시간 · 기준선 ${agg.std}시간`}</Eyebrow>
             <div className="flex items-end gap-0.5 mt-3" style={{ height: 74 }}>
               {dayList.map(([d, v]) => (
                 <div key={d} style={{ flex: 1, height: "100%" }} className="flex flex-col justify-end" title={`${d} ${hmc(v.net)}`}>
@@ -7167,7 +7167,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         </div>
         <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
           {worker.fixedSalary
-            ? `월 고정급여 ${money(worker.fixedMonthlyPay || 0)}원`
+            ? fixedSalaryLine(worker)
             : agg.shift
             ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
             : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
