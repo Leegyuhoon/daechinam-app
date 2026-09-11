@@ -7209,7 +7209,10 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
 
       {/* 근무 요약 */}
       <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.line }}>
-        {(agg.shift
+        {(p.isFixedSalary
+          ? [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
+             ["초과 누계", `+${minStr(agg.otMin)}`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
+          : agg.shift
           ? [["근무 타임", `${agg.times}회`, C.text], ["근무시간", hmc(agg.net), C.text],
              ["추가 인정", `${agg.blocks}회`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
           : [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
@@ -7329,25 +7332,37 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
 
       {/* 일자별 */}
       <div className="flex items-center justify-between mt-6 mb-2">
-        <Eyebrow>{agg.shift ? "타임별 근무 내역" : "일자별 근무 내역"}</Eyebrow>
+        <Eyebrow>{p.isFixedSalary ? "출퇴근 확인 (참고용 · 지급액과 무관)" : agg.shift ? "타임별 근무 내역" : "일자별 근무 내역"}</Eyebrow>
         <button onClick={() => setWithDays(!withDays)} className="no-print" style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>
           복사에 {withDays ? "포함됨" : "제외됨"}
         </button>
       </div>
+      {p.isFixedSalary && (
+        <div style={{ fontSize: 11, color: C.sub, lineHeight: 1.6, marginBottom: 8 }}>
+          정규직은 근무시간과 무관하게 기본급이 고정 지급돼요. 아래는 출퇴근 확인용 참고 기록이고, 지급액 계산에는 반영되지 않아요. (대신근무·일회성 근무는 사전 협의된 별도 항목이라 위 "지급 내역"에 따로 표시돼요.)
+        </div>
+      )}
       <div style={{ overflowX: "auto" }}>
-        <div style={{ borderTop: `2px solid ${C.text}`, minWidth: 420 }}>
+        <div style={{ borderTop: `2px solid ${C.text}`, minWidth: p.isFixedSalary ? 340 : 420 }}>
           <div className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 800, color: C.sub, letterSpacing: "0.04em" }}>
             <span style={{ width: 58 }}>날짜</span>
             <span style={{ width: 70 }}>현장</span>
             <span style={{ width: 84, textAlign: "right" }}>출퇴근</span>
             <span style={{ width: 46, textAlign: "right" }}>근무</span>
-            <span style={{ width: 54, textAlign: "right" }}>증감</span>
-            <span style={{ width: 80, textAlign: "right" }}>금액</span>
+            {p.isFixedSalary ? (
+              <span style={{ width: 60, textAlign: "right" }}>증감</span>
+            ) : (
+              <>
+                <span style={{ width: 54, textAlign: "right" }}>증감</span>
+                <span style={{ width: 80, textAlign: "right" }}>금액</span>
+              </>
+            )}
           </div>
           {recs.map((r) => {
             const q = calcPay(r, worker, data.settings);
             const d = parseKey(r.date);
             const shortish = q.shortMin >= data.settings.shortThreshold;
+            const fixedDiffMin = p.isFixedSalary ? Math.round((q.net - agg.std) * 60) : 0;
             return (
               <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
                 <span style={{ width: 58, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 700, color: C.text }}>
@@ -7360,21 +7375,35 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
                 </span>
                 <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
                 <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
-                <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
-                  {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
-                </span>
-                <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }}>{money(q.pay)}</span>
+                {p.isFixedSalary ? (
+                  <span style={{ width: 60, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: fixedDiffMin > 0 ? C.blue : fixedDiffMin < 0 ? C.red : C.sub }}>
+                    {fixedDiffMin === 0 ? "정확" : fixedDiffMin > 0 ? `+${minStr(fixedDiffMin)}` : `−${minStr(-fixedDiffMin)}`}
+                  </span>
+                ) : (
+                  <>
+                    <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
+                      {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
+                    </span>
+                    <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }}>{money(q.pay)}</span>
+                  </>
+                )}
               </div>
             );
           })}
           {recs.length === 0 && <div style={{ padding: "14px 0", fontSize: 12.5, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
           <div className="flex items-center" style={{ padding: "9px 0", borderBottom: `2px solid ${C.text}` }}>
             <span style={{ width: 178, fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              합계 {agg.shift ? `${agg.times}타임 (${agg.days}일)` : `${agg.days}일`}
+              합계 {p.isFixedSalary ? `${agg.days}일` : agg.shift ? `${agg.times}타임 (${agg.days}일)` : `${agg.days}일`}
             </span>
             <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net)}</Num></span>
-            <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
-            <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{money(agg.pay)}</Num></span>
+            {p.isFixedSalary ? (
+              <span style={{ width: 60, textAlign: "right" }} />
+            ) : (
+              <>
+                <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
+                <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{money(agg.pay)}</Num></span>
+              </>
+            )}
           </div>
         </div>
       </div>
