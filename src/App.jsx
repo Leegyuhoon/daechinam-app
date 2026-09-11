@@ -5098,12 +5098,18 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
     .sort((a, b) => b.net - a.net), [workers, inRange, settings, qNorm]);
 
   const isShiftMode = settings.payMode === "shift";
-  const tot = rows.reduce((a, r) => ({
-    net: a.net + r.net, pay: a.pay + r.pay, days: a.days + r.days, times: a.times + r.times,
-    blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
-    coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
-    oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
-  }), { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0 });
+  const tot = rows.reduce((a, r) => {
+    // 정규직은 aggregate()의 pay가 "출퇴근 시간 × 기본 시급" 같은 엉뚱한 값으로 나올 수 있어서
+    // (개인 시급을 따로 설정 안 하니까), 지급합계엔 그 값 대신 실제 월급 총액을 넣음.
+    // 월 단위로 볼 때만 월급 전체를 더하고, 일/주 단위에서는 어차피 못 쪼개니 지급합계에서 빼둠(시간은 그대로 집계됨).
+    const payForTotal = r.w.fixedSalary ? (mode === "month" ? Number(r.w.fixedMonthlyPay) || 0 : 0) : r.pay;
+    return {
+      net: a.net + r.net, pay: a.pay + payForTotal, days: a.days + r.days, times: a.times + r.times,
+      blocks: a.blocks + r.blocks, otMin: a.otMin + r.otMin, shortMin: a.shortMin + r.shortMin, flags: a.flags + r.flags,
+      coverCount: a.coverCount + (r.coverCount || 0), coverMin: a.coverMin + (r.coverMin || 0), coverPay: a.coverPay + (r.coverPay || 0),
+      oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
+    };
+  }, { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0 });
   const maxNet = Math.max(1, ...rows.map((r) => r.net));
 
   const downloadCsv = () => {
@@ -6290,12 +6296,17 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               <div style={{ fontSize: 10, color: C.onDarkSub, marginTop: 3 }}>
                 {agg.shift ? `기준선 = 타임당 ${agg.sh}시간 × 그날 타임 수` : `기준선 = 1일 ${agg.std}시간`} · 막대가 높을수록 그날 실제 근무시간이 많은 거예요
               </div>
-              <div className="flex items-end gap-0.5 mt-2.5" style={{ height: 90 }}>
+              <div className="flex items-stretch gap-0.5 mt-2.5" style={{ height: agg.shift ? 108 : 96 }}>
                 {dayList.map(([d, v]) => (
-                  <div key={d} style={{ flex: 1, height: "100%", minWidth: 0 }} className="flex flex-col items-center justify-end">
-                    <span style={{ fontSize: 8.5, fontWeight: 900, color: v.net >= v.target ? C.aqua : C.red, whiteSpace: "nowrap", marginBottom: 2 }}>{hmc(v.net)}</span>
-                    <div style={{ width: "100%", height: `${(v.net / maxDay) * 100}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2, borderRadius: "2px 2px 0 0" }} />
-                    <div style={{ fontSize: 8.5, color: C.onDarkSub, marginTop: 3, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
+                  <div key={d} style={{ flex: 1, height: "100%", minWidth: 0 }} className="flex flex-col items-center">
+                    <div style={{ height: 14, display: "flex", alignItems: "flex-end" }}>
+                      <span style={{ fontSize: 8.5, fontWeight: 900, color: v.net >= v.target ? C.aqua : C.red, whiteSpace: "nowrap" }}>{hmc(v.net)}</span>
+                    </div>
+                    <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end" }}>
+                      <div style={{ width: "100%", height: `${Math.min(100, (v.net / maxDay) * 100)}%`, background: v.net >= v.target ? C.aqua : C.red, minHeight: 2, borderRadius: "2px 2px 0 0" }} />
+                    </div>
+                    {agg.shift && <div style={{ fontSize: 8, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{v.times}타임</div>}
+                    <div style={{ fontSize: 8.5, color: C.onDarkSub, marginTop: 2, whiteSpace: "nowrap" }}>{d.slice(5)}</div>
                   </div>
                 ))}
               </div>
