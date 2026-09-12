@@ -784,6 +784,7 @@ function aggregate(records, worker, settings) {
           ? Math.round(ownNet / rp2.shiftHours) * rp2.shiftPay * hMult3
           : ownNet * rp2.wage * hMult3;
         times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
+        if (shift && !isFixedWorker && !p.holiday) base += ownPay;
         const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
         b2.net += ownNet; b2.times += ownNet / (shift ? rp2.shiftHours : 1); b2.target += shift ? sh : 0;
         if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
@@ -841,13 +842,15 @@ function aggregate(records, worker, settings) {
     Object.entries(byDate).forEach(([date, b]) => { if (b.holiday) holidayDays++; });
   }
 
-  // times는 "1타임 금액이 회사 표준의 몇 배인지"로 가중치를 줘서 계산했기 때문에 소수가 될 수 있음 —
-  // 실제로는 항상 정수 개념(몇 타임)이어야 하므로, 최종적으로 반올림해서 내보냄.
+  // times는 시간을 일일이 더해서 계산하다 보니 미세한 소수점 오차가 쌓여 반올림이 어긋날 수 있었음.
+  // 그래서 타임제일 때는, 시간을 더하는 대신 "실제 계산된 정상 지급액(base) ÷ 회사 표준 1타임 금액"으로
+  // 거꾸로 계산함 — 이렇게 하면 "타임 수 × 표준단가 = 지급액"이 오차 없이 항상 정확히 맞음.
+  const finalTimes = (shift && !isFixedWorker && settings.shiftPay > 0) ? Math.round(base / settings.shiftPay) : Math.round(times);
   const roundedByDate = {};
   Object.entries(byDate).forEach(([date, b]) => { roundedByDate[date] = { ...b, times: Math.round(b.times) }; });
 
   return {
-    net, days: Object.keys(byDate).length, times: Math.round(times), pay, base, otPay, blocks,
+    net, days: Object.keys(byDate).length, times: finalTimes, pay, base, otPay, blocks,
     otMin, shortMin, overMin, ot: otMin / 60, short: shortMin / 60,
     holidayNet, holidayPay, holidayDays, holidayMultiplier: settings.holidayMultiplier || 1.5,
     byDate: roundedByDate, std, sh, wage: worker?.wage ?? settings.wage, flags, shift,
@@ -6307,14 +6310,24 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
             {recs.filter((r) => wdStatDetail === "cover" ? (r.isExtra || !!r.coverForName) : (!r.isExtra && !r.coverForName && r.flatPay != null))
               .sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                 const q = calcPay(r, worker, settings);
-                // flatPay(고정금액 승인 방식)로 등록된 것도 있고, 정상 출퇴근(clockIn/clockOut) 방식으로 등록된 것도 있어서,
-                // 실제 지급액은 항상 calcPay로 다시 계산한 값(q.pay)을 써야 정확함 — r.flatPay만 믿으면
-                // 정상 출퇴근 방식인 경우 그 필드가 비어있어서 늘 0원으로 잘못 나왔음.
+                let displayNet = q.net, displayPay = q.pay;
+                if (wdStatDetail === "cover" && !q.open) {
+                  // 대신근무 카드·집계와 정확히 같은 방식으로: 본인 정상 몫(하루 기본 타임 수만큼)은 빼고,
+                  // 초과분(진짜 대신근무에 해당하는 부분)의 시간·금액만 여기 보여줌 — 전체 레코드 금액이 아님
+                  const rpx = resolvePay(worker, r.siteId, settings);
+                  const ownHoursX = agg.shift ? agg.sh * (rpx.dailyShifts || 1) : agg.std;
+                  const extraHoursX = Math.max(0, q.net - ownHoursX);
+                  const hMultX = q.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+                  displayNet = extraHoursX;
+                  displayPay = agg.shift
+                    ? Math.round(extraHoursX / rpx.shiftHours) * rpx.shiftPay * hMultX
+                    : extraHoursX * rpx.wage * hMultX;
+                }
                 return (
                   <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
                     <div className="flex items-center justify-between">
-                      <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}{!q.open && ` · ${hmc(q.net)}`}</span>
-                      <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{q.open ? "진행중" : `${money(q.pay)}원`}</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}{!q.open && ` · ${hmc(displayNet)}`}</span>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{q.open ? "진행중" : `${money(displayPay)}원`}</span>
                     </div>
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
                   </div>
