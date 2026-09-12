@@ -7088,12 +7088,12 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                             )}
                           </div>
                         </div>
-                        <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                        <div style={{ fontSize: 11, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
                           {r.clockOut && ` · ${hmc(p.net)}`}
                         </div>
                         {r.clockOut && !(worker.fixedSalary && !p.flat) && (
-                          <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
+                          <div style={{ fontSize: 15, fontWeight: 900, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.coral, marginTop: 3 }}>
                             {p.pending
                               ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
                               : r.capBase && r.flatPay == null && settings.payMode === "shift"
@@ -7107,10 +7107,22 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                                   const hMultC = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
                                   const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
                                   const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
-                                  return `${money(ownPayC + extraPayC)}원 (본인 ${money(ownPayC)} + 대신 ${money(extraPayC)})`;
+                                  return `${money(ownPayC + extraPayC)}원`;
                                 })()
-                              : `${money(p.pay)}원${p.flat ? " (고정 지급액)" : ""}${p.holiday && !p.flat ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}`}
+                              : `${money(p.pay)}원${p.flat ? " (고정 지급액)" : ""}`}
                           </div>
+                        )}
+                        {r.clockOut && r.capBase && r.flatPay == null && settings.payMode === "shift" && (() => {
+                          const rpc2 = resolvePay(worker, r.siteId, settings);
+                          const extraHoursC2 = Math.max(0, p.net - rpc2.shiftHours);
+                          return extraHoursC2 > 0.001 ? (
+                            <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>
+                              (본인 몫 + 대신근무 몫 합산 금액이에요)
+                            </div>
+                          ) : null;
+                        })()}
+                        {p.holiday && !p.flat && r.clockOut && (
+                          <div style={{ fontSize: 10.5, color: C.sub, marginTop: 1 }}>공휴일 {settings.holidayMultiplier || 1.5}배 적용됨</div>
                         )}
                         {r.coverForName && <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontWeight: 700 }}>{r.coverForName}님 대신 근무</div>}
                         {r.outFlag && <div style={{ fontSize: 11.5, color: ST.outside, marginTop: 2, fontWeight: 700 }}>현장 밖에서 처리됨</div>}
