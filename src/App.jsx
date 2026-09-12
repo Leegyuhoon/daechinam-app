@@ -7066,7 +7066,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                           <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
                             {p.pending
                               ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
-                              : r.capBase && agg.shift
+                              : r.capBase && settings.payMode === "shift"
                               ? (() => {
                                   // "본인근무+대신근무 혼합" 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
                                   // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
