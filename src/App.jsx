@@ -682,7 +682,8 @@ function resolvePay(worker, siteId, settings) {
     stdHours: ov?.stdHours ?? worker?.stdHours ?? settings.stdHours,
     shiftHours: ov?.shiftHours ?? worker?.shiftHours ?? settings.shiftHours,
     shiftPay: ov?.shiftPay ?? worker?.shiftPay ?? settings.shiftPay,
-    dailyShifts: ov?.dailyShifts ?? worker?.dailyShifts ?? 1, // 이 근무자가 이 현장에서 "하루에 보통 몇 타임을 하는지" — 대신근무와 섞인 날 본인 몫을 정확히 구분하는 데 씀
+    // "시간" 필드 자체가 이 근무자의 하루 몫(예: 4시간=2타임 합쳐진 값)을 그대로 나타내므로,
+    // 별도의 "하루 타임 수" 곱셈은 필요 없음 — 대신근무와 섞인 날 본인 몫 구분에는 이 shiftHours를 그대로 씀
   };
 }
 
@@ -765,7 +766,7 @@ function aggregate(records, worker, settings) {
       // "근무 유형 확인" 절차에서 확정됨.
       if (r.capBase) {
         const rp2 = resolvePay(worker, r.siteId, settings);
-        const ownHours = shift ? rp2.shiftHours * (rp2.dailyShifts || 1) : std;
+        const ownHours = shift ? rp2.shiftHours : std;
         const extraHours = Math.max(0, p.net - ownHours);
         const ownNet = Math.min(p.net, ownHours);
         coverCount++;
@@ -6391,7 +6392,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   // "기본근무+대체근무 혼합"으로 확정된 기록만 분리 계산 — 그 외(확정 전·순수 대신근무)는
                   // 원래 전체 시간·금액을 그대로 보여줌(displayNet/displayPay 초기값 그대로 둠)
                   const rpx = resolvePay(worker, r.siteId, settings);
-                  const ownHoursX = agg.shift ? rpx.shiftHours * (rpx.dailyShifts || 1) : agg.std;
+                  const ownHoursX = agg.shift ? rpx.shiftHours : agg.std;
                   const extraHoursX = Math.max(0, q.net - ownHoursX);
                   const hMultX = q.holiday ? (settings.holidayMultiplier || 1.5) : 1;
                   displayNet = extraHoursX;
@@ -8156,7 +8157,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
       id: wEdit.id || uid(), name: wEdit.name.trim(),
       siteIds, siteId: siteIds[0] || null, // siteId는 하위호환용(대표 현장)
       wage: opt(wEdit.wage), stdHours: wEdit.fixedSalary ? fixedStdHours : opt(wEdit.stdHours),
-      shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay), dailyShifts: opt(wEdit.dailyShifts),
+      shiftHours: opt(wEdit.shiftHours), shiftPay: opt(wEdit.shiftPay),
       paySettingsBySite: wEdit.paySettingsBySite || {},
       leaderSiteIds, isTeamLead: leaderSiteIds.length > 0, allowances,
       canSelfLogOneOff: !!wEdit.canSelfLogOneOff,
@@ -9343,7 +9344,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
               )}
             </div>
             {wEdit.fixedSalary ? null : settings.payMode === "shift" ? (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Field label="1타임 시간 · 비우면 기본값">
                   <input type="number" step="0.5" value={wEdit.shiftHours ?? ""} placeholder={String(settings.shiftHours)}
                     onChange={(e) => setWEdit({ ...wEdit, shiftHours: e.target.value })} style={inputStyle} />
@@ -9351,10 +9352,6 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                 <Field label="1타임 지급액 · 비우면 기본값">
                   <input type="number" value={wEdit.shiftPay ?? ""} placeholder={String(settings.shiftPay)}
                     onChange={(e) => setWEdit({ ...wEdit, shiftPay: e.target.value })} style={inputStyle} />
-                </Field>
-                <Field label="하루 타임 수 · 기본 1">
-                  <input type="number" step="1" value={wEdit.dailyShifts ?? ""} placeholder="1"
-                    onChange={(e) => setWEdit({ ...wEdit, dailyShifts: e.target.value })} style={inputStyle} />
                 </Field>
               </div>
             ) : (
@@ -9365,9 +9362,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
             )}
             {!wEdit.fixedSalary && settings.payMode === "shift" && (
               <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5, lineHeight: 1.5 }}>
-                이 근무자가 평소 하루에 몇 타임을 뛰는지예요. 대신근무와 본인 근무가 하루에 섞였을 때, 이 값만큼은 "본인 몫"으로 정확히 구분하는 데 쓰여요.
-                본인 하루 몫 = {((Number(wEdit.shiftHours) || settings.shiftHours) * (Number(wEdit.dailyShifts) || 1)).toFixed(1)}시간이 돼요.
-                "1타임 시간"에 이미 여러 타임이 합쳐진 값(예: 4시간=2타임)을 넣었다면, 이 칸은 1로 두세요 — 같이 올리면 두 배로 계산돼요.
+                "1타임 시간"이 이 근무자의 하루 몫이에요(예: 하루 2타임을 뛰면 4시간을 넣으면 돼요). 대신근무와 본인 근무가 하루에 섞였을 때, 이 시간만큼은 자동으로 "본인 몫"으로 구분돼요.
               </div>
             )}
 
@@ -9390,13 +9385,11 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                       <div key={sid}>
                         <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text, marginBottom: 5 }}>{site.name}</div>
                         {settings.payMode === "shift" ? (
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-2 gap-2">
                             <input type="number" step="0.5" value={ov.shiftHours ?? ""} placeholder={`시간 (기본 ${wEdit.shiftHours || settings.shiftHours})`}
                               onChange={(e) => setOv({ shiftHours: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
                             <input type="number" value={ov.shiftPay ?? ""} placeholder={`지급액 (기본 ${wEdit.shiftPay || settings.shiftPay})`}
                               onChange={(e) => setOv({ shiftPay: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
-                            <input type="number" step="1" value={ov.dailyShifts ?? ""} placeholder="하루 타임 수 (기본 1)"
-                              onChange={(e) => setOv({ dailyShifts: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ ...inputStyle, background: C.tile }} />
                           </div>
                         ) : (
                           <input type="number" value={ov.wage ?? ""} placeholder={`시급 (기본 ${wEdit.wage || settings.wage})`}
@@ -9404,8 +9397,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                         )}
                         {settings.payMode === "shift" && (
                           <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4 }}>
-                            → 이 설정대로면 <b style={{ color: C.text }}>본인 하루 몫 = {((ov.shiftHours ?? wEdit.shiftHours ?? settings.shiftHours) * (ov.dailyShifts ?? 1)).toFixed(1)}시간</b>이 돼요.
-                            "시간"에 이미 여러 타임이 합쳐진 값(예: 4시간=2타임)이면 "하루 타임 수"는 1로 두세요 — 같이 올리면 두 배로 계산돼요.
+                            → "시간"이 이 현장에서 이 근무자의 하루 몫이에요(하루 2타임을 뛰면 4시간을 넣으면 돼요). 대신근무와 섞인 날, 이 시간만큼 자동으로 "본인 몫"으로 구분돼요.
                           </div>
                         )}
                       </div>
