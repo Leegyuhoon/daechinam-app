@@ -6606,12 +6606,30 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                         {p.pending && <div style={{ fontSize: 9.5, color: "#8B5CF6", fontWeight: 700, marginTop: 2 }}>승인 전(정산 미반영)</div>}
                       </>
                     ) : r.coverForName ? (
-                      <>
-                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 · {hmc(p.net)}</div>
-                        <div style={{ marginTop: 4 }}>
-                          <Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num>
-                        </div>
-                      </>
+                      (() => {
+                        // "본인근무+대신근무 혼합" 확정된 날은 calcPay 기본값(본인 몫만)이 아니라
+                        // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
+                        let displayPay2 = p.pay, mixedLabel = `대신 근무 · ${hmc(p.net)}`;
+                        if (r.capBase && !p.open && agg.shift) {
+                          const rpd = resolvePay(worker, r.siteId, settings);
+                          const ownHoursD = rpd.shiftHours;
+                          const extraHoursD = Math.max(0, p.net - ownHoursD);
+                          const ownNetD = Math.min(p.net, ownHoursD);
+                          const hMultD = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+                          const ownPayD = Math.round(ownNetD / rpd.shiftHours) * rpd.shiftPay * hMultD;
+                          const extraPayD = Math.round(extraHoursD / settings.shiftHours) * settings.shiftPay * hMultD;
+                          displayPay2 = ownPayD + extraPayD;
+                          mixedLabel = `본인+대신 · ${hmc(p.net)}`;
+                        }
+                        return (
+                          <>
+                            <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>{mixedLabel}</div>
+                            <div style={{ marginTop: 4 }}>
+                              <Num size={13.5} color={C.coral} weight={800}>{money(displayPay2)}원</Num>
+                            </div>
+                          </>
+                        );
+                      })()
                     ) : (
                       <>
                         <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
