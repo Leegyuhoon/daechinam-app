@@ -6091,6 +6091,21 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   );
   const agg = aggregate(recs, worker, settings);
   const [wdStatDetail, setWdStatDetail] = useState(null); // "cover" | "oneOff"
+  // 근무자가 아직 "대신근무만/본인근무+대신근무 혼합"을 확인 안 한 대신근무 기록 — 관리자가 여기서 직접 확정 가능
+  const pendingCoverConfirms = useMemo(() => {
+    return recs.filter((r) => (r.isExtra || !!r.coverForName) && r.clockOut && !r.capBase).map((r) => {
+      const t = r.transferId ? (data.transfers || []).find((x) => x.id === r.transferId) : null;
+      return { r, t };
+    }).filter(({ t }) => !t || !t.coverType); // 이미 "순수 대신근무"로 확정된 건 굳이 다시 안 물어봄
+  }, [recs, data.transfers]);
+  const answerCoverConfirmAdmin = (r, t, mixed) => {
+    update((d) => ({
+      ...d,
+      records: mixed ? d.records.map((x) => (x.id === r.id ? { ...x, capBase: true } : x)) : d.records,
+      transfers: t ? (d.transfers || []).map((x) => (x.id === t.id ? { ...x, coverType: mixed ? "mixed" : "pure", confirmedAt: new Date().toISOString() } : x)) : d.transfers,
+    }));
+    setToast("확정했어요");
+  };
   const dayList = Object.entries(agg.byDate).sort((a, b) => a[0].localeCompare(b[0]));
   const maxDay = Math.max(agg.sh, ...dayList.map((d) => d[1].net), 1);
   const offDays = (data.transfers || [])
@@ -6328,6 +6343,26 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               </div>
             </div>
           </button>
+        )}
+        {pendingCoverConfirms.length > 0 && (
+          <div className="mt-2" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", padding: 13, borderRadius: RADIUS_SM }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: "#92400E" }}>⚠ 근무 유형 확인이 필요한 대신근무 {pendingCoverConfirms.length}건</div>
+            <div style={{ fontSize: 11, color: "#92400E", marginTop: 3, marginBottom: 8, lineHeight: 1.5 }}>
+              근무자가 아직 확인 전이에요. 관리자가 직접 확정하면 위 대신근무 금액에 바로 반영돼요.
+            </div>
+            <div className="flex flex-col gap-2">
+              {pendingCoverConfirms.map(({ r, t }) => (
+                <div key={r.id} style={{ background: "#fff", padding: 10, borderRadius: RADIUS_SM }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.text }}>{r.date} · {tstr(r.clockIn)}–{tstr(r.clockOut)}</div>
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 2, marginBottom: 6 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button onClick={() => answerCoverConfirmAdmin(r, t, false)} className="pressable" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "7px 0", borderRadius: RADIUS_SM }}>대신근무만 했어요</button>
+                    <button onClick={() => answerCoverConfirmAdmin(r, t, true)} className="pressable" style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: C.blue, padding: "7px 0", borderRadius: RADIUS_SM }}>본인근무+대신근무</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
         {agg.oneOffCount > 0 && (
           <button onClick={() => setWdStatDetail("oneOff")} className="pressable w-full text-left mt-0.5">
