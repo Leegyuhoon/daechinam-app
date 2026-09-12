@@ -769,13 +769,14 @@ function aggregate(records, worker, settings) {
       const ownHours = shift ? rp2.shiftHours * (rp2.dailyShifts || 1) : std;
       const extraHours = Math.max(0, p.net - ownHours);
       const ownNet = Math.min(p.net, ownHours);
+      coverCount++; // 초과분이 있든 없든, "대신근무로 등록된 기록"이라는 사실 자체는 항상 셈 (카드가 아예 사라지는 것 방지)
       if (extraHours > 0.001) {
         const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
         // 초과분(대신근무 몫)은 "추가근무 수당"이 아니라, 정상 타임/시급 단가 그대로 인정해야 정확함
         const extraPay = shift
           ? extraHours * (rp2.shiftPay / rp2.shiftHours) * hMult2
           : extraHours * rp2.wage * hMult2;
-        coverCount++; coverMin += extraHours * 60; coverPay += extraPay;
+        coverMin += extraHours * 60; coverPay += extraPay;
       }
       if (ownNet > 0.001) {
         // 본인 기본 몫의 지급액도 "하루 기본 타임 수"만큼 정확히 계산함(1타임 고정 가정 대신)
