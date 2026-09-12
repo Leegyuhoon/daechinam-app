@@ -758,38 +758,38 @@ function aggregate(records, worker, settings) {
     const isPureOneOff = !isCover && r.flatPay != null; // 대신근무가 아닌, 순수 일회성 현장 근무
 
     if (isCover) {
-      // "대신 근무"로 표시된 기록이라도, 실제 근무시간이 본인의 정상 1타임(또는 1일 소정근로)보다 길면
-      // 그 초과분만 진짜 "대신 근무"이고, 나머지(본인 기본 몫)는 정상 근무로 잡아야 정확함.
-      // 예전엔 "기본근무+대체근무 확정(capBase)" 창을 실제로 거친 기록에만 이 분리를 적용했는데,
-      // 그 확인 절차 자체가 잘 실행되지 않는 경우가 있어서, capBase 유무와 상관없이 항상 이 계산을 적용하도록 함.
-      const rp2 = resolvePay(worker, r.siteId, settings);
-      // 본인 몫(=대신근무가 아닌 정상 몫)은 "1타임"으로 무조건 가정하면 안 됨 — 팀장처럼 하루에 여러
-      // 타임을 도는 사람도 있기 때문. 그래서 근무자 설정에 등록해둔 "이 현장에서 하루 기본 타임 수"를
-      // 기준으로 본인 몫을 계산함(설정 안 해뒀으면 기존처럼 1타임으로 취급).
-      const ownHours = shift ? rp2.shiftHours * (rp2.dailyShifts || 1) : std;
-      const extraHours = Math.max(0, p.net - ownHours);
-      const ownNet = Math.min(p.net, ownHours);
-      coverCount++; // 초과분이 있든 없든, "대신근무로 등록된 기록"이라는 사실 자체는 항상 셈 (카드가 아예 사라지는 것 방지)
-      if (extraHours > 0.001) {
-        const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
-        // 초과분(대신근무 몫)은 "추가근무 수당"이 아니라, 정상 타임/시급 단가 그대로 인정해야 정확함
-        const extraPay = shift
-          ? extraHours * (rp2.shiftPay / rp2.shiftHours) * hMult2
-          : extraHours * rp2.wage * hMult2;
-        coverMin += extraHours * 60; coverPay += extraPay;
+      // 자동으로 "본인 몫 vs 대신근무 몫"을 추측하는 건 위험함 — 순수 대신근무인 날이 본인 평소
+      // 근무시간과 비슷하면 통째로 "본인근무"로 잘못 흡수되는 경우가 있었음. 그래서 이제는 명시적으로
+      // "기본근무+대체근무 혼합"이라고 확정(capBase)된 기록만 분리하고, 그 외(확인 전 · 순수 대신근무로
+      // 확인됨)는 안전하게 전체를 그대로 대신근무로 처리함. 정확한 분리는 근무자가 퇴근 후 받는
+      // "근무 유형 확인" 절차에서 확정됨.
+      if (r.capBase) {
+        const rp2 = resolvePay(worker, r.siteId, settings);
+        const ownHours = shift ? rp2.shiftHours * (rp2.dailyShifts || 1) : std;
+        const extraHours = Math.max(0, p.net - ownHours);
+        const ownNet = Math.min(p.net, ownHours);
+        coverCount++;
+        if (extraHours > 0.001) {
+          const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+          const extraPay = shift
+            ? extraHours * (rp2.shiftPay / rp2.shiftHours) * hMult2
+            : extraHours * rp2.wage * hMult2;
+          coverMin += extraHours * 60; coverPay += extraPay;
+        }
+        if (ownNet > 0.001) {
+          const hMult3 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+          const ownPay = shift
+            ? ownNet * (rp2.shiftPay / rp2.shiftHours) * hMult3
+            : ownNet * rp2.wage * hMult3;
+          times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
+          if (shift && !isFixedWorker && !p.holiday) base += ownPay;
+          const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
+          b2.net += ownNet; b2.times += ownNet / (shift ? rp2.shiftHours : 1); b2.target += shift ? sh : 0;
+          if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
+        }
+        return;
       }
-      if (ownNet > 0.001) {
-        // 본인 기본 몫의 지급액도 "하루 기본 타임 수"만큼 정확히 계산함(1타임 고정 가정 대신)
-        const hMult3 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
-        const ownPay = shift
-          ? ownNet * (rp2.shiftPay / rp2.shiftHours) * hMult3
-          : ownNet * rp2.wage * hMult3;
-        times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
-        if (shift && !isFixedWorker && !p.holiday) base += ownPay;
-        const b2 = byDate[r.date] || (byDate[r.date] = { net: 0, target: 0, times: 0, holiday: p.holiday, wageSum: 0, flatNet: 0, flatPay: 0 });
-        b2.net += ownNet; b2.times += ownNet / (shift ? rp2.shiftHours : 1); b2.target += shift ? sh : 0;
-        if (!p.holiday) b2.wageSum += rp2.wage * ownNet;
-      }
+      coverCount++; coverMin += p.net * 60; coverPay += p.pay;
       return;
     }
     if (isPureOneOff) {
@@ -1386,6 +1386,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const [confirm, setConfirm] = useState(null);
   const [chk, setChk] = useState({ state: "idle" });
   const [manualSite, setManualSite] = useState("");
+  const [todayCoverType, setTodayCoverType] = useState(null); // "onlyCover" | "mixed" — 출근 시점에 물어보는 오늘 근무 유형
   const [xferOpen, setXferOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const [xferForm, setXferForm] = useState({ date: "", siteId: "", names: [""], message: "" });
@@ -1510,7 +1511,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const myCoverConfirmNeeded = useMemo(() => {
     if (!worker) return [];
     return (data.transfers || []).filter((t) =>
-      t.status === "approved" && t.noRequest && t.assignedWorkerId === worker.id && !t.coverType
+      // 예전엔 "관리자가 직접 배정한 경우(noRequest)"만 이 확인을 물어봤는데, 근무자가 직접 양도 요청을
+      // 보내서 승인받은 경우(가장 흔한 경우)엔 이 확인 자체가 안 떠서, 본인근무+대신근무가 섞인 날을
+      // 구분할 방법이 없었음. 그래서 승인된 대신근무는 방식과 상관없이 전부 이 확인 대상에 포함시킴.
+      t.status === "approved" && (t.assignedWorkerId === worker.id || t.toWorkerId === worker.id) && !t.coverType
     ).map((t) => {
       const recs = records.filter((r) => r.workerId === worker.id && r.date === t.date && (!t.siteId || r.siteId === t.siteId) && r.clockOut && r.flatPay == null);
       return { t, recs };
@@ -1964,6 +1968,9 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             deviceId: dev.deviceId, note: "",
             coverForId: cover?.fromWorkerId || null, coverForName: cover?.fromWorkerName || null, transferId: cover?.id || null,
             coverStart: cover?.startTime || null, coverEnd: cover?.endTime || null,
+            // 출근 시점에 직접 물어봐서 받은 답 — "제 근무도 같이 해요"를 선택했으면 나중에 정산할 때
+            // 본인 정상 몫과 대신근무 몫을 정확히 나눠서 계산함(capBase). 안 물어본 경우(대신근무 배정 자체가 없던 경우)는 무관.
+            capBase: cover ? todayCoverType === "mixed" : false,
           }],
           transfers: cover ? (d.transfers || []).map((t) => (t.id === cover.id ? { ...t, fulfilledRecordId: recId } : t)) : d.transfers,
         };
@@ -1979,6 +1986,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     const cover = (data.transfers || []).find((t) => t.fulfilledRecordId === recId);
     setConfirm(null);
     setToast(cover ? `출근 처리됐습니다 · ${cover.fromWorkerName}님 대신 근무` : `출근 처리됐습니다 · ${pad(ts.getHours())}:${pad(ts.getMinutes())}`);
+    setTodayCoverType(null);
   };
   const doClockOut = async () => {
     if (clockBusyRef.current) return;
@@ -3216,9 +3224,41 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           </Tile>
         </div>
 
+        {(() => {
+          if (confirm !== "in") return null;
+          // 지금 출근하려는 현장을 기준으로, 오늘 나에게 승인된 대신근무 배정이 있는지 확인
+          const targetSiteId = chk.state === "inside" ? chk.site?.id : sites.find((x) => x.name === manualSite)?.id;
+          const todayCover = (data.transfers || []).find((t) =>
+            t.status === "approved" && t.toWorkerId === worker.id && t.date === dKey(now) && t.siteId === targetSiteId && !t.fulfilledRecordId
+          );
+          if (!todayCover) return null;
+          return (
+            <div className="mt-3" style={{ background: "#EAF2FB", border: `1px solid ${C.blue}`, padding: "12px 13px" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>오늘 {todayCover.fromWorkerName}님 대신 근무하시는 날이에요</div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 4, marginBottom: 8 }}>오늘 근무가 어떤 건지 골라주세요 — 나중에 지급액을 정확히 나누는 데 쓰여요.</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setTodayCoverType("onlyCover")}
+                  style={{ padding: "10px 0", fontSize: 12.5, fontWeight: 800, background: todayCoverType === "onlyCover" ? C.blue : "#fff", color: todayCoverType === "onlyCover" ? "#fff" : C.text, border: `1px solid ${C.blue}` }}>
+                  대신근무만 해요
+                </button>
+                <button onClick={() => setTodayCoverType("mixed")}
+                  style={{ padding: "10px 0", fontSize: 12.5, fontWeight: 800, background: todayCoverType === "mixed" ? C.blue : "#fff", color: todayCoverType === "mixed" ? "#fff" : C.text, border: `1px solid ${C.blue}` }}>
+                  제 근무도 같이 해요
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="grid grid-cols-2 gap-2 mt-4">
-          <Btn kind="ghost" full disabled={clockBusy} onClick={() => setConfirm(null)}>{canGo ? "취소" : "닫기"}</Btn>
-          <Btn full disabled={!canGo || clockBusy} onClick={confirm === "in" ? doClockIn : doClockOut}>
+          <Btn kind="ghost" full disabled={clockBusy} onClick={() => { setConfirm(null); setTodayCoverType(null); }}>{canGo ? "취소" : "닫기"}</Btn>
+          <Btn full disabled={!canGo || clockBusy || (confirm === "in" && (() => {
+            const targetSiteId = chk.state === "inside" ? chk.site?.id : sites.find((x) => x.name === manualSite)?.id;
+            const todayCover = (data.transfers || []).find((t) =>
+              t.status === "approved" && t.toWorkerId === worker.id && t.date === dKey(now) && t.siteId === targetSiteId && !t.fulfilledRecordId
+            );
+            return !!todayCover && !todayCoverType;
+          })())} onClick={confirm === "in" ? doClockIn : doClockOut}>
             {clockBusy ? "저장 중…" : confirm === "in" ? "출근하기" : "퇴근하기"}
           </Btn>
         </div>
@@ -6312,9 +6352,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               .sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                 const q = calcPay(r, worker, settings);
                 let displayNet = q.net, displayPay = q.pay;
-                if (wdStatDetail === "cover" && !q.open) {
-                  // 대신근무 카드·집계와 정확히 같은 방식으로: 본인 정상 몫(하루 기본 타임 수만큼)은 빼고,
-                  // 초과분(진짜 대신근무에 해당하는 부분)의 시간·금액만 여기 보여줌 — 전체 레코드 금액이 아님
+                if (wdStatDetail === "cover" && !q.open && r.capBase) {
+                  // "기본근무+대체근무 혼합"으로 확정된 기록만 분리 계산 — 그 외(확정 전·순수 대신근무)는
+                  // 원래 전체 시간·금액을 그대로 보여줌(displayNet/displayPay 초기값 그대로 둠)
                   const rpx = resolvePay(worker, r.siteId, settings);
                   const ownHoursX = agg.shift ? rpx.shiftHours * (rpx.dailyShifts || 1) : agg.std;
                   const extraHoursX = Math.max(0, q.net - ownHoursX);
