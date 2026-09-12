@@ -6607,11 +6607,14 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4 }} />{dist(r.inDist)}</>}
                     </div>
                     {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
+                    <div style={{ marginTop: 4, fontSize: 9, color: "#999", fontFamily: MONO }}>
+                      [디버그] flatPay:{JSON.stringify(r.flatPay)} · isExtra:{JSON.stringify(r.isExtra)} · coverForName:{JSON.stringify(r.coverForName)} · capBase:{JSON.stringify(r.capBase)}
+                    </div>
                   </div>
                   <div className="text-right" style={{ flexShrink: 0 }}>
                     {r.flatPay != null ? (
                       <>
-                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>대신 근무 1회</div>
+                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>{(r.isExtra || r.coverForName) ? "대신 근무 1회" : "일회성 근무 1회"}</div>
                         <div style={{ marginTop: 4 }}>
                           <Num size={13.5} color={p.pending ? "#8B5CF6" : C.coral} weight={800}>{money(r.flatPay)}원</Num>
                         </div>
