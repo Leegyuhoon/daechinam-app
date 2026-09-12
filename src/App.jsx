@@ -5063,8 +5063,14 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
           const existingIdx = recs.findIndex((r) => r.workerId === p.workerId && r.date === boardDate && r.flatPay == null);
           if (existingIdx >= 0) {
             overwrittenCount++;
+            // 만약 이 기록이 아직 퇴근 처리가 안 된 상태(clockOut 없음)라면, 그대로 두면 "근무 중"으로
+            // 처리되어 고정금액(flatPay)을 넣어도 지급액이 계속 0원으로 나옴 — 그래서 퇴근시각이
+            // 없으면 출근시각+1시간으로 강제로 채워서, 계산이 정상적으로 되게 함(실제 시간은 의미 없고
+            // flatPay가 그대로 지급액이 되므로 문제없음).
+            const forcedOut = recs[existingIdx].clockOut || new Date(new Date(recs[existingIdx].clockIn).getTime() + 3600000).toISOString();
             recs[existingIdx] = {
               ...recs[existingIdx],
+              clockOut: forcedOut,
               flatPay: coverShares[i], oneOffStatus: "approved", isExtra: true,
               note: (recs[existingIdx].note ? recs[existingIdx].note + " · " : "") + `${noteBase}(정상 계산 대신 이 금액으로 확정)`,
             };
