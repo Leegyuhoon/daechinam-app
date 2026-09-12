@@ -772,15 +772,21 @@ function aggregate(records, worker, settings) {
         coverCount++;
         if (extraHours > 0.001) {
           const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+          // 대신근무 몫은 "이 현장의 일반적인 1타임"(회사 표준) 단위로 몇 개인지 반올림해서 계산함 —
+          // 실제 출퇴근이 2시간 3분처럼 정확히 안 맞아도 깔끔한 원 단위로 나오고, 이 근무자 개인 단가가
+          // 표준의 배수(예: 4시간=2타임)로 설정돼 있어도 항상 정확한 "타임 수 × 표준단가"가 나옴.
+          const extraUnits = Math.round(extraHours / settings.shiftHours);
           const extraPay = shift
-            ? extraHours * (rp2.shiftPay / rp2.shiftHours) * hMult2
+            ? extraUnits * settings.shiftPay * hMult2
             : extraHours * rp2.wage * hMult2;
           coverMin += extraHours * 60; coverPay += extraPay;
         }
         if (ownNet > 0.001) {
           const hMult3 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+          // 본인 몫은 이 근무자 개인의 1타임 단가 기준으로 몇 개인지 반올림해서 계산(개인 근무니까 개인 단가 적용)
+          const ownUnits = shift ? Math.round(ownNet / rp2.shiftHours) : null;
           const ownPay = shift
-            ? ownNet * (rp2.shiftPay / rp2.shiftHours) * hMult3
+            ? ownUnits * rp2.shiftPay * hMult3
             : ownNet * rp2.wage * hMult3;
           times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
           if (shift && !isFixedWorker && !p.holiday) base += ownPay;
@@ -6397,7 +6403,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   const hMultX = q.holiday ? (settings.holidayMultiplier || 1.5) : 1;
                   displayNet = extraHoursX;
                   displayPay = agg.shift
-                    ? extraHoursX * (rpx.shiftPay / rpx.shiftHours) * hMultX
+                    ? Math.round(extraHoursX / settings.shiftHours) * settings.shiftPay * hMultX
                     : extraHoursX * rpx.wage * hMultX;
                 }
                 return (
@@ -7608,6 +7614,20 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             const d = parseKey(r.date);
             const shortish = q.shortMin >= data.settings.shortThreshold;
             const fixedDiffMin = p.isFixedSalary ? Math.round((q.net - agg.std) * 60) : 0;
+            // "본인근무+대신근무 혼합"으로 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
+            // 본인 몫 + 대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판 계산과 동일한 방식)
+            let displayPay = q.pay, mixedNote = "";
+            if (r.capBase && !q.open && agg.shift) {
+              const rpq = resolvePay(worker, r.siteId, data.settings);
+              const ownHoursQ = rpq.shiftHours;
+              const extraHoursQ = Math.max(0, q.net - ownHoursQ);
+              const ownNetQ = Math.min(q.net, ownHoursQ);
+              const hMultQ = q.holiday ? (data.settings.holidayMultiplier || 1.5) : 1;
+              const ownPayQ = Math.round(ownNetQ / rpq.shiftHours) * rpq.shiftPay * hMultQ;
+              const extraPayQ = Math.round(extraHoursQ / data.settings.shiftHours) * data.settings.shiftPay * hMultQ;
+              displayPay = ownPayQ + extraPayQ;
+              if (extraHoursQ > 0.001) mixedNote = ` (본인 ${money(ownPayQ)} + 대신 ${money(extraPayQ)})`;
+            }
             return (
               <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
                 <span style={{ width: 58, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 700, color: C.text }}>
@@ -7627,9 +7647,9 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
                 ) : (
                   <>
                     <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
-                      {!agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
+                      {r.capBase ? "혼합" : !agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
                     </span>
-                    <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }}>{money(q.pay)}</span>
+                    <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }} title={mixedNote}>{money(displayPay)}</span>
                   </>
                 )}
               </div>
