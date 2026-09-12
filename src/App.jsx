@@ -764,7 +764,7 @@ function aggregate(records, worker, settings) {
       // "기본근무+대체근무 혼합"이라고 확정(capBase)된 기록만 분리하고, 그 외(확인 전 · 순수 대신근무로
       // 확인됨)는 안전하게 전체를 그대로 대신근무로 처리함. 정확한 분리는 근무자가 퇴근 후 받는
       // "근무 유형 확인" 절차에서 확정됨.
-      if (r.capBase) {
+      if (r.capBase && r.flatPay == null) {
         const rp2 = resolvePay(worker, r.siteId, settings);
         const ownHours = shift ? rp2.shiftHours : std;
         const extraHours = Math.max(0, p.net - ownHours);
@@ -6100,7 +6100,10 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
   const [wdStatDetail, setWdStatDetail] = useState(null); // "cover" | "oneOff"
   // 근무자가 아직 "대신근무만/본인근무+대신근무 혼합"을 확인 안 한 대신근무 기록 — 관리자가 여기서 직접 확정 가능
   const pendingCoverConfirms = useMemo(() => {
-    return recs.filter((r) => (r.isExtra || !!r.coverForName) && r.clockOut && !r.capBase).map((r) => {
+    // flatPay(관리자가 결근자 몫 나누기 등으로 이미 고정 금액을 확정해준 방식)는 애초에 시간 기반으로
+    // "본인몫/초과분"을 나눌 필요가 없는 레코드라 이 확인 대상에서 제외함 — 포함시키면, 실제 근무시간이
+    // 짧은 더미 시간(고정금액 등록용)이 "본인 몫"으로 잘못 흡수되어 확정된 금액이 통째로 사라질 수 있음.
+    return recs.filter((r) => (r.isExtra || !!r.coverForName) && r.clockOut && !r.capBase && r.flatPay == null).map((r) => {
       const t = r.transferId ? (data.transfers || []).find((x) => x.id === r.transferId) : null;
       return { r, t };
     }).filter(({ t }) => !t || !t.coverType); // 이미 "순수 대신근무"로 확정된 건 굳이 다시 안 물어봄
@@ -6610,7 +6613,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                         // "본인근무+대신근무 혼합" 확정된 날은 calcPay 기본값(본인 몫만)이 아니라
                         // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
                         let displayPay2 = p.pay, mixedLabel = `대신 근무 · ${hmc(p.net)}`;
-                        if (r.capBase && !p.open && agg.shift) {
+                        if (r.capBase && r.flatPay == null && !p.open && agg.shift) {
                           const rpd = resolvePay(worker, r.siteId, settings);
                           const ownHoursD = rpd.shiftHours;
                           const extraHoursD = Math.max(0, p.net - ownHoursD);
@@ -7084,7 +7087,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                           <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
                             {p.pending
                               ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
-                              : r.capBase && settings.payMode === "shift"
+                              : r.capBase && r.flatPay == null && settings.payMode === "shift"
                               ? (() => {
                                   // "본인근무+대신근무 혼합" 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
                                   // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
@@ -7648,7 +7651,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             // "본인근무+대신근무 혼합"으로 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
             // 본인 몫 + 대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판 계산과 동일한 방식)
             let displayPay = q.pay, mixedNote = "";
-            if (r.capBase && !q.open && agg.shift) {
+            if (r.capBase && r.flatPay == null && !q.open && agg.shift) {
               const rpq = resolvePay(worker, r.siteId, data.settings);
               const ownHoursQ = rpq.shiftHours;
               const extraHoursQ = Math.max(0, q.net - ownHoursQ);
