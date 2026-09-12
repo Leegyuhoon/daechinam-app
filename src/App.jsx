@@ -5363,8 +5363,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-              <Num size={15} color={C.text}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
-              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.coverPay)}원</span>
+              <Num size={13} color={C.sub} weight={700}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
         </button>
@@ -5377,8 +5377,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-              <Num size={15} color={C.text}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
-              <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.oneOffPay)}원</span>
+              <Num size={13} color={C.sub} weight={700}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
+              <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.oneOffPay)}원</span>
             </div>
           </div>
         </button>
@@ -5853,11 +5853,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                   </div>
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
-                  <Num size={17}>{hmc(net)}</Num>
+                  <Num size={13} color={C.sub} weight={700}>{hmc(net)}</Num>
                   <div style={{ marginTop: 1 }}>
                     {w.fixedSalary
-                      ? <Num size={12.5} color={C.coral} weight={700}>{money(w.fixedMonthlyPay || 0)}원</Num>
-                      : <Num size={12.5} color={C.coral} weight={700}>{money(pay)}원</Num>}
+                      ? <Num size={17} color={C.coral} weight={900}>{money(w.fixedMonthlyPay || 0)}원</Num>
+                      : <Num size={17} color={C.coral} weight={900}>{money(pay)}원</Num>}
                   </div>
                 </div>
               </div>
@@ -6354,8 +6354,8 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-                <Num size={15} color={C.text}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
-                <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.coverPay)}원</span>
+                <Num size={13} color={C.sub} weight={700}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.coverPay)}원</span>
               </div>
             </div>
           </button>
@@ -6388,8 +6388,8 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-                <Num size={15} color={C.text}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
-                <span style={{ fontSize: 14, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.oneOffPay)}원</span>
+                <Num size={13} color={C.sub} weight={700}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.oneOffPay)}원</span>
               </div>
             </div>
           </button>
@@ -6644,7 +6644,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       })()
                     ) : (
                       <>
-                        <Num size={19}>{p.open ? "—" : hmc(p.net)}</Num>
+                        <Num size={14} color={C.sub} weight={700}>{p.open ? "—" : hmc(p.net)}</Num>
                         {!p.open && worker.fixedSalary && (
                           <div style={{ marginTop: 3 }}>
                             {(() => {
@@ -6669,11 +6669,11 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                                 </span>
                               )}
                             </div>
-                            <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                            <div style={{ marginTop: 4 }}><Num size={17} color={C.coral} weight={900}>{money(p.pay)}원</Num></div>
                           </>
                         )}
                         {!p.open && !worker.fixedSalary && !agg.shift && (
-                          <div style={{ marginTop: 4 }}><Num size={13.5} color={C.coral} weight={800}>{money(p.pay)}원</Num></div>
+                          <div style={{ marginTop: 4 }}><Num size={17} color={C.coral} weight={900}>{money(p.pay)}원</Num></div>
                         )}
                       </>
                     )}
