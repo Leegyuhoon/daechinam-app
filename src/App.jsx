@@ -6607,9 +6607,6 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4 }} />{dist(r.inDist)}</>}
                     </div>
                     {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
-                    <div style={{ marginTop: 4, fontSize: 9, color: "#999", fontFamily: MONO }}>
-                      [디버그] flatPay:{JSON.stringify(r.flatPay)} · isExtra:{JSON.stringify(r.isExtra)} · coverForName:{JSON.stringify(r.coverForName)} · capBase:{JSON.stringify(r.capBase)}
-                    </div>
                   </div>
                   <div className="text-right" style={{ flexShrink: 0 }}>
                     {r.flatPay != null ? (
