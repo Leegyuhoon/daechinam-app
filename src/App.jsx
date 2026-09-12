@@ -6425,6 +6425,9 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                     </div>
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
                     {q.pending && <div style={{ fontSize: 11, color: "#8B5CF6", marginTop: 2 }}>관리자 승인 전이라 아직 지급액에 반영 안 됐어요. 원래 {money(r.flatPay)}원으로 등록돼 있어요.</div>}
+                    <div style={{ fontSize: 9.5, color: "#999", marginTop: 4, fontFamily: MONO }}>
+                      [디버그] flatPay:{JSON.stringify(r.flatPay)} · status:{JSON.stringify(r.oneOffStatus)} · isExtra:{JSON.stringify(r.isExtra)} · capBase:{JSON.stringify(r.capBase)} · clockOut:{JSON.stringify(r.clockOut)} · q.pay:{JSON.stringify(q.pay)} · q.open:{JSON.stringify(q.open)}
+                    </div>
                   </div>
                 );
               })}
