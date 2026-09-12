@@ -766,14 +766,14 @@ function aggregate(records, worker, settings) {
       // 본인 몫(=대신근무가 아닌 정상 몫)은 "1타임"으로 무조건 가정하면 안 됨 — 팀장처럼 하루에 여러
       // 타임을 도는 사람도 있기 때문. 그래서 근무자 설정에 등록해둔 "이 현장에서 하루 기본 타임 수"를
       // 기준으로 본인 몫을 계산함(설정 안 해뒀으면 기존처럼 1타임으로 취급).
-      const ownHours = shift ? sh * (rp2.dailyShifts || 1) : std;
+      const ownHours = shift ? rp2.shiftHours * (rp2.dailyShifts || 1) : std;
       const extraHours = Math.max(0, p.net - ownHours);
       const ownNet = Math.min(p.net, ownHours);
       if (extraHours > 0.001) {
         const hMult2 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
         // 초과분(대신근무 몫)은 "추가근무 수당"이 아니라, 정상 타임/시급 단가 그대로 인정해야 정확함
         const extraPay = shift
-          ? Math.round(extraHours / rp2.shiftHours) * rp2.shiftPay * hMult2
+          ? extraHours * (rp2.shiftPay / rp2.shiftHours) * hMult2
           : extraHours * rp2.wage * hMult2;
         coverCount++; coverMin += extraHours * 60; coverPay += extraPay;
       }
@@ -781,7 +781,7 @@ function aggregate(records, worker, settings) {
         // 본인 기본 몫의 지급액도 "하루 기본 타임 수"만큼 정확히 계산함(1타임 고정 가정 대신)
         const hMult3 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
         const ownPay = shift
-          ? Math.round(ownNet / rp2.shiftHours) * rp2.shiftPay * hMult3
+          ? ownNet * (rp2.shiftPay / rp2.shiftHours) * hMult3
           : ownNet * rp2.wage * hMult3;
         times += ownNet / (shift ? rp2.shiftHours : 1); net += ownNet; pay += ownPay;
         if (shift && !isFixedWorker && !p.holiday) base += ownPay;
@@ -6315,12 +6315,12 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   // 대신근무 카드·집계와 정확히 같은 방식으로: 본인 정상 몫(하루 기본 타임 수만큼)은 빼고,
                   // 초과분(진짜 대신근무에 해당하는 부분)의 시간·금액만 여기 보여줌 — 전체 레코드 금액이 아님
                   const rpx = resolvePay(worker, r.siteId, settings);
-                  const ownHoursX = agg.shift ? agg.sh * (rpx.dailyShifts || 1) : agg.std;
+                  const ownHoursX = agg.shift ? rpx.shiftHours * (rpx.dailyShifts || 1) : agg.std;
                   const extraHoursX = Math.max(0, q.net - ownHoursX);
                   const hMultX = q.holiday ? (settings.holidayMultiplier || 1.5) : 1;
                   displayNet = extraHoursX;
                   displayPay = agg.shift
-                    ? Math.round(extraHoursX / rpx.shiftHours) * rpx.shiftPay * hMultX
+                    ? extraHoursX * (rpx.shiftPay / rpx.shiftHours) * hMultX
                     : extraHoursX * rpx.wage * hMultX;
                 }
                 return (
