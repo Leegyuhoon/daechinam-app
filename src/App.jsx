@@ -6413,9 +6413,12 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
                     <div className="flex items-center justify-between">
                       <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{r.date}{!q.open && ` · ${hmc(displayNet)}`}</span>
-                      <span style={{ fontSize: 14, fontWeight: 900, color: C.coral }}>{q.open ? "진행중" : `${money(displayPay)}원`}</span>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: q.pending ? "#8B5CF6" : C.coral }}>
+                        {q.open ? "진행중" : q.pending ? "승인 대기" : `${money(displayPay)}원`}
+                      </span>
                     </div>
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
+                    {q.pending && <div style={{ fontSize: 11, color: "#8B5CF6", marginTop: 2 }}>관리자 승인 전이라 아직 지급액에 반영 안 됐어요. 원래 {money(r.flatPay)}원으로 등록돼 있어요.</div>}
                   </div>
                 );
               })}
