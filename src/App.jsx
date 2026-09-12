@@ -6403,7 +6403,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
               .sort((a, b) => b.date.localeCompare(a.date)).map((r) => {
                 const q = calcPay(r, worker, settings);
                 let displayNet = q.net, displayPay = q.pay;
-                if (wdStatDetail === "cover" && !q.open && r.capBase) {
+                if (wdStatDetail === "cover" && !q.open && r.capBase && r.flatPay == null) {
                   // "기본근무+대체근무 혼합"으로 확정된 기록만 분리 계산 — 그 외(확정 전·순수 대신근무)는
                   // 원래 전체 시간·금액을 그대로 보여줌(displayNet/displayPay 초기값 그대로 둠)
                   const rpx = resolvePay(worker, r.siteId, settings);
@@ -6425,9 +6425,6 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                     </div>
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{r.site || "현장 미지정"}{r.coverForName ? ` · ${r.coverForName}님 대신` : ""}</div>
                     {q.pending && <div style={{ fontSize: 11, color: "#8B5CF6", marginTop: 2 }}>관리자 승인 전이라 아직 지급액에 반영 안 됐어요. 원래 {money(r.flatPay)}원으로 등록돼 있어요.</div>}
-                    <div style={{ fontSize: 9.5, color: "#999", marginTop: 4, fontFamily: MONO }}>
-                      [디버그] flatPay:{JSON.stringify(r.flatPay)} · status:{JSON.stringify(r.oneOffStatus)} · isExtra:{JSON.stringify(r.isExtra)} · capBase:{JSON.stringify(r.capBase)} · clockOut:{JSON.stringify(r.clockOut)} · q.pay:{JSON.stringify(q.pay)} · q.open:{JSON.stringify(q.open)}
-                    </div>
                   </div>
                 );
               })}
