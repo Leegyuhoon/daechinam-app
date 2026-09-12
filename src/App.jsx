@@ -7066,6 +7066,19 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                           <div style={{ fontSize: 12, color: p.pending ? "#8B5CF6" : p.holiday ? C.red : C.sub, marginTop: 3, fontWeight: p.pending || p.holiday ? 800 : 400 }}>
                             {p.pending
                               ? `${money(r.flatPay)}원 예정 (관리자 승인 전이라 정산에는 아직 반영 안 됨)`
+                              : r.capBase && agg.shift
+                              ? (() => {
+                                  // "본인근무+대신근무 혼합" 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
+                                  // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
+                                  const rpc = resolvePay(worker, r.siteId, settings);
+                                  const ownHoursC = rpc.shiftHours;
+                                  const extraHoursC = Math.max(0, p.net - ownHoursC);
+                                  const ownNetC = Math.min(p.net, ownHoursC);
+                                  const hMultC = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+                                  const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
+                                  const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
+                                  return `${money(ownPayC + extraPayC)}원 (본인 ${money(ownPayC)} + 대신 ${money(extraPayC)})`;
+                                })()
                               : `${money(p.pay)}원${p.flat ? " (고정 지급액)" : ""}${p.holiday && !p.flat ? ` (공휴일 ${settings.holidayMultiplier || 1.5}배 적용됨)` : ""}`}
                           </div>
                         )}
