@@ -5363,7 +5363,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-              <Num size={13} color={C.sub} weight={700}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
+              <Num size={13} color={C.text} weight={700}>{tot.coverCount}회 · {minStr(tot.coverMin)}</Num>
               <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.coverPay)}원</span>
             </div>
           </div>
@@ -5377,7 +5377,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <ChevronRight size={14} color={C.sub} />
             </div>
             <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-              <Num size={13} color={C.sub} weight={700}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
+              <Num size={13} color={C.text} weight={700}>{tot.oneOffCount}회 · {minStr(tot.oneOffMin)}</Num>
               <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(tot.oneOffPay)}원</span>
             </div>
           </div>
@@ -5853,7 +5853,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                   </div>
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
-                  <Num size={13} color={C.sub} weight={700}>{hmc(net)}</Num>
+                  <Num size={13} color={C.text} weight={700}>{hmc(net)}</Num>
                   <div style={{ marginTop: 1 }}>
                     {w.fixedSalary
                       ? <Num size={17} color={C.coral} weight={900}>{money(w.fixedMonthlyPay || 0)}원</Num>
@@ -6354,7 +6354,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-                <Num size={13} color={C.sub} weight={700}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
+                <Num size={13} color={C.text} weight={700}>{agg.coverCount}회 · {minStr(agg.coverMin)}</Num>
                 <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.coverPay)}원</span>
               </div>
             </div>
@@ -6388,7 +6388,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <ChevronRight size={14} color={C.sub} />
               </div>
               <div className="flex items-center justify-between gap-2 mt-1" style={{ minWidth: 0 }}>
-                <Num size={13} color={C.sub} weight={700}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
+                <Num size={13} color={C.text} weight={700}>{agg.oneOffCount}회 · {minStr(agg.oneOffMin)}</Num>
                 <span style={{ fontSize: 16, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>{money(agg.oneOffPay)}원</span>
               </div>
             </div>
@@ -6611,7 +6611,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   <div className="text-right" style={{ flexShrink: 0 }}>
                     {r.flatPay != null ? (
                       <>
-                        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>{(r.isExtra || r.coverForName) ? "대신 근무 1회" : "일회성 근무 1회"}</div>
+                        <div style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>{(r.isExtra || r.coverForName) ? "대신 근무 1회" : "일회성 근무 1회"}</div>
                         <div style={{ marginTop: 4 }}>
                           <Num size={13.5} color={p.pending ? "#8B5CF6" : C.coral} weight={800}>{money(r.flatPay)}원</Num>
                         </div>
@@ -6635,7 +6635,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                         }
                         return (
                           <>
-                            <div style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>{mixedLabel}</div>
+                            <div style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>{mixedLabel}</div>
                             <div style={{ marginTop: 4 }}>
                               <Num size={13.5} color={C.coral} weight={800}>{money(displayPay2)}원</Num>
                             </div>
@@ -6644,7 +6644,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       })()
                     ) : (
                       <>
-                        <Num size={14} color={C.sub} weight={700}>{p.open ? "—" : hmc(p.net)}</Num>
+                        <Num size={13} color={C.text} weight={700}>{p.open ? "—" : hmc(p.net)}</Num>
                         {!p.open && worker.fixedSalary && (
                           <div style={{ marginTop: 3 }}>
                             {(() => {
@@ -7088,7 +7088,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                             )}
                           </div>
                         </div>
-                        <div style={{ fontSize: 11, color: C.sub, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 700, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                           출근 {tstr(r.clockIn)} · 퇴근 {r.clockOut ? tstr(r.clockOut) : "—"}
                           {r.clockOut && ` · ${hmc(p.net)}`}
                         </div>
