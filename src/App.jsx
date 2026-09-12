@@ -6602,9 +6602,10 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       {tstr(r.clockIn)} – {r.clockOut ? tstr(r.clockOut) : "근무 중"}
                       {p.brk > 0 && <span style={{ color: C.sub, fontWeight: 600 }}> · 휴게 {Math.round(p.brk * 60)}분</span>}
                     </div>
-                    <div className="flex items-center gap-1 mt-1" style={{ color: C.sub, fontSize: 13, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-                      <Building2 size={11} />{r.site || "현장 미지정"}
-                      {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4 }} />{dist(r.inDist)}</>}
+                    <div className="flex items-center gap-1 mt-1" style={{ color: C.sub, fontSize: 13, fontFamily: MONO, fontVariantNumeric: "tabular-nums", minWidth: 0 }}>
+                      <Building2 size={11} style={{ flexShrink: 0 }} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.site || "현장 미지정"}</span>
+                      {r.inDist != null && <><Crosshair size={11} style={{ marginLeft: 4, flexShrink: 0 }} />{dist(r.inDist)}</>}
                     </div>
                     {r.note && <div style={{ marginTop: 5, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>{r.note}</div>}
                   </div>
@@ -6613,7 +6614,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                       <>
                         <div style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>{(r.isExtra || r.coverForName) ? "대신 근무 1회" : "일회성 근무 1회"}</div>
                         <div style={{ marginTop: 4 }}>
-                          <Num size={13.5} color={p.pending ? "#8B5CF6" : C.coral} weight={800}>{money(r.flatPay)}원</Num>
+                          <Num size={17} color={p.pending ? "#8B5CF6" : C.coral} weight={900}>{money(r.flatPay)}원</Num>
                         </div>
                         {p.pending && <div style={{ fontSize: 9.5, color: "#8B5CF6", fontWeight: 700, marginTop: 2 }}>승인 전(정산 미반영)</div>}
                       </>
@@ -6637,7 +6638,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                           <>
                             <div style={{ fontSize: 13, color: C.text, fontWeight: 700 }}>{mixedLabel}</div>
                             <div style={{ marginTop: 4 }}>
-                              <Num size={13.5} color={C.coral} weight={800}>{money(displayPay2)}원</Num>
+                              <Num size={17} color={C.coral} weight={900}>{money(displayPay2)}원</Num>
                             </div>
                           </>
                         );
