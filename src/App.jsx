@@ -7594,14 +7594,6 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
                 </div>
               );
             })}
-            {p.coverRecs.map((r) => {
-              const q = calcPay(r, worker, data.settings);
-              return (
-                <div key={`dbg-${r.id}`} style={{ fontSize: 9, color: "#999", fontFamily: MONO, padding: "2px 0" }}>
-                  [디버그 {r.date}] capBase:{JSON.stringify(r.capBase)} · flatPay:{JSON.stringify(r.flatPay)} · net:{q.net} · shiftHours:{JSON.stringify(resolvePay(worker, r.siteId, data.settings).shiftHours)} · q.pay:{q.pay} · agg.shift:{JSON.stringify(agg.shift)}
-                </div>
-              );
-            })}
             {p.oneOffRecs.map((r) => {
               const q = calcPay(r, worker, data.settings);
               return (
