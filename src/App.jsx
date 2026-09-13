@@ -7572,18 +7572,38 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         <div className="mt-4">
           <Eyebrow>대신 근무 · 일회성 현장 근무 상세</Eyebrow>
           <div style={{ marginTop: 6 }}>
-            {p.coverRecs.map((r) => (
-              <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 대신 근무{r.coverForName ? ` (${r.coverForName}님 대신)` : ""}</span>
-                <span style={{ fontWeight: 700, color: C.text }}>{money(r.flatPay)}원</span>
-              </div>
-            ))}
-            {p.oneOffRecs.map((r) => (
-              <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 일회성 현장 근무</span>
-                <span style={{ fontWeight: 700, color: C.text }}>{money(r.flatPay)}원</span>
-              </div>
-            ))}
+            {p.coverRecs.map((r) => {
+              // flatPay(고정금액 승인 방식)로 등록된 것도 있고, 정상 출퇴근(clockIn/clockOut) 방식으로
+              // 등록된 것도 있어서, r.flatPay만 믿으면 정상 출퇴근 방식인 경우 그 필드가 비어있어
+              // NaN원으로 잘못 나왔음 — 항상 calcPay로 다시 계산한 실제 값을 써야 정확함.
+              const q = calcPay(r, worker, data.settings);
+              let amt = q.open ? null : q.pay;
+              if (!q.open && r.capBase && r.flatPay == null && agg.shift) {
+                const rpq = resolvePay(worker, r.siteId, data.settings);
+                const ownHoursQ = rpq.shiftHours;
+                const extraHoursQ = Math.max(0, q.net - ownHoursQ);
+                const ownNetQ = Math.min(q.net, ownHoursQ);
+                const hMultQ = q.holiday ? (data.settings.holidayMultiplier || 1.5) : 1;
+                const ownPayQ = Math.round(ownNetQ / rpq.shiftHours) * rpq.shiftPay * hMultQ;
+                const extraPayQ = Math.round(extraHoursQ / data.settings.shiftHours) * data.settings.shiftPay * hMultQ;
+                amt = ownPayQ + extraPayQ;
+              }
+              return (
+                <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                  <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 대신 근무{r.coverForName ? ` (${r.coverForName}님 대신)` : ""}</span>
+                  <span style={{ fontWeight: 700, color: C.text }}>{q.open ? "진행중" : `${money(amt)}원`}</span>
+                </div>
+              );
+            })}
+            {p.oneOffRecs.map((r) => {
+              const q = calcPay(r, worker, data.settings);
+              return (
+                <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                  <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 일회성 현장 근무</span>
+                  <span style={{ fontWeight: 700, color: C.text }}>{q.open ? "진행중" : `${money(q.pay)}원`}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
