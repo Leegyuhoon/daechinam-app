@@ -135,7 +135,7 @@ async function uploadPhoto(file) {
   const data = await res.json();
   return data.id;
 }
-const MAX_VIDEO_MB = 40; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지
+const MAX_VIDEO_MB = 300; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지 — 서버가 파일을 한번에 메모리로 읽어들이는 구조라, Edge Functions 메모리 한도(512MB)를 넘지 않는 선에서 안전하게 잡은 값
 // 회사 도장처럼 "투명 배경"이 중요한 이미지는 uploadPhoto(JPEG로 압축, 투명도 사라짐)를 쓰면 안 되고,
 // PNG 투명도를 그대로 보존한 채로 업로드해야 함. 다만 용량은 줄여서 올림(원본 그대로면 너무 클 수 있으므로).
 function compressPngKeepAlpha(file, maxSize = 600) {
@@ -2653,7 +2653,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               ) : (
                 <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
                   <Camera size={20} color={C.sub} />
-                  <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 25MB)</div>
+                  <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 300MB)</div>
                   <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickLeadNoticeVideo(e.target.files?.[0])} />
                 </label>
               )
@@ -2936,7 +2936,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               )}
               {photoForm.kind === "video" && (
                 <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
-                  가능하면 15초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸리거나 실패할 수 있어요 (최대 25MB).
+                  가능하면 30초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸릴 수 있어요 (최대 300MB).
                 </div>
               )}
             </Field>
@@ -4715,7 +4715,7 @@ function NoticeAdminView({ data, update, setToast }) {
                   ) : (
                     <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
                       <Camera size={20} color={C.sub} />
-                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 25MB)</div>
+                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 300MB)</div>
                       <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickNoticeVideo(e.target.files?.[0])} />
                     </label>
                   )
