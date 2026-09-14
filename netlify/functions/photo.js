@@ -7,7 +7,7 @@ const CORS = {
 };
 
 const MAX_IMAGE = 6 * 1024 * 1024;   // 6MB
-const MAX_VIDEO = 40 * 1024 * 1024;  // 40MB (짧은 영상 기준 — 요즘 스마트폰은 몇 초만 찍어도 화질이 높아 용량이 큼)
+const MAX_VIDEO = 300 * 1024 * 1024;  // 300MB (클라이언트 제한(App.jsx의 MAX_VIDEO_MB)과 같은 값 — 서버가 파일을 한번에 메모리로 읽는 구조라 Edge Functions 메모리 한도(512MB) 안에서 안전하게 잡은 값)
 const MAX_DOC = 15 * 1024 * 1024;    // 15MB (매뉴얼 PDF 등)
 
 export default async (req, context) => {
