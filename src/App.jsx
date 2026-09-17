@@ -5861,11 +5861,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                   </div>
                 </div>
                 <div className="text-right" style={{ flexShrink: 0 }}>
-                  <Num size={13} color={C.text} weight={700}>{hmc(net)}</Num>
+                  <Num size={13} color={C.text} weight={700}>{hmc(net + (coverMin || 0) / 60 + (oneOffMin || 0) / 60)}</Num>
                   <div style={{ marginTop: 1 }}>
                     {w.fixedSalary
                       ? <Num size={17} color={C.coral} weight={900}>{money(w.fixedMonthlyPay || 0)}원</Num>
-                      : <Num size={17} color={C.coral} weight={900}>{money(pay)}원</Num>}
+                      : <Num size={17} color={C.coral} weight={900}>{money(pay + (coverPay || 0) + (oneOffPay || 0))}원</Num>}
                   </div>
                 </div>
               </div>
@@ -5878,12 +5878,12 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               </div>
               {coverCount > 0 && (
                 <div className="mt-1.5" style={{ fontSize: 11, color: C.text, fontWeight: 700, background: C.tileSoft, padding: "4px 8px" }}>
-                  대신 근무 {coverCount}회 · {minStr(coverMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(coverPay)}원</span> (실근무시간과 별도)
+                  (위 총액 중 대신 근무 {coverCount}회 · {minStr(coverMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(coverPay)}원</span> 포함)
                 </div>
               )}
               {oneOffCount > 0 && (
                 <div className="mt-1.5" style={{ fontSize: 11, color: C.text, fontWeight: 700, background: C.tileSoft, padding: "4px 8px" }}>
-                  일회성 현장 근무 {oneOffCount}회 · {minStr(oneOffMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(oneOffPay)}원</span> (실근무시간과 별도)
+                  (위 총액 중 일회성 현장 근무 {oneOffCount}회 · {minStr(oneOffMin)} · <span style={{ color: C.coral, fontWeight: 800 }}>{money(oneOffPay)}원</span> 포함)
                 </div>
               )}
             </Tile>
