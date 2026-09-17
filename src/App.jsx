@@ -6147,6 +6147,23 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
     : agg.pay + (agg.coverPay || 0) + (agg.oneOffPay || 0) + allowanceTotal;
 
   const [exportBusy, setExportBusy] = useState(false);
+  // 한 기록의 "실제 지급액"(본인근무+대신근무 혼합이면 합산값)을 정확히 계산 — CSV/PDF 다운로드에서
+  // p.pay(calcPay 기본값, 혼합이면 본인 몫만)를 그대로 쓰면 대신근무 몫이 빠지므로 반드시 이걸 써야 함.
+  const recordActualPay2 = (r, p) => {
+    if (p.open) return 0;
+    if (p.pending) return 0;
+    if (r.capBase && r.flatPay == null && settings.payMode === "shift") {
+      const rpc = resolvePay(worker, r.siteId, settings);
+      const ownHoursC = rpc.shiftHours;
+      const extraHoursC = Math.max(0, p.net - ownHoursC);
+      const ownNetC = Math.min(p.net, ownHoursC);
+      const hMultC = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+      const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
+      const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
+      return ownPayC + extraPayC;
+    }
+    return p.pay;
+  };
   const downloadWorkerCsv = () => {
     const head = agg.shift
       ? "이름,날짜,요일,현장,출근,퇴근,근무(분),추가,금액"
@@ -6156,8 +6173,8 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
       const d = parseKey(r.date);
       const common = [worker.name, r.date, WD[d.getDay()], r.site || "", tstr(r.clockIn), r.clockOut ? tstr(r.clockOut) : ""];
       return agg.shift
-        ? [...common, Math.round(p.net * 60), p.blocks || 0, Math.round(p.pay || 0)].join(",")
-        : [...common, (p.net || 0).toFixed(2), Math.round(p.pay || 0)].join(",");
+        ? [...common, Math.round(p.net * 60), p.blocks || 0, Math.round(recordActualPay2(r, p))].join(",")
+        : [...common, (p.net || 0).toFixed(2), Math.round(recordActualPay2(r, p))].join(",");
     });
     const csvText = "\uFEFF" + [head, ...lines].join("\n");
     const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
@@ -6179,7 +6196,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA;">${r.site || ""}</td>
           <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${tstr(r.clockIn)}–${r.clockOut ? tstr(r.clockOut) : "—"}</td>
           <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${p.open ? "—" : hmc(p.net)}</td>
-          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${p.open ? "—" : `${money(p.pay)}원`}</td>
+          <td style="padding:7px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${p.open ? "—" : `${money(recordActualPay2(r, p))}원`}</td>
         </tr>`;
       }).join("");
       const html = `
@@ -6187,7 +6204,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
           <div style="font-size:22px; font-weight:900;">${worker.name} · ${labelOf(mode, anchor)} 근무 기록</div>
           <div style="font-size:12px; color:#71767D; margin-top:4px;">발행일 ${dKey(new Date())}</div>
           <div style="display:flex; gap:24px; margin-top:16px; font-size:13px;">
-            <div>총 근무시간 <b>${hmc(agg.net)}</b></div>
+            <div>총 근무시간 <b>${hmc(agg.net + (agg.coverMin || 0) / 60 + (agg.oneOffMin || 0) / 60)}</b></div>
             <div>지급 합계 <b style="color:#D8503F;">${money(totalPay)}원</b></div>
           </div>
           ${allowances.length > 0 ? `
@@ -7441,7 +7458,19 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         const mark = q.blocks > 0 ? ` 추가+${minStr(q.otMin)}` : q.shortMin >= data.settings.shortThreshold ? ` 부족-${minStr(q.shortMin)}` : "";
         const hol = q.holiday ? ` 공휴일×${agg.holidayMultiplier}` : "";
         const cov = r.coverForName ? ` (${r.coverForName}님 대신)` : "";
-        L.push(`${r.date.slice(5)}(${WD[d.getDay()]}) ${tstr(r.clockIn)}-${tstr(r.clockOut)} ${minStr(q.net * 60)}${mark}${hol}${cov} ${money(q.pay)}원`);
+        // 본인근무+대신근무 혼합 확정된 날은 q.pay(본인 몫만)가 아니라 합산 금액을 써야 함
+        let actualQPay = q.pay;
+        if (r.capBase && r.flatPay == null && agg.shift) {
+          const rpq2 = resolvePay(worker, r.siteId, data.settings);
+          const ownHoursQ2 = rpq2.shiftHours;
+          const extraHoursQ2 = Math.max(0, q.net - ownHoursQ2);
+          const ownNetQ2 = Math.min(q.net, ownHoursQ2);
+          const hMultQ2 = q.holiday ? (data.settings.holidayMultiplier || 1.5) : 1;
+          const ownPayQ2 = Math.round(ownNetQ2 / rpq2.shiftHours) * rpq2.shiftPay * hMultQ2;
+          const extraPayQ2 = Math.round(extraHoursQ2 / data.settings.shiftHours) * data.settings.shiftPay * hMultQ2;
+          actualQPay = ownPayQ2 + extraPayQ2;
+        }
+        L.push(`${r.date.slice(5)}(${WD[d.getDay()]}) ${tstr(r.clockIn)}-${tstr(r.clockOut)} ${minStr(q.net * 60)}${mark}${hol}${cov} ${money(actualQPay)}원`);
       });
     }
     if (adj.memo) L.push("", `※ ${adj.memo}`);
