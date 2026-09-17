@@ -5256,14 +5256,22 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
     setPdfBusy(true);
     try {
       const company = settings.companyName || "";
-      const rowsHtml = rows.map(({ w, net, days, times, pay, blocks }) => `
+      const rowsHtml = rows.map(({ w, net, days, times, pay, blocks, coverPay, oneOffPay, coverMin, oneOffMin }) => {
+        // "지급액"은 정상근무(pay)뿐 아니라 대신근무·일회성(coverPay/oneOffPay)까지 다 합친 실제 총액이어야
+        // 급여대장이 "실제로 줄 돈"을 정확히 보여줌 — 이걸 빠뜨리면 대신근무한 사람의 급여가 누락됨.
+        const actualPay = w.fixedSalary ? (w.fixedMonthlyPay || 0) : pay + (coverPay || 0) + (oneOffPay || 0);
+        const extraNote = (coverMin || oneOffMin) ? ` <span style="font-size:9.5px; color:#71767D;">(대신·일회성 포함)</span>` : "";
+        return `
         <tr>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; font-weight:800;">${w.name}${w.fixedSalary ? ' <span style="font-size:10px; color:#71767D;">(월급제)</span>' : ""}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${isShiftMode ? `${times + (blocks || 0)}타임` : `${days}일`}</td>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net)}</td>
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${hmc(net + (coverMin || 0) / 60 + (oneOffMin || 0) / 60)}</td>
           <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right;">${blocks || "—"}</td>
-          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${w.fixedSalary ? money(w.fixedMonthlyPay || 0) : money(pay)}원</td>
-        </tr>`).join("");
+          <td style="padding:8px 6px; border-bottom:1px solid #E5E1DA; text-align:right; font-weight:900; color:#D8503F;">${money(actualPay)}원${extraNote}</td>
+        </tr>`;
+      }).join("");
+      const grandTotalPay = tot.pay + (tot.coverPay || 0) + (tot.oneOffPay || 0) + (tot.fixedPay || 0);
+      const grandTotalNet = tot.net + (tot.coverMin || 0) / 60 + (tot.oneOffMin || 0) / 60;
       const html = `
         <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
           ${company ? `<div style="font-size:15px; font-weight:800;">${company}</div>` : ""}
@@ -5284,9 +5292,9 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
               <tr style="border-top:2px solid #1D232A;">
                 <td style="padding:10px 6px; font-weight:900;">합계 (${rows.length}명)</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${isShiftMode ? `${tot.times + tot.blocks}타임` : `${tot.days}일`}</td>
-                <td style="padding:10px 6px; text-align:right; font-weight:900;">${hmc(tot.net)}</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900;">${hmc(grandTotalNet)}</td>
                 <td style="padding:10px 6px; text-align:right; font-weight:900;">${tot.blocks || "—"}</td>
-                <td style="padding:10px 6px; text-align:right; font-weight:900; color:#D8503F;">${money(tot.pay)}원</td>
+                <td style="padding:10px 6px; text-align:right; font-weight:900; color:#D8503F;">${money(grandTotalPay)}원</td>
               </tr>
             </tfoot>
           </table>
@@ -6753,6 +6761,25 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
   const [oneOffOpen, setOneOffOpen] = useState(false);
   const [oneOffForm, setOneOffForm] = useState({ siteName: "", inT: "09:00", outT: "18:00", amount: "150000" });
 
+  // 한 기록의 "실제 지급액"(화면에 표시되는 금액과 항상 동일하게)을 계산하는 공용 함수.
+  // 승인대기(pending)면 0원 취급(아직 확정 아님), "본인근무+대신근무 혼합" 확정된 날은 본인 몫+대신근무 몫을
+  // 합친 금액, 그 외엔 calcPay 기본값 — 이렇게 한 곳에서 계산해야 "이날 합계"가 개별 항목들과 항상 맞음.
+  const recordActualPay = (r, p) => {
+    if (p.open) return 0;
+    if (p.pending) return 0; // 승인 전이라 아직 확정된 금액이 아님(개별 카드에도 "0원"이 아니라 예정 금액을 보여주지만, 합계엔 반영 안 함)
+    if (r.capBase && r.flatPay == null && settings.payMode === "shift") {
+      const rpc = resolvePay(worker, r.siteId, settings);
+      const ownHoursC = rpc.shiftHours;
+      const extraHoursC = Math.max(0, p.net - ownHoursC);
+      const ownNetC = Math.min(p.net, ownHoursC);
+      const hMultC = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+      const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
+      const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
+      return ownPayC + extraPayC;
+    }
+    return p.pay;
+  };
+
   const y = anchor.getFullYear(), m = anchor.getMonth();
   const monthKey = `${y}-${pad(m + 1)}`;
   const first = new Date(y, m, 1);
@@ -6925,17 +6952,19 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
         {/* 이번 주 · 이번 달 요약 */}
         <div className="grid grid-cols-2 gap-2 mb-4">
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
-            <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주</div>
-            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(weekAgg.net)}</Num></div>
+            <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>이번 주 합계</div>
+            {/* weekAgg.net/pay는 "정상근무" 몫만이라, 대신근무·일회성까지 합친 진짜 하루/기간 총합을 보여주려면
+                coverMin/coverPay·oneOffMin/oneOffPay를 다 더해야 함(그래야 "합계"라는 이름과 실제 내용이 맞음) */}
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(weekAgg.net + (weekAgg.coverMin || 0) / 60 + (weekAgg.oneOffMin || 0) / 60)}</Num></div>
             {worker.fixedSalary ? (
               <div style={{ fontSize: 9.5, color: C.coral, fontWeight: 800, marginTop: 2, lineHeight: 1.5 }}>{fixedSalaryLine(worker)}</div>
             ) : (
-              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay)}원</div>
+              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(weekAgg.pay + (weekAgg.coverPay || 0) + (weekAgg.oneOffPay || 0))}원</div>
             )}
             {(weekAgg.coverCount > 0 || weekAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
-                {weekAgg.coverCount > 0 && <div>대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)}</div>}
-                {weekAgg.oneOffCount > 0 && <div>일회성 현장 근무 {weekAgg.oneOffCount}회 · {minStr(weekAgg.oneOffMin)}</div>}
+                {weekAgg.coverCount > 0 && <div>(대신 근무 {weekAgg.coverCount}회 · {minStr(weekAgg.coverMin)} 포함)</div>}
+                {weekAgg.oneOffCount > 0 && <div>(일회성 현장 근무 {weekAgg.oneOffCount}회 · {minStr(weekAgg.oneOffMin)} 포함)</div>}
               </div>
             )}
             {weekRecs.some((r) => !r.clockOut) && (
@@ -6947,16 +6976,16 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           </div>
           <div style={{ background: C.tile, padding: "12px 14px", boxShadow: SHADOW_SM, borderRadius: RADIUS_SM, minWidth: 0 }}>
             <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 700, letterSpacing: "0.05em" }}>{m + 1}월 합계</div>
-            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(monthAgg.net)}</Num></div>
+            <div className="mt-1" style={{ whiteSpace: "nowrap" }}><Num size={16}>{hmc(monthAgg.net + (monthAgg.coverMin || 0) / 60 + (monthAgg.oneOffMin || 0) / 60)}</Num></div>
             {worker.fixedSalary ? (
               <div style={{ fontSize: 9.5, color: C.coral, fontWeight: 800, marginTop: 2, lineHeight: 1.5 }}>{fixedSalaryLine(worker)}</div>
             ) : (
-              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay)}원</div>
+              <div style={{ fontSize: 10.5, color: C.coral, fontWeight: 800, marginTop: 2, whiteSpace: "nowrap" }}>{money(monthAgg.pay + (monthAgg.coverPay || 0) + (monthAgg.oneOffPay || 0))}원</div>
             )}
             {(monthAgg.coverCount > 0 || monthAgg.oneOffCount > 0) && (
               <div style={{ fontSize: 10, color: C.text, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
-                {monthAgg.coverCount > 0 && <div>대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)}</div>}
-                {monthAgg.oneOffCount > 0 && <div>일회성 현장 근무 {monthAgg.oneOffCount}회 · {minStr(monthAgg.oneOffMin)}</div>}
+                {monthAgg.coverCount > 0 && <div>(대신 근무 {monthAgg.coverCount}회 · {minStr(monthAgg.coverMin)} 포함)</div>}
+                {monthAgg.oneOffCount > 0 && <div>(일회성 현장 근무 {monthAgg.oneOffCount}회 · {minStr(monthAgg.oneOffMin)} 포함)</div>}
               </div>
             )}
             {monthRecs.some((r) => !r.clockOut) && (
@@ -7065,7 +7094,8 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                     <span style={{ fontSize: 14, fontWeight: 900, color: C.text }}>
                       {money(selRecs.reduce((sum, r) => {
                         const pr = calcPay(r, worker, settings);
-                        return sum + (worker.fixedSalary && !pr.flat ? 0 : pr.pay);
+                        if (worker.fixedSalary && !pr.flat) return sum;
+                        return sum + recordActualPay(r, pr);
                       }, 0))}원
                     </span>
                   </div>
@@ -7098,16 +7128,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                           if (p.pending) {
                             mainAmt = `${money(r.flatPay)}원`; note2 = "관리자 승인 전 · 아직 정산에는 반영 안 됨";
                           } else if (r.capBase && r.flatPay == null && settings.payMode === "shift") {
-                            // "본인근무+대신근무 혼합" 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
-                            // 본인 몫+대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판과 동일한 계산)
-                            const rpc = resolvePay(worker, r.siteId, settings);
-                            const ownHoursC = rpc.shiftHours;
-                            const extraHoursC = Math.max(0, p.net - ownHoursC);
-                            const ownNetC = Math.min(p.net, ownHoursC);
-                            const hMultC = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
-                            const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
-                            const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
-                            mainAmt = `${money(ownPayC + extraPayC)}원`;
+                            mainAmt = `${money(recordActualPay(r, p))}원`;
                           } else {
                             mainAmt = `${money(p.pay)}원`; if (p.flat) note2 = "고정 지급액";
                           }
@@ -7144,7 +7165,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, flexShrink: 0 }}>이날 합계</span>
                   <span style={{ fontSize: 13, fontWeight: 900, color: C.coral, whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {hmc(selDayAgg.net)}{!worker.fixedSalary && ` · ${money(selDayAgg.pay)}원`}
+                    {/* selDayAgg는 "정상근무" 몫만 집계하고 대신근무는 coverMin/coverPay로 따로 빠지므로,
+                        진짜 "이날 하루 전체" 합계를 보여주려면 둘을 합쳐야 함(개별 카드 합산과 정확히 일치하도록) */}
+                    {hmc(selDayAgg.net + (selDayAgg.coverMin || 0) / 60)}{!worker.fixedSalary && ` · ${money(selDayAgg.pay + (selDayAgg.coverPay || 0))}원`}
                   </span>
                 </div>
               </>
@@ -7738,15 +7761,17 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           {recs.length === 0 && <div style={{ padding: "14px 0", fontSize: 12.5, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
           <div className="flex items-center" style={{ padding: "9px 0", borderBottom: `2px solid ${C.text}` }}>
             <span style={{ width: 178, fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              합계 {p.isFixedSalary ? `${agg.days}일` : agg.shift ? `${agg.times}타임 (${agg.days}일)` : `${agg.days}일`}
+              합계 {p.isFixedSalary ? `${agg.days}일` : agg.shift ? `${agg.times + agg.blocks}타임 (${agg.days}일)` : `${agg.days}일`}
             </span>
-            <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net)}</Num></span>
+            {/* agg.net/pay는 "정상근무" 몫만이라, 위 표의 개별 행(대신근무 혼합이면 본인+대신 합산으로 표시됨)들의
+                합과 맞으려면 coverMin/coverPay까지 더해야 함 — 안 그러면 "합계"가 실제보다 적게 나와서 혼동됨 */}
+            <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net + (agg.coverMin || 0) / 60)}</Num></span>
             {p.isFixedSalary ? (
               <span style={{ width: 60, textAlign: "right" }} />
             ) : (
               <>
                 <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
-                <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{money(agg.pay)}</Num></span>
+                <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{money(agg.pay + (agg.coverPay || 0))}</Num></span>
               </>
             )}
           </div>
