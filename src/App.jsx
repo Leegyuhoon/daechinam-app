@@ -2574,10 +2574,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           <button onClick={() => setLeadAttDate(dKey(new Date(new Date(leadAttDate).getTime() - 86400000)))} className="pressable" style={{ padding: 4 }}>
             <ChevronLeft size={18} color={C.text} />
           </button>
-          <div className="flex items-center gap-2">
-            <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
-              {isLeadAttToday ? "오늘" : `${leadAttDate.slice(5).replace("-", "/")}`} <span style={{ color: C.sub, fontWeight: 700 }}>({WD[parseKey(leadAttDate).getDay()]})</span>
+          <div className="flex items-center gap-2" style={{ position: "relative" }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: C.text, textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+              📅 {isLeadAttToday ? "오늘" : `${leadAttDate.slice(5).replace("-", "/")}`} <span style={{ color: C.sub, fontWeight: 700 }}>({WD[parseKey(leadAttDate).getDay()]})</span>
             </span>
+            {/* 화면엔 안 보이지만 이 영역 위에 그대로 겹쳐서, 탭하면 휴대폰 기본 달력이 떠서 원하는 날짜로 한 번에 이동 가능 */}
+            <input type="date" value={leadAttDate} max={todayKey0}
+              onChange={(e) => e.target.value && setLeadAttDate(e.target.value)}
+              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
             {!isLeadAttToday && (
               <button onClick={() => setLeadAttDate(todayKey0)} className="pressable" style={{ fontSize: 11, fontWeight: 800, color: C.aquaDeep, border: `1px solid ${C.aquaDeep}`, padding: "2px 7px" }}>오늘로</button>
             )}
