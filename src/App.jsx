@@ -1583,6 +1583,27 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
 
   // 일일체크리스트 — 내가 팀장인 현장 중 "체크리스트 대상"으로 켜둔 곳들
   const myChecklistSites = sites.filter((s) => myLeaderSiteIds.includes(s.id) && s.checklistEnabled);
+
+  // 팀장 전용: 우리 현장 출퇴근 현황(시간만) — 여러 층을 오가며 작업하는 현장에서, 팀원들이 제때
+  // 출근했는지 관리자 없이도 실시간으로 확인할 수 있게 함. 급여·금액은 전혀 안 보여주고 시간만 보여줌.
+  const [leadAttOpen, setLeadAttOpen] = useState(false);
+  const todayKey0 = dKey(now);
+  const myTeamRows = useMemo(() => {
+    if (!worker || myLeaderSiteIds.length === 0) return [];
+    return data.workers
+      .filter((w) => w.id !== worker.id && (w.siteIds || (w.siteId ? [w.siteId] : [])).some((id) => myLeaderSiteIds.includes(id)))
+      .map((w) => {
+        const recs = data.records.filter((r) => r.workerId === w.id && r.date === todayKey0 && myLeaderSiteIds.includes(r.siteId));
+        const latest = recs.slice().sort((a, b) => b.clockIn.localeCompare(a.clockIn))[0];
+        let status, statusLabel;
+        if (!latest) { status = "none"; statusLabel = "출근 전"; }
+        else if (!latest.clockOut) { status = "in"; statusLabel = "근무 중"; }
+        else { status = "out"; statusLabel = "퇴근함"; }
+        const site = sites.find((s) => s.id === latest?.siteId);
+        return { w, latest, status, statusLabel, siteName: site?.name };
+      })
+      .sort((a, b) => (a.status === "none" ? 0 : 1) - (b.status === "none" ? 0 : 1) || a.w.name.localeCompare(b.w.name));
+  }, [worker, myLeaderSiteIds, data.workers, data.records, todayKey0, sites]);
   const [checklistSiteId, setChecklistSiteId] = useState(null); // 열려있는 체크리스트의 대상 현장
   const [checklistAnswers, setChecklistAnswers] = useState({});
   const openChecklist = (siteId) => {
@@ -2515,6 +2536,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       {/* 팀장 전용: 현장 공지 */}
       {worker?.isTeamLead && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 10 }}>
+          <button onClick={() => setLeadAttOpen(true)} className="w-full flex items-center justify-center gap-2"
+            style={{ background: C.tile, border: `1px solid ${C.line}`, padding: "12px 0", color: C.text, fontSize: 13, fontWeight: 900, marginBottom: 8 }}>
+            <Clock3 size={15} /> 우리 현장 출퇴근 확인 (팀장)
+          </button>
           <button onClick={openLeadNotice} className="w-full flex items-center justify-center gap-2"
             style={{ background: C.amber, border: "none", padding: "12px 0", color: "#3D2600", fontSize: 13, fontWeight: 900 }}>
             <ShieldCheck size={15} /> 우리 현장 공지 작성 (팀장)
@@ -2536,6 +2561,37 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           )}
         </div>
       )}
+
+      {/* 팀장 전용: 우리 현장 출퇴근 확인(시간만) */}
+      <Modal open={leadAttOpen} onClose={() => setLeadAttOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>우리 현장 출퇴근 확인</div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 12 }}>
+          {mySiteNames.join(", ") || "담당 현장"} · 오늘({todayKey0.slice(5)}) 기준 · 시간만 표시돼요
+        </div>
+        <div className="flex flex-col gap-1.5" style={{ maxHeight: 480, overflowY: "auto" }}>
+          {myTeamRows.map(({ w, latest, status, statusLabel, siteName }) => (
+            <div key={w.id} style={{ background: C.tileSoft, padding: "11px 13px" }}>
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{w.name}</span>
+                <span style={{
+                  fontSize: 10.5, fontWeight: 900, padding: "2px 7px",
+                  color: status === "none" ? "#fff" : status === "in" ? "#fff" : C.sub,
+                  background: status === "none" ? C.red : status === "in" ? ST.complete : "transparent",
+                  border: status === "out" ? `1px solid ${C.line}` : "none",
+                }}>{statusLabel}</span>
+              </div>
+              <div style={{ fontSize: 12, color: C.sub, marginTop: 3, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                {latest ? (
+                  <>출근 {tstr(latest.clockIn)}{latest.clockOut && ` · 퇴근 ${tstr(latest.clockOut)}`}{siteName ? ` · ${siteName}` : ""}</>
+                ) : "아직 출근 기록이 없어요"}
+              </div>
+            </div>
+          ))}
+          {myTeamRows.length === 0 && (
+            <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>우리 현장에 배정된 다른 근무자가 없어요.</div>
+          )}
+        </div>
+      </Modal>
 
       {/* 내가 작성한 공지 확인 (읽기 전용) */}
       <Modal open={!!myNoticeViewer} onClose={() => setMyNoticeViewer(null)}>
