@@ -715,6 +715,18 @@ function calcPay(rec, worker, settings) {
   if (rec.capBase) {
     return { ...c, open: false, base: sp, otPay: 0, pay: sp, blocks: 0, diffMin: 0, holiday, otMin: 0, shortMin: 0, overMin: 0, target: sh };
   }
+  if (worker?.fixedSalary) {
+    // 정규직은 회사가 타임제(1타임 몇 시간 단위)여도 "1타임 초과분" 개념을 적용하면 안 됨 —
+    // 하루 종일 한 번에 출퇴근을 찍는 정규직 기록을 "1타임(예: 2시간)보다 훨씬 길다"는 식으로 계산하면
+    // 실제로는 정상 근무인데도 추가근무가 몇 시간씩 부풀려짐. 정규직은 항상 "1일 소정근로시간(계약시간)"
+    // 대비로만 초과·부족을 판단하고, 금액(돈)은 이 함수에서 절대 만들지 않음(0으로 고정).
+    const std = (worker?.stdHours != null && worker.stdHours > 0) ? worker.stdHours : (settings.stdHours > 0 ? settings.stdHours : 8);
+    const diffMinF = Math.round((c.net - std) * 60);
+    return {
+      ...c, open: false, base: 0, otPay: 0, pay: 0, blocks: 0, diffMin: diffMinF, holiday,
+      otMin: Math.max(0, diffMinF), shortMin: Math.max(0, -diffMinF), overMin: Math.max(0, diffMinF), target: std,
+    };
+  }
   const th = Math.max(1, settings.otThreshold);
   const diffMin = Math.round((c.net - sh) * 60);
   let blocks = 0;
@@ -5824,10 +5836,10 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 ) : r.coverForName ? (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>대신 근무</span>
                                 ) : null}
-                                {isShiftMode && p && p.blocks > 0 && (
+                                {isShiftMode && !w.fixedSalary && p && p.blocks > 0 && (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>추가 {minStr(p.otMin)}</span>
                                 )}
-                                {isShiftMode && p && p.blocks === 0 && shortish && (
+                                {isShiftMode && !w.fixedSalary && p && p.blocks === 0 && shortish && (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>부족 {minStr(p.shortMin)}</span>
                                 )}
                                 {r.outFlag && (
@@ -5846,20 +5858,11 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                             </div>
                           );
                         })}
-                        {!isShiftMode && dayAgg && (dayAgg.otMin > 0 || dayAgg.shortMin > 0) && (
+                        {(!isShiftMode || w.fixedSalary) && dayAgg && (dayAgg.otMin > 0 || dayAgg.shortMin > 0) && (
                           <div className="flex items-center gap-1.5 flex-wrap" style={{ paddingTop: 2 }}>
                             <span style={{ fontSize: 10.5, color: C.sub, fontWeight: 700 }}>오늘 전체 기준</span>
                             {dayAgg.otMin > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 4px", whiteSpace: "nowrap" }}>추가 {minStr(dayAgg.otMin)}</span>}
                             {dayAgg.shortMin > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap" }}>부족 {minStr(dayAgg.shortMin)}</span>}
-                          </div>
-                        )}
-                        {/* TEMP-DEBUG: 추가/부족 배지 원인 확인용 — 확인 끝나면 이 블록 삭제 */}
-                        {dayAgg && (
-                          <div style={{ fontSize: 9.5, color: "#DC2626", background: "#FEF2F2", padding: "3px 5px", marginTop: 2, fontFamily: MONO }}>
-                            [디버그] 건수:{recs.length} net:{dayAgg.net.toFixed(2)}h std:{dayAgg.std}h flags:{dayAgg.flags} otMin:{dayAgg.otMin} shortMin:{dayAgg.shortMin}
-                            {recs.map((r, i) => (
-                              <div key={i}>#{i} {r.site} {tstr(r.clockIn)}~{r.clockOut ? tstr(r.clockOut) : "미퇴근"} brk:{r.breakMinutes ?? "auto"} flatPay:{String(r.flatPay)} cover:{String(!!(r.isExtra || r.coverForName))} date:{r.date}</div>
-                            ))}
                           </div>
                         )}
                       </div>
