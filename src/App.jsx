@@ -668,8 +668,10 @@ function calcRec(rec, worker, settings) {
   if (o <= i) o += 86400000;
   const gross = (o - i) / 3600000;
   let brk = 0;
-  if (rec.breakMinutes != null) brk = rec.breakMinutes / 60;
-  else if (worker?.fixedSalary && worker?.fixedBreakMinutes != null) brk = Number(worker.fixedBreakMinutes) / 60; // 정규직은 개인별 고정 휴게시간 우선
+  if (worker?.fixedSalary) {
+    // 정규직은 휴게·점심시간도 그대로 근무시간에 포함 — 출퇴근 찍은 시간 그대로가 곧 근무시간
+    brk = 0;
+  } else if (rec.breakMinutes != null) brk = rec.breakMinutes / 60;
   else if (settings.payMode !== "shift" && settings.autoBreak) brk = autoBreakH(gross);
   return { open: false, gross, brk, net: Math.max(0, gross - brk) };
 }
@@ -8385,14 +8387,15 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
     const allowances = (wEdit.allowances || [])
       .filter((a) => a.label && a.label.trim())
       .map((a) => ({ id: a.id || uid(), label: a.label.trim(), amount: Number(a.amount) || 0 }));
-    // 정규직은 "1일 순수 근무시간"을 직접 입력받지 않고, 계약 출퇴근 시각·휴게시간으로부터 자동 계산해서 넣음
+    // 정규직은 "1일 순수 근무시간"을 직접 입력받지 않고, 계약 출퇴근 시각으로부터 자동 계산해서 넣음
+    // (휴게·점심시간도 근무시간에 포함되므로 별도로 빼지 않음 — 실제 근무시간 계산도 동일한 기준)
     let fixedStdHours = null;
     if (wEdit.fixedSalary) {
       const [sh, sm] = (wEdit.fixedWorkStart ?? "09:00").split(":").map(Number);
       const [eh, em] = (wEdit.fixedWorkEnd ?? "18:00").split(":").map(Number);
       let diffMin = (eh * 60 + em) - (sh * 60 + sm);
       if (diffMin < 0) diffMin += 24 * 60;
-      fixedStdHours = Math.max(0, (diffMin - (Number(wEdit.fixedBreakMinutes) || 0)) / 60);
+      fixedStdHours = Math.max(0, diffMin / 60);
     }
     const w = {
       id: wEdit.id || uid(), name: wEdit.name.trim(),
@@ -9563,21 +9566,15 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                         onChange={(e) => setWEdit({ ...wEdit, fixedWorkEnd: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
                     </Field>
                   </div>
-                  <div className="mt-2.5">
-                    <Field label="휴게시간 (분)">
-                      <input type="number" value={wEdit.fixedBreakMinutes ?? ""} placeholder="예: 60"
-                        onChange={(e) => setWEdit({ ...wEdit, fixedBreakMinutes: e.target.value })} style={{ ...inputStyle, background: C.tile }} />
-                    </Field>
-                  </div>
                   {(() => {
                     const [sh, sm] = (wEdit.fixedWorkStart ?? "09:00").split(":").map(Number);
                     const [eh, em] = (wEdit.fixedWorkEnd ?? "18:00").split(":").map(Number);
                     let diffMin = (eh * 60 + em) - (sh * 60 + sm);
                     if (diffMin < 0) diffMin += 24 * 60; // 야간근무 등 자정 넘어가는 경우
-                    const netH = Math.max(0, (diffMin - (Number(wEdit.fixedBreakMinutes) || 0)) / 60);
+                    const netH = Math.max(0, diffMin / 60);
                     return (
                       <div style={{ fontSize: 11, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
-                        계약 근무 {(diffMin / 60).toFixed(1)}시간 − 휴게 {Number(wEdit.fixedBreakMinutes) || 0}분 = <b style={{ color: C.text }}>실 근무 {netH.toFixed(1)}시간</b> · 이 시간을 기준으로 매일 추가·부족 시간을 판단해요.
+                        계약 근무 <b style={{ color: C.text }}>{netH.toFixed(1)}시간</b> (휴게·점심시간도 근무시간에 포함) · 이 시간을 기준으로 매일 추가·부족 시간을 판단해요. 출퇴근도 실제 찍은 시각 그대로(휴게시간 차감 없이) 계산돼요.
                       </div>
                     );
                   })()}
