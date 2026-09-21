@@ -5851,6 +5851,15 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                             {dayAgg.shortMin > 0 && <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap" }}>부족 {minStr(dayAgg.shortMin)}</span>}
                           </div>
                         )}
+                        {/* TEMP-DEBUG: 추가/부족 배지 원인 확인용 — 확인 끝나면 이 블록 삭제 */}
+                        {dayAgg && (
+                          <div style={{ fontSize: 9.5, color: "#DC2626", background: "#FEF2F2", padding: "3px 5px", marginTop: 2, fontFamily: MONO }}>
+                            [디버그] 건수:{recs.length} net:{dayAgg.net.toFixed(2)}h std:{dayAgg.std}h flags:{dayAgg.flags} otMin:{dayAgg.otMin} shortMin:{dayAgg.shortMin}
+                            {recs.map((r, i) => (
+                              <div key={i}>#{i} {r.site} {tstr(r.clockIn)}~{r.clockOut ? tstr(r.clockOut) : "미퇴근"} brk:{r.breakMinutes ?? "auto"} flatPay:{String(r.flatPay)} cover:{String(!!(r.isExtra || r.coverForName))} date:{r.date}</div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </Tile>
