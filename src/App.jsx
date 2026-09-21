@@ -576,6 +576,16 @@ function payslipCalc(data, workerId, ym) {
 const ymLabel = (ym) => `${ym.slice(0, 4)}년 ${Number(ym.slice(5, 7))}월`;
 
 const autoBreakH = (g) => (g >= 8 ? 1 : g >= 4 ? 0.5 : 0);
+// 정규직의 "1일 소정근로시간"은 항상 계약 출퇴근시각(fixedWorkStart~fixedWorkEnd)에서 그 자리에서 직접 계산함 —
+// 저장돼 있는 worker.stdHours 캐시값을 쓰지 않으므로, 계산식이 나중에 바뀌어도(예: 휴게시간 반영 방식 변경)
+// 예전에 저장된 낡은 값 때문에 추가/부족이 틀어지는 일 없이 항상 최신 계약시각 기준으로 정확하게 나옴.
+function fixedStdHoursOf(worker) {
+  const [sh, sm] = (worker?.fixedWorkStart ?? "09:00").split(":").map(Number);
+  const [eh, em] = (worker?.fixedWorkEnd ?? "18:00").split(":").map(Number);
+  let diffMin = (eh * 60 + em) - (sh * 60 + sm);
+  if (diffMin < 0) diffMin += 24 * 60;
+  return diffMin / 60;
+}
 const minStr = (m) => {
   const r = Math.round(Math.abs(m));
   return r < 60 ? `${r}분` : r % 60 === 0 ? `${r / 60}시간` : `${Math.floor(r / 60)}시간 ${r % 60}분`;
@@ -720,7 +730,7 @@ function calcPay(rec, worker, settings) {
     // 하루 종일 한 번에 출퇴근을 찍는 정규직 기록을 "1타임(예: 2시간)보다 훨씬 길다"는 식으로 계산하면
     // 실제로는 정상 근무인데도 추가근무가 몇 시간씩 부풀려짐. 정규직은 항상 "1일 소정근로시간(계약시간)"
     // 대비로만 초과·부족을 판단하고, 금액(돈)은 이 함수에서 절대 만들지 않음(0으로 고정).
-    const std = (worker?.stdHours != null && worker.stdHours > 0) ? worker.stdHours : (settings.stdHours > 0 ? settings.stdHours : 8);
+    const std = fixedStdHoursOf(worker);
     const diffMinF = Math.round((c.net - std) * 60);
     return {
       ...c, open: false, base: 0, otPay: 0, pay: 0, blocks: 0, diffMin: diffMinF, holiday,
@@ -750,7 +760,7 @@ function fixedSalaryLine(worker) {
 function aggregate(records, worker, settings) {
   const shift = settings.payMode === "shift";
   const isFixedWorker = !!worker?.fixedSalary; // 정규직은 회사가 타임제여도, 부족/초과 계산은 항상 "1일 기준시간 비교" 방식으로
-  const std = (worker?.stdHours != null && worker.stdHours > 0) ? worker.stdHours : (settings.stdHours > 0 ? settings.stdHours : 8);
+  const std = isFixedWorker ? fixedStdHoursOf(worker) : ((worker?.stdHours != null && worker.stdHours > 0) ? worker.stdHours : (settings.stdHours > 0 ? settings.stdHours : 8));
   const sh = worker?.shiftHours ?? settings.shiftHours;
   const byDate = {};
   let net = 0, pay = 0, times = 0, base = 0, otPay = 0, blocks = 0;
@@ -2133,7 +2143,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     );
   }
 
-  const std = worker.stdHours ?? settings.stdHours;
+  const std = worker.fixedSalary ? fixedStdHoursOf(worker) : (worker.stdHours ?? settings.stdHours);
   const elapsed = open ? (now.getTime() - new Date(open.clockIn).getTime()) / 1000 : 0;
   const prog = open ? Math.min(1, elapsed / 3600 / std) : 0;
   const R = 112, CIRC = 2 * Math.PI * R;
@@ -6766,7 +6776,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                         {!p.open && worker.fixedSalary && (
                           <div style={{ marginTop: 3 }}>
                             {(() => {
-                              const std = worker.stdHours ?? settings.stdHours;
+                              const std = fixedStdHoursOf(worker);
                               const diffMin = Math.round((p.net - std) * 60);
                               if (diffMin > 0) return <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.blue, padding: "2px 5px" }}>추가 {minStr(diffMin)}</span>;
                               if (diffMin < 0) return <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.red, padding: "2px 5px" }}>부족 −{minStr(-diffMin)}</span>;
