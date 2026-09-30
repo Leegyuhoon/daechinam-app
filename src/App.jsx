@@ -4497,6 +4497,11 @@ function invPeriodEnd(key, granularity) {
   d.setDate(d.getDate() + 6); d.setHours(23, 59, 59, 999);
   return d;
 }
+function invIsCurrentMonthPeriod(key, granularity) {
+  const end = invPeriodEnd(key, granularity);
+  const now = new Date();
+  return end.getFullYear() === now.getFullYear() && end.getMonth() === now.getMonth();
+}
 function invPeriodLabel(key, granularity) {
   if (granularity === "month") { const [y, m] = key.split("-"); return `${y.slice(2)}.${m}`; }
   return `${key.slice(5).replace("-", "/")}~`;
@@ -4528,19 +4533,24 @@ function buildInvTrend(logEntries, granularity, periodsCount) {
 }
 
 // 재고 추이 막대그래프 + 표. peak(최고치) 막대는 색을 다르게 표시해서 "가장 높았을 때"가 한눈에 보이게 함.
-function InvTrendChart({ series, emptyText }) {
+function InvTrendChart({ series, granularity, peakValue, emptyText }) {
   const max = Math.max(1, ...series.map((s) => s.value));
-  const peak = Math.max(...series.map((s) => s.value));
   const hasAny = series.some((s) => s.value > 0);
   if (!hasAny) {
     return <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "18px 0" }}>{emptyText || "표시할 기록이 아직 없어요."}</div>;
   }
+  // 그래프에서 강조하는 "최고"는 위 요약 배지(buildInvMonthSummary, 실제 기록 시각 기준)의 최고치
+  // 숫자를 그대로 받아써서 맞춘다 — 주/월 단위 막대는 구간 끝 시점의 스냅샷이라, 그 안에서 따로
+  // 최고 막대를 다시 계산하면 배지의 정확한 최고치와 다른 막대가 강조되어 숫자가 어긋나 보일 수 있다.
+  // (예: 이번 달 초 31개였다가 그 주 안에 곧바로 줄어든 경우, 주간 막대는 그 주의 끝 시점 값만 보여주므로
+  // 31이라는 막대가 아예 없을 수 있다 — 그럴 땐 억지로 다른 막대를 "최고"라고 강조하지 않는다.)
+  const isPeakPeriod = (s) => peakValue > 0 && s.value === peakValue && invIsCurrentMonthPeriod(s.key, granularity);
   return (
     <>
       <div className="flex items-end gap-1" style={{ height: 110, overflowX: "auto", paddingTop: 18 }}>
         {series.map((s) => {
           const h = Math.max(2, Math.round((s.value / max) * 88));
-          const isPeak = s.value === peak && peak > 0;
+          const isPeak = isPeakPeriod(s);
           return (
             <div key={s.key} className="flex flex-col items-center" style={{ flex: "1 0 22px", minWidth: 22 }}>
               <div style={{ fontSize: 9.5, fontWeight: 800, color: isPeak ? C.coral : C.sub, marginBottom: 2, fontFamily: MONO }}>{s.value}</div>
@@ -4558,12 +4568,43 @@ function InvTrendChart({ series, emptyText }) {
         {[...series].reverse().map((s) => (
           <div key={s.key} className="flex items-center justify-between" style={{ fontSize: 12, padding: "4px 2px", borderBottom: `1px solid ${C.line}` }}>
             <span style={{ color: C.sub }}>{s.label}</span>
-            <span style={{ fontWeight: 800, color: s.value === peak && peak > 0 ? C.coral : C.text, fontFamily: MONO }}>{s.value}{s.value === peak && peak > 0 ? " · 최고" : ""}</span>
+            <span style={{ fontWeight: 800, color: isPeakPeriod(s) ? C.coral : C.text, fontFamily: MONO }}>{s.value}{isPeakPeriod(s) ? " · 이번 달 최고" : ""}</span>
           </div>
         ))}
       </div>
     </>
   );
+}
+
+// "이번 달 최고치 대비 얼마나 줄었는지"를 계산함 — 지난달·지지난달까지 거슬러 올라간 오래된 최고치와
+// 비교하면 의미가 옅어지므로, 매달 1일이 되면 기준(최고치)이 새로 시작되도록 이번 달 기록만으로 계산함.
+// (월초에는 아직 이번 달 안에 기록이 없을 수 있으니, 그 경우 지난달에서 이월된 마지막 수량을 "월초 값"으로 씀)
+function buildInvMonthSummary(logEntries) {
+  if (logEntries.length === 0) return null;
+  // 품목이 여러 개 섞여 있어도(현장 전체 합계) 매 이벤트 시점의 "합계"를 추적해야
+  // 정확한 최고치가 나온다 — 품목별 qty를 그대로 비교하면 서로 다른 품목의 수치가
+  // 뒤섞여 의미 없는 최고치가 나올 수 있다.
+  const sorted = [...logEntries].sort((a, b) => a.at.localeCompare(b.at));
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const lastByItem = {};
+  let carry = null;
+  const monthPoints = [];
+  sorted.forEach((e) => {
+    lastByItem[e.itemId] = e.qty;
+    const total = Object.values(lastByItem).reduce((s, v) => s + v, 0);
+    if (new Date(e.at) < monthStart) carry = total;
+    else monthPoints.push({ total, at: e.at });
+  });
+  const values = [...(carry != null ? [{ total: carry, at: null }] : []), ...monthPoints];
+  if (values.length === 0) return null;
+  const peak = Math.max(...values.map((v) => v.total));
+  const peakEntry = values.find((v) => v.total === peak);
+  const peakLabel = peakEntry.at ? peakEntry.at.slice(5, 10).replace("-", "/") : "월초";
+  const latest = values[values.length - 1].total;
+  const drop = peak - latest;
+  const dropPct = peak > 0 ? Math.round((drop / peak) * 100) : 0;
+  return { peak, peakLabel, latest, drop, dropPct };
 }
 
 /* ─────────────────────────  현장별 재고 관리(관리자 · 팀장 공용)  ─────────────────────────
@@ -4583,19 +4624,20 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
   const siteLog = (data.inventoryLog || []).filter((l) => l.siteId === siteId);
   const totalTrend = useMemo(() => buildInvTrend(siteLog, trendGran, trendPeriods), [siteLog, trendGran, trendPeriods]);
   const effectiveTrendItemId = trendItemId && items.some((it) => it.id === trendItemId) ? trendItemId : items[0]?.id || null;
+  const itemLog = siteLog.filter((l) => l.itemId === effectiveTrendItemId);
   const itemTrend = useMemo(
-    () => buildInvTrend(siteLog.filter((l) => l.itemId === effectiveTrendItemId), trendGran, trendPeriods),
-    [siteLog, effectiveTrendItemId, trendGran, trendPeriods]
+    () => buildInvTrend(itemLog, trendGran, trendPeriods),
+    [itemLog, trendGran, trendPeriods]
   );
-  const trendSummary = (series) => {
-    if (series.length === 0) return null;
-    const peak = Math.max(...series.map((s) => s.value));
-    const peakEntry = series.find((s) => s.value === peak);
-    const latest = series[series.length - 1];
-    const drop = peak - latest.value;
-    const dropPct = peak > 0 ? Math.round((drop / peak) * 100) : 0;
-    return { peak, peakLabel: peakEntry.label, latest: latest.value, drop, dropPct };
-  };
+  // 요약 배지("최고 N개 → 현재 M개")는 그래프에 보이는 지난 몇 주/몇 달치가 아니라, 항상 "이번 달"
+  // 기록만으로 계산함 — 매달 1일이 되면 비교 기준이 새로 시작되게 하기 위함.
+  const totalMonthSummary = useMemo(() => buildInvMonthSummary(siteLog), [siteLog]);
+  const itemMonthSummary = useMemo(() => buildInvMonthSummary(itemLog), [itemLog]);
+  // 개별 입고·사용 내역(날짜별로 정확히 몇 개가 늘고 줄었는지) — 그래프 아래에 그대로 보여줌
+  const itemHistory = useMemo(() => {
+    const sorted = [...itemLog].sort((a, b) => a.at.localeCompare(b.at));
+    return sorted.map((e, i) => ({ ...e, delta: i === 0 ? null : e.qty - sorted[i - 1].qty })).reverse();
+  }, [itemLog]);
 
   const [edit, setEdit] = useState(null); // { id, name, qty, unit, note } | null
   const openAdd = () => setEdit({ id: null, name: "", qty: "1", unit: "", note: "" });
@@ -4846,19 +4888,15 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
               <Tile style={{ padding: "12px 13px" }}>
                 <div className="flex items-center justify-between">
                   <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{sites.find((s) => s.id === siteId)?.name} · 전체 합계</div>
-                  {(() => {
-                    const sum = trendSummary(totalTrend);
-                    if (!sum || sum.peak === 0) return null;
-                    return (
-                      <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
-                        최고 <b style={{ color: C.coral }}>{sum.peak}</b>({sum.peakLabel}) → 현재 <b style={{ color: C.text }}>{sum.latest}</b>
-                        {sum.drop > 0 && <span> · <b style={{ color: C.red }}>−{sum.drop}개 (−{sum.dropPct}%)</b></span>}
-                      </div>
-                    );
-                  })()}
+                  {totalMonthSummary && totalMonthSummary.peak > 0 && (
+                    <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
+                      이번 달 최고 <b style={{ color: C.coral }}>{totalMonthSummary.peak}</b>({totalMonthSummary.peakLabel}) → 현재 <b style={{ color: C.text }}>{totalMonthSummary.latest}</b>
+                      {totalMonthSummary.drop > 0 && <span> · <b style={{ color: C.red }}>−{totalMonthSummary.drop}개 (−{totalMonthSummary.dropPct}%)</b></span>}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-2">
-                  <InvTrendChart series={totalTrend} />
+                  <InvTrendChart series={totalTrend} granularity={trendGran} peakValue={totalMonthSummary?.peak} />
                 </div>
               </Tile>
 
@@ -4874,20 +4912,43 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
               <Tile style={{ padding: "12px 13px" }}>
                 <div className="flex items-center justify-between">
                   <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{items.find((it) => it.id === effectiveTrendItemId)?.name}</div>
-                  {(() => {
-                    const sum = trendSummary(itemTrend);
-                    if (!sum || sum.peak === 0) return null;
-                    return (
-                      <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
-                        최고 <b style={{ color: C.coral }}>{sum.peak}</b>({sum.peakLabel}) → 현재 <b style={{ color: C.text }}>{sum.latest}</b>
-                        {sum.drop > 0 && <span> · <b style={{ color: C.red }}>−{sum.drop}개 (−{sum.dropPct}%)</b></span>}
-                      </div>
-                    );
-                  })()}
+                  {itemMonthSummary && itemMonthSummary.peak > 0 && (
+                    <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
+                      이번 달 최고 <b style={{ color: C.coral }}>{itemMonthSummary.peak}</b>({itemMonthSummary.peakLabel}) → 현재 <b style={{ color: C.text }}>{itemMonthSummary.latest}</b>
+                      {itemMonthSummary.drop > 0 && <span> · <b style={{ color: C.red }}>−{itemMonthSummary.drop}개 (−{itemMonthSummary.dropPct}%)</b></span>}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-2">
-                  <InvTrendChart series={itemTrend} />
+                  <InvTrendChart series={itemTrend} granularity={trendGran} peakValue={itemMonthSummary?.peak} />
                 </div>
+              </Tile>
+
+              {/* 이 품목의 입고·사용 내역을 실제 날짜·변동량 그대로 보여줌(그래프는 주/월 단위로 뭉친 값이라,
+                  "언제 몇 개가 들어오고 나갔는지"는 이 목록에서 정확히 확인 가능) */}
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: C.sub, marginTop: 14, marginBottom: 6 }}>변동 내역</div>
+              <Tile style={{ padding: "4px 13px" }}>
+                {itemHistory.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "14px 0" }}>기록이 없어요.</div>
+                ) : (
+                  <div className="flex flex-col" style={{ maxHeight: 220, overflowY: "auto" }}>
+                    {itemHistory.map((h) => (
+                      <div key={h.id} className="flex items-center justify-between" style={{ fontSize: 12, padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+                        <span style={{ color: C.sub, fontFamily: MONO }}>{h.at.slice(0, 10)} {h.at.slice(11, 16)}</span>
+                        <span className="flex items-center gap-2">
+                          {h.delta == null ? (
+                            <span style={{ fontSize: 10.5, fontWeight: 800, color: C.sub }}>등록</span>
+                          ) : (
+                            <span style={{ fontSize: 12, fontWeight: 800, color: h.delta > 0 ? C.blue : h.delta < 0 ? C.red : C.sub, fontFamily: MONO }}>
+                              {h.delta > 0 ? `+${h.delta}` : h.delta}
+                            </span>
+                          )}
+                          <span style={{ fontWeight: 900, color: C.text, fontFamily: MONO, minWidth: 28, textAlign: "right" }}>{h.qty}개</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Tile>
             </>
           )}
