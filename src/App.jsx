@@ -7572,15 +7572,6 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                     {hmc(selDayAgg.net + (selDayAgg.coverMin || 0) / 60)}{!worker.fixedSalary && ` · ${money(selDayAgg.pay + (selDayAgg.coverPay || 0))}원`}
                   </span>
                 </div>
-                {/* TEMP-DEBUG: 이날 합계 불일치 원인 확인용 — 확인 끝나면 이 블록 삭제 */}
-                <div style={{ fontSize: 9.5, color: "#DC2626", background: "#FEF2F2", padding: "4px 6px", marginTop: 6, fontFamily: MONO }}>
-                  [디버그] fixedSalary:{String(!!worker.fixedSalary)} shiftHours(개인):{worker.shiftHours ?? "null"} shiftPay(개인):{worker.shiftPay ?? "null"} shiftHours(회사):{settings.shiftHours} shiftPay(회사):{settings.shiftPay}<br />
-                  agg.pay:{selDayAgg.pay} agg.coverPay:{selDayAgg.coverPay} agg.coverMin:{selDayAgg.coverMin} agg.net:{selDayAgg.net}
-                  {selRecs.map((r, i) => {
-                    const pp = calcPay(r, worker, settings);
-                    return <div key={i}>#{i} capBase:{String(!!r.capBase)} isExtra:{String(!!r.isExtra)} coverForName:{String(r.coverForName || "")} flatPay:{String(r.flatPay)} net:{pp.net?.toFixed(2)} pay:{pp.pay} blocks:{pp.blocks} target:{pp.target}</div>;
-                  })}
-                </div>
               </>
             )}
 
