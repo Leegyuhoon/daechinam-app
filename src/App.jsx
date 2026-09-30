@@ -480,7 +480,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [], inventory: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [], inventory: [], inventoryLog: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -524,6 +524,18 @@ function migrate(p) {
   d.closurePeriods = Array.isArray(d.closurePeriods) ? d.closurePeriods : [];
   d.supplyCatalog = Array.isArray(d.supplyCatalog) ? d.supplyCatalog : [];
   d.inventory = Array.isArray(d.inventory) ? d.inventory : [];
+  d.inventoryLog = Array.isArray(d.inventoryLog) ? d.inventoryLog : [];
+  // 재고 추이(주/월별 그래프)를 보려면 시점별 기록이 있어야 하는데, 이 기능이 생기기 전부터 있던
+  // 품목은 기록이 하나도 없음. 그런 품목은 "지금 수량"을 첫 기록으로 한 번 심어줘서, 최소한 오늘부터는
+  // 추이가 쌓이기 시작하게 함(이 기능 도입 이전 과거 수치는 알 수 없으므로 되살릴 수는 없음).
+  if (d.inventory.length > 0) {
+    const loggedItemIds = new Set(d.inventoryLog.map((l) => l.itemId));
+    const seeds = d.inventory.filter((it) => !loggedItemIds.has(it.id)).map((it) => ({
+      id: uid(), itemId: it.id, siteId: it.siteId, itemName: it.name,
+      qty: Number(it.qty) || 0, at: it.updatedAt || new Date().toISOString(),
+    }));
+    if (seeds.length > 0) d.inventoryLog = [...d.inventoryLog, ...seeds];
+  }
   // 예전 버전(품목당 구매처 1곳)으로 저장된 데이터를, 여러 구매처를 담는 새 구조로 자동 변환
   d.supplyCatalog = d.supplyCatalog.map((c) => (
     c.vendors ? c : { ...c, vendors: (c.vendor || c.unitPrice != null) ? [{ vendor: c.vendor || "", method: c.method || "online", unitPrice: c.unitPrice ?? null }] : [] }
@@ -4467,6 +4479,93 @@ function SupplyAdminView({ data, update, setToast }) {
   );
 }
 
+/* 재고 추이(주/월별) 계산용 헬퍼 — 품목 하나짜리 로그를 넣으면 품목별 추이, 한 현장의 모든
+   품목 로그를 다 넣으면 "현장 전체 합계" 추이가 나옴(둘 다 같은 함수로 처리). */
+function invBucketKey(dateIso, granularity) {
+  const d = new Date(dateIso);
+  if (granularity === "month") return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  const dow = (d.getDay() + 6) % 7; // 0=월요일
+  const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - dow);
+  return dKey(mon);
+}
+function invPeriodEnd(key, granularity) {
+  if (granularity === "month") {
+    const [y, m] = key.split("-").map(Number);
+    return new Date(y, m, 0, 23, 59, 59, 999); // m이 1-based이므로 day 0 = 그 달의 마지막날
+  }
+  const d = parseKey(key);
+  d.setDate(d.getDate() + 6); d.setHours(23, 59, 59, 999);
+  return d;
+}
+function invPeriodLabel(key, granularity) {
+  if (granularity === "month") { const [y, m] = key.split("-"); return `${y.slice(2)}.${m}`; }
+  return `${key.slice(5).replace("-", "/")}~`;
+}
+// logEntries: [{itemId, qty, at}], periodsCount: 몇 구간을 보여줄지(끝은 항상 "이번 주/이번 달")
+function buildInvTrend(logEntries, granularity, periodsCount) {
+  const now = new Date();
+  const periods = [];
+  for (let i = periodsCount - 1; i >= 0; i--) {
+    const d = new Date(now);
+    if (granularity === "month") d.setMonth(d.getMonth() - i);
+    else d.setDate(d.getDate() - i * 7);
+    const key = invBucketKey(d.toISOString(), granularity);
+    if (!periods.some((p) => p.key === key)) periods.push({ key, label: invPeriodLabel(key, granularity) });
+  }
+  const sorted = [...logEntries].sort((a, b) => a.at.localeCompare(b.at));
+  const lastByItem = {};
+  let idx = 0;
+  const series = periods.map(({ key, label }) => {
+    const endTime = invPeriodEnd(key, granularity).getTime();
+    while (idx < sorted.length && new Date(sorted[idx].at).getTime() <= endTime) {
+      lastByItem[sorted[idx].itemId] = sorted[idx].qty;
+      idx++;
+    }
+    const value = Object.values(lastByItem).reduce((s, v) => s + v, 0);
+    return { key, label, value };
+  });
+  return series;
+}
+
+// 재고 추이 막대그래프 + 표. peak(최고치) 막대는 색을 다르게 표시해서 "가장 높았을 때"가 한눈에 보이게 함.
+function InvTrendChart({ series, emptyText }) {
+  const max = Math.max(1, ...series.map((s) => s.value));
+  const peak = Math.max(...series.map((s) => s.value));
+  const hasAny = series.some((s) => s.value > 0);
+  if (!hasAny) {
+    return <div style={{ fontSize: 12.5, color: C.sub, textAlign: "center", padding: "18px 0" }}>{emptyText || "표시할 기록이 아직 없어요."}</div>;
+  }
+  return (
+    <>
+      <div className="flex items-end gap-1" style={{ height: 110, overflowX: "auto", paddingTop: 18 }}>
+        {series.map((s) => {
+          const h = Math.max(2, Math.round((s.value / max) * 88));
+          const isPeak = s.value === peak && peak > 0;
+          return (
+            <div key={s.key} className="flex flex-col items-center" style={{ flex: "1 0 22px", minWidth: 22 }}>
+              <div style={{ fontSize: 9.5, fontWeight: 800, color: isPeak ? C.coral : C.sub, marginBottom: 2, fontFamily: MONO }}>{s.value}</div>
+              <div style={{ width: "100%", maxWidth: 18, height: h, background: isPeak ? C.coral : C.aquaDeep, opacity: isPeak ? 1 : 0.55, borderRadius: 2 }} />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-1" style={{ overflowX: "auto", marginTop: 2 }}>
+        {series.map((s) => (
+          <div key={s.key} style={{ flex: "1 0 22px", minWidth: 22, fontSize: 8.5, color: C.sub, textAlign: "center", whiteSpace: "nowrap" }}>{s.label}</div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-1 mt-3" style={{ maxHeight: 160, overflowY: "auto" }}>
+        {[...series].reverse().map((s) => (
+          <div key={s.key} className="flex items-center justify-between" style={{ fontSize: 12, padding: "4px 2px", borderBottom: `1px solid ${C.line}` }}>
+            <span style={{ color: C.sub }}>{s.label}</span>
+            <span style={{ fontWeight: 800, color: s.value === peak && peak > 0 ? C.coral : C.text, fontFamily: MONO }}>{s.value}{s.value === peak && peak > 0 ? " · 최고" : ""}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 /* ─────────────────────────  현장별 재고 관리(관리자 · 팀장 공용)  ─────────────────────────
    siteIds를 주면(팀장용) 그 현장들로만 제한해서 보여주고 다운로드도 그 범위로만 나감.
    안 주면(관리자용, 기존 그대로) 전체 현장을 다 보여줌 — 기존 동작 변화 없음. */
@@ -4475,6 +4574,28 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
   const inventory = siteIds ? (data.inventory || []).filter((x) => siteIds.includes(x.siteId)) : (data.inventory || []);
   const [siteId, setSiteId] = useState(sites[0]?.id || null);
   const items = inventory.filter((x) => x.siteId === siteId).sort((a, b) => a.name.localeCompare(b.name, "ko"));
+
+  // 재고 추이(주/월별로 얼마나 줄었는지) — "현재 재고" 목록과 별개 화면으로 토글해서 봄
+  const [invView, setInvView] = useState("list"); // "list" | "trend"
+  const [trendGran, setTrendGran] = useState("week"); // "week" | "month"
+  const [trendItemId, setTrendItemId] = useState(null);
+  const trendPeriods = trendGran === "week" ? 12 : 12;
+  const siteLog = (data.inventoryLog || []).filter((l) => l.siteId === siteId);
+  const totalTrend = useMemo(() => buildInvTrend(siteLog, trendGran, trendPeriods), [siteLog, trendGran, trendPeriods]);
+  const effectiveTrendItemId = trendItemId && items.some((it) => it.id === trendItemId) ? trendItemId : items[0]?.id || null;
+  const itemTrend = useMemo(
+    () => buildInvTrend(siteLog.filter((l) => l.itemId === effectiveTrendItemId), trendGran, trendPeriods),
+    [siteLog, effectiveTrendItemId, trendGran, trendPeriods]
+  );
+  const trendSummary = (series) => {
+    if (series.length === 0) return null;
+    const peak = Math.max(...series.map((s) => s.value));
+    const peakEntry = series.find((s) => s.value === peak);
+    const latest = series[series.length - 1];
+    const drop = peak - latest.value;
+    const dropPct = peak > 0 ? Math.round((drop / peak) * 100) : 0;
+    return { peak, peakLabel: peakEntry.label, latest: latest.value, drop, dropPct };
+  };
 
   const [edit, setEdit] = useState(null); // { id, name, qty, unit, note } | null
   const openAdd = () => setEdit({ id: null, name: "", qty: "1", unit: "", note: "" });
@@ -4493,13 +4614,28 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
         // 팀장 화면(readOnlyNaming)에서는 품목명·단위·메모 입력칸 자체가 없으므로, 수량 외엔
         // 절대 바뀌지 않도록 기존 값을 그대로 유지하고 qty만 반영함(현장마다 명칭이 다를 수 있어서
         // 품목 구조는 관리자만 바꿀 수 있어야 함).
-        return { ...d, inventory: list.map((x) => (x.id === edit.id ? {
-          ...x, qty,
+        const prev = list.find((x) => x.id === edit.id);
+        const qtyChanged = prev && (Number(prev.qty) || 0) !== qty;
+        const nextItem = {
+          ...prev, qty,
           ...(readOnlyNaming ? {} : { name: edit.name.trim(), unit: edit.unit.trim(), note: edit.note.trim() }),
           updatedAt: now,
-        } : x)) };
+        };
+        return {
+          ...d,
+          inventory: list.map((x) => (x.id === edit.id ? nextItem : x)),
+          // 수량이 실제로 바뀐 경우만 추이 기록에 남김(이름만 고친 경우까지 기록하면 그래프가 지저분해짐)
+          inventoryLog: qtyChanged
+            ? [...(d.inventoryLog || []), { id: uid(), itemId: nextItem.id, siteId: nextItem.siteId, itemName: nextItem.name, qty: nextItem.qty, at: now }]
+            : (d.inventoryLog || []),
+        };
       }
-      return { ...d, inventory: [...list, { id: uid(), siteId, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now }] };
+      const newItem = { id: uid(), siteId, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now };
+      return {
+        ...d,
+        inventory: [...list, newItem],
+        inventoryLog: [...(d.inventoryLog || []), { id: uid(), itemId: newItem.id, siteId: newItem.siteId, itemName: newItem.name, qty: newItem.qty, at: now }],
+      };
     });
     setToast(edit.id ? (readOnlyNaming ? "수량을 수정했습니다" : "품목을 수정했습니다") : "품목을 추가했습니다");
     setEdit(null);
@@ -4512,10 +4648,22 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
     setEdit(null);
   };
   const bump = (it, delta) => {
-    update((d) => ({
-      ...d,
-      inventory: (d.inventory || []).map((x) => (x.id === it.id ? { ...x, qty: Math.max(0, (Number(x.qty) || 0) + delta), updatedAt: new Date().toISOString() } : x)),
-    }));
+    const now = new Date().toISOString();
+    update((d) => {
+      let changed = null;
+      const nextInventory = (d.inventory || []).map((x) => {
+        if (x.id !== it.id) return x;
+        const nextQty = Math.max(0, (Number(x.qty) || 0) + delta);
+        if (nextQty === (Number(x.qty) || 0)) return x; // 0에서 더 내려가지 않는 등 실제 변화가 없으면 기록도 안 남김
+        changed = { ...x, qty: nextQty, updatedAt: now };
+        return changed;
+      });
+      if (!changed) return { ...d, inventory: nextInventory };
+      return {
+        ...d, inventory: nextInventory,
+        inventoryLog: [...(d.inventoryLog || []), { id: uid(), itemId: changed.id, siteId: changed.siteId, itemName: changed.name, qty: changed.qty, at: now }],
+      };
+    });
   };
 
   // 다운로드는 "현재 보고 있는 현장"이 아니라 등록된 모든 현장의 재고를 한 번에 묶어서 내보냄(현장별로 묶어서 정리된 보고서 형태)
@@ -4539,6 +4687,25 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setToast("엑셀 파일을 다운로드했습니다");
+  };
+  // 재고 추이(현재 보고 있는 현장의 "합계" + 품목별)를 주/월 단위 표로 내보냄
+  const downloadTrendCsv = () => {
+    const siteName = sites.find((s) => s.id === siteId)?.name || "미지정";
+    const head = "현장,구분,기간,수량";
+    const lines = [];
+    totalTrend.forEach((s) => lines.push([siteName, "합계", s.label, s.value].join(",")));
+    items.forEach((it) => {
+      const series = buildInvTrend(siteLog.filter((l) => l.itemId === it.id), trendGran, trendPeriods);
+      series.forEach((s) => lines.push([siteName, it.name, s.label, s.value].join(",")));
+    });
+    const csvText = "﻿" + [head, ...lines].join("\n");
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `재고추이_${siteName}_${trendGran === "week" ? "주간" : "월간"}_${dKey(new Date())}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("추이 엑셀 파일을 다운로드했습니다");
   };
   const [pdfBusy, setPdfBusy] = useState(false);
   const downloadPdf = async () => {
@@ -4585,14 +4752,20 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
     <div className="flex-1 overflow-y-auto p-4">
       <div className="flex items-center justify-between gap-2 mb-3">
         <div style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>현장을 고른 뒤 품목·수량을 직접 관리하세요.</div>
-        <div className="flex gap-1.5" style={{ flexShrink: 0 }}>
-          <button onClick={downloadCsv} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
-            <Download size={12} /> 엑셀
+        {invView === "list" ? (
+          <div className="flex gap-1.5" style={{ flexShrink: 0 }}>
+            <button onClick={downloadCsv} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
+              <Download size={12} /> 엑셀
+            </button>
+            <button onClick={downloadPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
+              {pdfBusy ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PDF
+            </button>
+          </div>
+        ) : (
+          <button onClick={downloadTrendCsv} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px", flexShrink: 0 }}>
+            <Download size={12} /> 추이 엑셀
           </button>
-          <button onClick={downloadPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
-            {pdfBusy ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PDF
-          </button>
-        </div>
+        )}
       </div>
 
       {sites.length === 0 ? (
@@ -4611,34 +4784,112 @@ function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming })
             })}
           </div>
 
-          {!readOnlyNaming && (
-            <button onClick={openAdd} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
-              <Plus size={14} /> 품목 추가
-            </button>
-          )}
+          <div className="flex gap-0.5 mb-3" style={{ background: C.grout }}>
+            {[["list", "현재 재고"], ["trend", "재고 추이"]].map(([k, l]) => (
+              <button key={k} onClick={() => setInvView(k)} className="flex-1"
+                style={{ fontSize: 12.5, fontWeight: 800, padding: "8px 0", background: invView === k ? C.tile : "transparent", color: invView === k ? C.text : C.sub }}>
+                {l}
+              </button>
+            ))}
+          </div>
 
-          {items.length === 0 ? (
-            <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 현장에 등록된 재고가 없습니다.</div></Tile>
+          {invView === "list" ? (
+            <>
+              {!readOnlyNaming && (
+                <button onClick={openAdd} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
+                  <Plus size={14} /> 품목 추가
+                </button>
+              )}
+
+              {items.length === 0 ? (
+                <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 현장에 등록된 재고가 없습니다.</div></Tile>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {items.map((it) => (
+                    <Tile key={it.id} style={{ padding: "11px 13px" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <button onClick={() => openEdit(it)} className="flex-1 text-left" style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                          {it.note && <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{it.note}</div>}
+                        </button>
+                        <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
+                          <button onClick={() => bump(it, -1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Minus size={13} /></button>
+                          <span style={{ fontSize: 15, fontWeight: 900, color: C.text, minWidth: 34, textAlign: "center", fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{it.qty ?? 0}</span>
+                          <button onClick={() => bump(it, 1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Plus size={13} /></button>
+                          {it.unit && <span style={{ fontSize: 11.5, color: C.sub, marginLeft: 2 }}>{it.unit}</span>}
+                          <button onClick={() => openEdit(it)} style={{ marginLeft: 4 }}><Pencil size={13} color={C.sub} /></button>
+                        </div>
+                      </div>
+                    </Tile>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : items.length === 0 ? (
+            <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 현장에 등록된 재고가 없어서 추이를 볼 수 없어요.</div></Tile>
           ) : (
-            <div className="flex flex-col gap-2">
-              {items.map((it) => (
-                <Tile key={it.id} style={{ padding: "11px 13px" }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <button onClick={() => openEdit(it)} className="flex-1 text-left" style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
-                      {it.note && <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{it.note}</div>}
+            <>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div style={{ fontSize: 11.5, color: C.sub }}>
+                  이 기능을 켠 시점부터 쌓인 기록만 보여요 — 그 이전 과거 수치는 알 수 없어요.
+                </div>
+                <div className="flex gap-0.5" style={{ background: C.grout, flexShrink: 0 }}>
+                  {[["week", "주간"], ["month", "월간"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setTrendGran(k)}
+                      style={{ fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: trendGran === k ? C.tile : "transparent", color: trendGran === k ? C.text : C.sub }}>
+                      {l}
                     </button>
-                    <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
-                      <button onClick={() => bump(it, -1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Minus size={13} /></button>
-                      <span style={{ fontSize: 15, fontWeight: 900, color: C.text, minWidth: 34, textAlign: "center", fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{it.qty ?? 0}</span>
-                      <button onClick={() => bump(it, 1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Plus size={13} /></button>
-                      {it.unit && <span style={{ fontSize: 11.5, color: C.sub, marginLeft: 2 }}>{it.unit}</span>}
-                      <button onClick={() => openEdit(it)} style={{ marginLeft: 4 }}><Pencil size={13} color={C.sub} /></button>
-                    </div>
-                  </div>
-                </Tile>
-              ))}
-            </div>
+                  ))}
+                </div>
+              </div>
+
+              <Tile style={{ padding: "12px 13px" }}>
+                <div className="flex items-center justify-between">
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{sites.find((s) => s.id === siteId)?.name} · 전체 합계</div>
+                  {(() => {
+                    const sum = trendSummary(totalTrend);
+                    if (!sum || sum.peak === 0) return null;
+                    return (
+                      <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
+                        최고 <b style={{ color: C.coral }}>{sum.peak}</b>({sum.peakLabel}) → 현재 <b style={{ color: C.text }}>{sum.latest}</b>
+                        {sum.drop > 0 && <span> · <b style={{ color: C.red }}>−{sum.drop}개 (−{sum.dropPct}%)</b></span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="mt-2">
+                  <InvTrendChart series={totalTrend} />
+                </div>
+              </Tile>
+
+              <div className="flex items-center gap-1.5 mt-3 mb-2" style={{ overflowX: "auto" }}>
+                {items.map((it) => (
+                  <button key={it.id} onClick={() => setTrendItemId(it.id)}
+                    style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, padding: "5px 10px", background: effectiveTrendItemId === it.id ? C.text : C.tileSoft, color: effectiveTrendItemId === it.id ? "#fff" : C.sub, whiteSpace: "nowrap" }}>
+                    {it.name}
+                  </button>
+                ))}
+              </div>
+
+              <Tile style={{ padding: "12px 13px" }}>
+                <div className="flex items-center justify-between">
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{items.find((it) => it.id === effectiveTrendItemId)?.name}</div>
+                  {(() => {
+                    const sum = trendSummary(itemTrend);
+                    if (!sum || sum.peak === 0) return null;
+                    return (
+                      <div style={{ fontSize: 11, color: C.sub, textAlign: "right" }}>
+                        최고 <b style={{ color: C.coral }}>{sum.peak}</b>({sum.peakLabel}) → 현재 <b style={{ color: C.text }}>{sum.latest}</b>
+                        {sum.drop > 0 && <span> · <b style={{ color: C.red }}>−{sum.drop}개 (−{sum.dropPct}%)</b></span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="mt-2">
+                  <InvTrendChart series={itemTrend} />
+                </div>
+              </Tile>
+            </>
           )}
         </>
       )}
