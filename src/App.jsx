@@ -1651,6 +1651,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   // 일일체크리스트 — 내가 팀장인 현장 중 "체크리스트 대상"으로 켜둔 곳들
   const myChecklistSites = sites.filter((s) => myLeaderSiteIds.includes(s.id) && s.checklistEnabled);
 
+  // 팀장 전용: 우리 현장 재고 관리 — 관리자 PIN 없이도, 본인이 담당하는 현장의 재고만
+  // 보고 추가·수정할 수 있게 함(다른 현장 재고는 안 보임). 관리자용과 같은 화면·기능을 그대로 씀.
+  const [leadInvOpen, setLeadInvOpen] = useState(false);
+
   // 팀장 전용: 우리 현장 출퇴근 현황(시간만) — 여러 층을 오가며 작업하는 현장에서, 팀원들이 제때
   // 출근했는지 관리자 없이도 실시간으로 확인할 수 있게 함. 급여·금액은 전혀 안 보여주고 시간만 보여줌.
   const [leadAttOpen, setLeadAttOpen] = useState(false);
@@ -2609,6 +2613,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             style={{ background: C.tile, border: `1px solid ${C.line}`, padding: "12px 0", color: C.text, fontSize: 13, fontWeight: 900, marginBottom: 8 }}>
             <Clock3 size={15} /> 우리 현장 출퇴근 확인 (팀장)
           </button>
+          <button onClick={() => setLeadInvOpen(true)} className="w-full flex items-center justify-center gap-2"
+            style={{ background: C.tile, border: `1px solid ${C.line}`, padding: "12px 0", color: C.text, fontSize: 13, fontWeight: 900, marginBottom: 8 }}>
+            <Boxes size={15} /> 우리 현장 재고 관리 (팀장)
+          </button>
           <button onClick={openLeadNotice} className="w-full flex items-center justify-center gap-2"
             style={{ background: C.amber, border: "none", padding: "12px 0", color: "#3D2600", fontSize: 13, fontWeight: 900 }}>
             <ShieldCheck size={15} /> 우리 현장 공지 작성 (팀장)
@@ -2680,6 +2688,15 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>우리 현장에 배정된 다른 근무자가 없어요.</div>
           )}
         </div>
+      </Modal>
+
+      {/* 팀장 전용: 우리 현장 재고 관리 — 관리자와 같은 화면·기능을 그대로 쓰되, 본인 담당 현장으로만 제한 */}
+      <Modal open={leadInvOpen} onClose={() => setLeadInvOpen(false)} title="우리 현장 재고 관리">
+        {myLeaderSiteIds.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>담당으로 지정된 현장이 없어요 — 관리자에게 문의해 주세요.</div>
+        ) : (
+          <InventoryAdminView data={data} update={update} setToast={setToast} siteIds={myLeaderSiteIds} />
+        )}
       </Modal>
 
       {/* 내가 작성한 공지 확인 (읽기 전용) */}
@@ -4450,10 +4467,12 @@ function SupplyAdminView({ data, update, setToast }) {
   );
 }
 
-/* ─────────────────────────  현장별 재고 관리(관리자)  ───────────────────────── */
-function InventoryAdminView({ data, update, setToast }) {
-  const sites = data.sites || [];
-  const inventory = data.inventory || [];
+/* ─────────────────────────  현장별 재고 관리(관리자 · 팀장 공용)  ─────────────────────────
+   siteIds를 주면(팀장용) 그 현장들로만 제한해서 보여주고 다운로드도 그 범위로만 나감.
+   안 주면(관리자용, 기존 그대로) 전체 현장을 다 보여줌 — 기존 동작 변화 없음. */
+function InventoryAdminView({ data, update, setToast, siteIds }) {
+  const sites = siteIds ? (data.sites || []).filter((s) => siteIds.includes(s.id)) : (data.sites || []);
+  const inventory = siteIds ? (data.inventory || []).filter((x) => siteIds.includes(x.siteId)) : (data.inventory || []);
   const [siteId, setSiteId] = useState(sites[0]?.id || null);
   const items = inventory.filter((x) => x.siteId === siteId).sort((a, b) => a.name.localeCompare(b.name, "ko"));
 
