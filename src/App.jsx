@@ -2695,7 +2695,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         {myLeaderSiteIds.length === 0 ? (
           <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>담당으로 지정된 현장이 없어요 — 관리자에게 문의해 주세요.</div>
         ) : (
-          <InventoryAdminView data={data} update={update} setToast={setToast} siteIds={myLeaderSiteIds} />
+          <InventoryAdminView data={data} update={update} setToast={setToast} siteIds={myLeaderSiteIds} readOnlyNaming />
         )}
       </Modal>
 
@@ -4470,7 +4470,7 @@ function SupplyAdminView({ data, update, setToast }) {
 /* ─────────────────────────  현장별 재고 관리(관리자 · 팀장 공용)  ─────────────────────────
    siteIds를 주면(팀장용) 그 현장들로만 제한해서 보여주고 다운로드도 그 범위로만 나감.
    안 주면(관리자용, 기존 그대로) 전체 현장을 다 보여줌 — 기존 동작 변화 없음. */
-function InventoryAdminView({ data, update, setToast, siteIds }) {
+function InventoryAdminView({ data, update, setToast, siteIds, readOnlyNaming }) {
   const sites = siteIds ? (data.sites || []).filter((s) => siteIds.includes(s.id)) : (data.sites || []);
   const inventory = siteIds ? (data.inventory || []).filter((x) => siteIds.includes(x.siteId)) : (data.inventory || []);
   const [siteId, setSiteId] = useState(sites[0]?.id || null);
@@ -4481,6 +4481,7 @@ function InventoryAdminView({ data, update, setToast, siteIds }) {
   const openEdit = (it) => setEdit({ id: it.id, name: it.name, qty: String(it.qty ?? 0), unit: it.unit || "", note: it.note || "" });
 
   const saveItem = () => {
+    if (readOnlyNaming && !edit.id) return; // 팀장은 새 품목을 만들 수 없음(버튼 자체가 안 보이지만 한 번 더 막아둠)
     if (!siteId) { setToast("먼저 현장을 선택해 주세요"); return; }
     if (!edit.name.trim()) { setToast("품목명을 입력해 주세요"); return; }
     const qty = Number(edit.qty);
@@ -4489,15 +4490,22 @@ function InventoryAdminView({ data, update, setToast, siteIds }) {
     update((d) => {
       const list = d.inventory || [];
       if (edit.id) {
-        return { ...d, inventory: list.map((x) => (x.id === edit.id ? { ...x, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now } : x)) };
+        // 팀장 화면(readOnlyNaming)에서는 품목명·단위·메모 입력칸 자체가 없으므로, 수량 외엔
+        // 절대 바뀌지 않도록 기존 값을 그대로 유지하고 qty만 반영함(현장마다 명칭이 다를 수 있어서
+        // 품목 구조는 관리자만 바꿀 수 있어야 함).
+        return { ...d, inventory: list.map((x) => (x.id === edit.id ? {
+          ...x, qty,
+          ...(readOnlyNaming ? {} : { name: edit.name.trim(), unit: edit.unit.trim(), note: edit.note.trim() }),
+          updatedAt: now,
+        } : x)) };
       }
       return { ...d, inventory: [...list, { id: uid(), siteId, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now }] };
     });
-    setToast(edit.id ? "품목을 수정했습니다" : "품목을 추가했습니다");
+    setToast(edit.id ? (readOnlyNaming ? "수량을 수정했습니다" : "품목을 수정했습니다") : "품목을 추가했습니다");
     setEdit(null);
   };
   const removeItem = () => {
-    if (!edit?.id) return;
+    if (!edit?.id || readOnlyNaming) return; // 팀장은 삭제 불가 — 품목 구조는 관리자만 관리
     const targetId = edit.id;
     update((d) => ({ ...d, inventory: (d.inventory || []).filter((x) => x.id !== targetId) }));
     setToast("품목을 삭제했습니다");
@@ -4603,9 +4611,11 @@ function InventoryAdminView({ data, update, setToast, siteIds }) {
             })}
           </div>
 
-          <button onClick={openAdd} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
-            <Plus size={14} /> 품목 추가
-          </button>
+          {!readOnlyNaming && (
+            <button onClick={openAdd} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
+              <Plus size={14} /> 품목 추가
+            </button>
+          )}
 
           {items.length === 0 ? (
             <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 현장에 등록된 재고가 없습니다.</div></Tile>
@@ -4636,25 +4646,42 @@ function InventoryAdminView({ data, update, setToast, siteIds }) {
       <Modal open={!!edit} onClose={() => setEdit(null)}>
         {edit && (
           <>
-            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{edit.id ? "품목 수정" : "품목 추가"}</div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>
+              {readOnlyNaming ? "수량 수정" : edit.id ? "품목 수정" : "품목 추가"}
+            </div>
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, marginBottom: 14 }}>{sites.find((s) => s.id === siteId)?.name}</div>
-            <div className="flex flex-col gap-3">
-              <Field label="품목명">
-                <input value={edit.name} onChange={(e) => setEdit((f) => ({ ...f, name: e.target.value }))} placeholder="예: 청소용 세제" style={inputStyle} />
-              </Field>
-              <div className="grid grid-cols-2 gap-2">
+            {readOnlyNaming ? (
+              // 팀장은 품목명·단위·메모(현장별로 다르게 관리될 수 있는 정보)는 못 바꾸고,
+              // 수량만 조정할 수 있음 — 품목 구조 자체는 관리자만 관리
+              <div className="flex flex-col gap-3">
+                <div>
+                  <div style={{ fontSize: 12, color: C.sub, fontWeight: 700, marginBottom: 4 }}>품목명</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{edit.name}{edit.unit ? ` (${edit.unit})` : ""}</div>
+                  {edit.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{edit.note}</div>}
+                </div>
                 <Field label="수량">
                   <input type="number" value={edit.qty} onChange={(e) => setEdit((f) => ({ ...f, qty: e.target.value }))} style={inputStyle} />
                 </Field>
-                <Field label="단위 (선택)">
-                  <input value={edit.unit} onChange={(e) => setEdit((f) => ({ ...f, unit: e.target.value }))} placeholder="예: 개, 박스, 리터" style={inputStyle} />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <Field label="품목명">
+                  <input value={edit.name} onChange={(e) => setEdit((f) => ({ ...f, name: e.target.value }))} placeholder="예: 청소용 세제" style={inputStyle} />
+                </Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="수량">
+                    <input type="number" value={edit.qty} onChange={(e) => setEdit((f) => ({ ...f, qty: e.target.value }))} style={inputStyle} />
+                  </Field>
+                  <Field label="단위 (선택)">
+                    <input value={edit.unit} onChange={(e) => setEdit((f) => ({ ...f, unit: e.target.value }))} placeholder="예: 개, 박스, 리터" style={inputStyle} />
+                  </Field>
+                </div>
+                <Field label="메모 (선택)">
+                  <input value={edit.note} onChange={(e) => setEdit((f) => ({ ...f, note: e.target.value }))} placeholder="예: 보관 위치, 브랜드 등" style={inputStyle} />
                 </Field>
               </div>
-              <Field label="메모 (선택)">
-                <input value={edit.note} onChange={(e) => setEdit((f) => ({ ...f, note: e.target.value }))} placeholder="예: 보관 위치, 브랜드 등" style={inputStyle} />
-              </Field>
-            </div>
-            {edit.id && (
+            )}
+            {edit.id && !readOnlyNaming && (
               <div className="mt-4">
                 <Btn kind="danger" full onClick={removeItem}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
               </div>
