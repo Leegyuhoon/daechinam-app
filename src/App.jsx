@@ -725,11 +725,14 @@ function calcPay(rec, worker, settings) {
   if (rec.capBase) {
     return { ...c, open: false, base: sp, otPay: 0, pay: sp, blocks: 0, diffMin: 0, holiday, otMin: 0, shortMin: 0, overMin: 0, target: sh };
   }
-  if (worker?.fixedSalary) {
+  const isCoverRec = rec.isExtra || !!rec.coverForName; // 대신 근무 기록 여부
+  if (worker?.fixedSalary && !isCoverRec) {
     // 정규직은 회사가 타임제(1타임 몇 시간 단위)여도 "1타임 초과분" 개념을 적용하면 안 됨 —
     // 하루 종일 한 번에 출퇴근을 찍는 정규직 기록을 "1타임(예: 2시간)보다 훨씬 길다"는 식으로 계산하면
     // 실제로는 정상 근무인데도 추가근무가 몇 시간씩 부풀려짐. 정규직은 항상 "1일 소정근로시간(계약시간)"
     // 대비로만 초과·부족을 판단하고, 금액(돈)은 이 함수에서 절대 만들지 않음(0으로 고정).
+    // ※ 단, 이건 "본인 정규직 근무"일 때만 적용 — 대신근무(다른 사람 자리 커버)는 정규직이어도
+    // 실제 타임제 급여(1타임당 지급액)로 정상 지급되어야 하므로 이 분기를 타면 안 됨(아래 일반 로직으로).
     const std = fixedStdHoursOf(worker);
     const diffMinF = Math.round((c.net - std) * 60);
     return {
@@ -820,7 +823,18 @@ function aggregate(records, worker, settings) {
         }
         return;
       }
-      coverCount++; coverMin += p.net * 60; coverPay += p.pay;
+      coverCount++; coverMin += p.net * 60;
+      if (shift && r.flatPay == null) {
+        // 순수 대신근무(확인 전 포함)는 calcPay의 "1타임 초과분(otThreshold)" 방식이 아니라,
+        // 이 세션 전체가 회사 표준 1타임 몇 개에 해당하는지 반올림해서 "타임 수 × 표준단가"로 계산함.
+        // (그래야 한 번에 길게 출퇴근을 찍어도 "6시간 = 3타임"처럼 깔끔하게 맞음 — calcPay.pay를 그대로
+        // 쓰면 임계값(otThreshold) 단위로만 끊어 세는 연장근무 계산이 섞여서 실제 타임 수와 어긋났었음.)
+        const hMult4 = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+        const coverUnits = Math.round(p.net / settings.shiftHours);
+        coverPay += coverUnits * settings.shiftPay * hMult4;
+      } else {
+        coverPay += p.pay;
+      }
       return;
     }
     if (isPureOneOff) {
@@ -5836,6 +5850,8 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                           const st = recStatus(r);
                           const p = r.clockOut ? calcPay(r, w, settings) : null;
                           const shortish = p && p.shortMin >= (settings.shortThreshold || 0);
+                          const isCoverRow = r.isExtra || !!r.coverForName;
+                          const suppressOtBadge = w.fixedSalary && !isCoverRow; // 정규직 본인 근무는 이 배지 대신 "오늘 전체 기준"으로 표시
                           return (
                             <div key={r.id} className="flex items-start justify-between flex-wrap" style={{ rowGap: 4 }}>
                               <div className="flex items-center gap-1.5 flex-wrap" style={{ flex: 1, minWidth: 120 }}>
@@ -5846,10 +5862,10 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
                                 ) : r.coverForName ? (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: ST.cover, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>대신 근무</span>
                                 ) : null}
-                                {isShiftMode && !w.fixedSalary && p && p.blocks > 0 && (
+                                {isShiftMode && !suppressOtBadge && p && p.blocks > 0 && (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.blue, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>추가 {minStr(p.otMin)}</span>
                                 )}
-                                {isShiftMode && !w.fixedSalary && p && p.blocks === 0 && shortish && (
+                                {isShiftMode && !suppressOtBadge && p && p.blocks === 0 && shortish && (
                                   <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 4px", whiteSpace: "nowrap", flexShrink: 0 }}>부족 {minStr(p.shortMin)}</span>
                                 )}
                                 {r.outFlag && (
@@ -6264,6 +6280,12 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
       const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
       return ownPayC + extraPayC;
     }
+    if ((r.isExtra || r.coverForName) && r.flatPay == null && settings.payMode === "shift") {
+      // 순수 대신근무(혼합 확인 전 포함)는 otThreshold 기반 calcPay.pay가 아니라
+      // "세션 전체 ÷ 표준 1타임" 반올림 타임 수 × 표준단가로 계산(위 aggregate()와 동일 원칙)
+      const hMultU = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+      return Math.round(p.net / settings.shiftHours) * settings.shiftPay * hMultU;
+    }
     return p.pay;
   };
   const downloadWorkerCsv = () => {
@@ -6531,8 +6553,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 const q = calcPay(r, worker, settings);
                 let displayNet = q.net, displayPay = q.pay;
                 if (wdStatDetail === "cover" && !q.open && r.capBase && r.flatPay == null) {
-                  // "기본근무+대체근무 혼합"으로 확정된 기록만 분리 계산 — 그 외(확정 전·순수 대신근무)는
-                  // 원래 전체 시간·금액을 그대로 보여줌(displayNet/displayPay 초기값 그대로 둠)
+                  // "기본근무+대체근무 혼합"으로 확정된 기록만 분리 계산 — 대신근무 몫(초과분)만 보여줌
                   const rpx = resolvePay(worker, r.siteId, settings);
                   const ownHoursX = agg.shift ? rpx.shiftHours : agg.std;
                   const extraHoursX = Math.max(0, q.net - ownHoursX);
@@ -6541,6 +6562,11 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                   displayPay = agg.shift
                     ? Math.round(extraHoursX / settings.shiftHours) * settings.shiftPay * hMultX
                     : extraHoursX * rpx.wage * hMultX;
+                } else if (wdStatDetail === "cover" && !q.open && !r.capBase && r.flatPay == null && agg.shift) {
+                  // 확정 전 · 순수 대신근무는 세션 전체가 대신근무 — otThreshold 기반 q.pay가 아니라
+                  // "세션 전체 ÷ 표준 1타임" 반올림 타임 수 × 표준단가로 계산(위 aggregate()와 동일 원칙)
+                  const hMultU = q.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+                  displayPay = Math.round(q.net / settings.shiftHours) * settings.shiftPay * hMultU;
                 }
                 return (
                   <div key={r.id} style={{ background: C.tileSoft, padding: 10 }}>
@@ -6895,6 +6921,10 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
       const ownPayC = Math.round(ownNetC / rpc.shiftHours) * rpc.shiftPay * hMultC;
       const extraPayC = Math.round(extraHoursC / settings.shiftHours) * settings.shiftPay * hMultC;
       return ownPayC + extraPayC;
+    }
+    if ((r.isExtra || r.coverForName) && r.flatPay == null && settings.payMode === "shift") {
+      const hMultU = p.holiday ? (settings.holidayMultiplier || 1.5) : 1;
+      return Math.round(p.net / settings.shiftHours) * settings.shiftPay * hMultU;
     }
     return p.pay;
   };
@@ -7288,6 +7318,15 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                         진짜 "이날 하루 전체" 합계를 보여주려면 둘을 합쳐야 함(개별 카드 합산과 정확히 일치하도록) */}
                     {hmc(selDayAgg.net + (selDayAgg.coverMin || 0) / 60)}{!worker.fixedSalary && ` · ${money(selDayAgg.pay + (selDayAgg.coverPay || 0))}원`}
                   </span>
+                </div>
+                {/* TEMP-DEBUG: 이날 합계 불일치 원인 확인용 — 확인 끝나면 이 블록 삭제 */}
+                <div style={{ fontSize: 9.5, color: "#DC2626", background: "#FEF2F2", padding: "4px 6px", marginTop: 6, fontFamily: MONO }}>
+                  [디버그] fixedSalary:{String(!!worker.fixedSalary)} shiftHours(개인):{worker.shiftHours ?? "null"} shiftPay(개인):{worker.shiftPay ?? "null"} shiftHours(회사):{settings.shiftHours} shiftPay(회사):{settings.shiftPay}<br />
+                  agg.pay:{selDayAgg.pay} agg.coverPay:{selDayAgg.coverPay} agg.coverMin:{selDayAgg.coverMin} agg.net:{selDayAgg.net}
+                  {selRecs.map((r, i) => {
+                    const pp = calcPay(r, worker, settings);
+                    return <div key={i}>#{i} capBase:{String(!!r.capBase)} isExtra:{String(!!r.isExtra)} coverForName:{String(r.coverForName || "")} flatPay:{String(r.flatPay)} net:{pp.net?.toFixed(2)} pay:{pp.pay} blocks:{pp.blocks} target:{pp.target}</div>;
+                  })}
                 </div>
               </>
             )}
