@@ -7,6 +7,7 @@ import {
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
   Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays, RefreshCw, Download,
+  Boxes, Minus,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -479,7 +480,7 @@ function nearestSite(loc, sites) {
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
 
 const DEFAULTS = {
-  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [],
+  workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [], inventory: [],
   settings: {
     payMode: "shift",        // shift = 타임제, hourly = 시간제
     shiftHours: 2,           // 1타임 기본 시간
@@ -522,6 +523,7 @@ function migrate(p) {
   d.siteManuals = Array.isArray(d.siteManuals) ? d.siteManuals : [];
   d.closurePeriods = Array.isArray(d.closurePeriods) ? d.closurePeriods : [];
   d.supplyCatalog = Array.isArray(d.supplyCatalog) ? d.supplyCatalog : [];
+  d.inventory = Array.isArray(d.inventory) ? d.inventory : [];
   // 예전 버전(품목당 구매처 1곳)으로 저장된 데이터를, 여러 구매처를 담는 새 구조로 자동 변환
   d.supplyCatalog = d.supplyCatalog.map((c) => (
     c.vendors ? c : { ...c, vendors: (c.vendor || c.unitPrice != null) ? [{ vendor: c.vendor || "", method: c.method || "online", unitPrice: c.unitPrice ?? null }] : [] }
@@ -545,6 +547,22 @@ function migrate(p) {
     d.settings._contractHistoryRemoved = true;
   }
   if (d.settings.contractCompanyName == null) d.settings.contractCompanyName = "주식회사 이엘씨";
+  // 예전 버전에서, 출근할 때는 대신근무로 자동 인식이 안 됐다가(예: 승인이 늦게 남) 나중에 근무자가
+  // "그날 근무가 어떤 거였는지" 확인만 했던 기록은 capBase(기본근무+대신근무 혼합 확정)는 true인데
+  // coverForId/coverForName/transferId는 계속 비어있는 채로 저장돼 있었음. 이 상태에선 "대신근무 여부"를
+  // 판단하는 기준(isExtra||coverForName)이 계속 false라서, 근무기록탭·출근현황판에는 대신근무로 전혀
+  // 안 잡히고 달력에서만(capBase만 보고 판단) 금액이 보이는 식으로 화면마다 다르게 나왔음. 이미 저장된
+  // 그런 기록을, 같은 날짜·근무자로 걸려있는 승인된 대신근무 배정 기록을 찾아 자동으로 채워서 고침.
+  if (Array.isArray(d.records) && d.records.some((r) => r.capBase && !r.isExtra && !r.coverForName)) {
+    d.records = d.records.map((r) => {
+      if (!(r.capBase && !r.isExtra && !r.coverForName)) return r;
+      const t = (d.transfers || []).find((x) =>
+        x.status === "approved" && x.toWorkerId === r.workerId && x.date === r.date && (!x.siteId || x.siteId === r.siteId)
+      );
+      if (!t) return r;
+      return { ...r, coverForId: t.fromWorkerId ?? null, coverForName: t.fromWorkerName ?? null, transferId: t.id ?? null };
+    });
+  }
   return d;
 }
 
@@ -1570,11 +1588,22 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const answerCoverConfirm = (mixed) => {
     const { t, recs } = coverConfirmFor;
     update((d) => {
-      let recs2 = [...d.records];
-      if (mixed) {
-        // 본인 기본 1타임만큼은 정상 지급 확정, 초과분은 관리자의 균등/비례 분배 대상으로 남겨둠(중복 계산 방지)
-        recs2 = recs2.map((r) => (recs.some((x) => x.id === r.id) ? { ...r, capBase: true } : r));
-      }
+      // 이 확인창은 "승인이 늦게 나서(또는 현장이 늦게 맞춰져서) 출근 시점엔 대신근무로 자동 인식되지
+      // 못했던" 기록을 다루는 경우가 대부분임 — 그래서 출근 당시엔 coverForId/coverForName/transferId가
+      // 비어있는 채로 남아있을 수 있음. 여기서 capBase만 설정하고 이 값들을 채워주지 않으면, 이 기록은
+      // capBase는 true인데 isCover(=isExtra||coverForName, 근무기록탭·출근현황판이 대신근무 여부를 판단하는
+      // 기준)는 계속 false로 남아서 화면마다 다르게 보이는 불일치가 생김. 그래서 mixed 여부와 상관없이
+      // 항상 "이 기록은 t가 나타내는 대신근무다"라는 걸 명확히 함께 채워 넣음(이미 값이 있으면 유지).
+      const recs2 = d.records.map((r) => {
+        if (!recs.some((x) => x.id === r.id)) return r;
+        return {
+          ...r,
+          coverForId: r.coverForId ?? t.fromWorkerId ?? null,
+          coverForName: r.coverForName || t.fromWorkerName || null,
+          transferId: r.transferId ?? t.id ?? null,
+          capBase: mixed, // 본인 기본 1타임만큼은 정상 지급 확정, 초과분은 관리자의 균등/비례 분배 대상으로 남겨둠(중복 계산 방지)
+        };
+      });
       const totalNet = recs.reduce((sum, r) => sum + calcRec(r, worker, d.settings).net, 0);
       const rp = resolvePay(worker, recs[0]?.siteId, d.settings);
       const baseHours = d.settings.payMode === "shift" ? rp.shiftHours : rp.stdHours;
@@ -3540,6 +3569,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     ["transfers", "양도", Repeat, transferBadge],
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
+    ["inventory", "재고", Boxes, 0],
     ["notices", "공지", Bell, noticeBadge],
     ["settings", "설정", SettingsIcon, expiringWorkers.length + pendingContractSigns.length],
   ];
@@ -3593,6 +3623,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
       {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
       {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
       {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
+      {view === "inventory" && <InventoryAdminView data={data} update={update} setToast={setToast} />}
       {view === "notices" && <NoticeAdminView data={data} update={update} setToast={setToast} />}
       {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} autoOpenContractReqId={settingsAutoOpenReqId} onAutoOpenHandled={() => setSettingsAutoOpenReqId(null)} />}
     </div>
@@ -4411,6 +4442,207 @@ function SupplyAdminView({ data, update, setToast }) {
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setPurchaseEdit(null)}>취소</Btn>
               <Btn full onClick={savePurchaseInfo}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ─────────────────────────  현장별 재고 관리(관리자)  ───────────────────────── */
+function InventoryAdminView({ data, update, setToast }) {
+  const sites = data.sites || [];
+  const inventory = data.inventory || [];
+  const [siteId, setSiteId] = useState(sites[0]?.id || null);
+  const items = inventory.filter((x) => x.siteId === siteId).sort((a, b) => a.name.localeCompare(b.name, "ko"));
+
+  const [edit, setEdit] = useState(null); // { id, name, qty, unit, note } | null
+  const openAdd = () => setEdit({ id: null, name: "", qty: "1", unit: "", note: "" });
+  const openEdit = (it) => setEdit({ id: it.id, name: it.name, qty: String(it.qty ?? 0), unit: it.unit || "", note: it.note || "" });
+
+  const saveItem = () => {
+    if (!siteId) { setToast("먼저 현장을 선택해 주세요"); return; }
+    if (!edit.name.trim()) { setToast("품목명을 입력해 주세요"); return; }
+    const qty = Number(edit.qty);
+    if (Number.isNaN(qty)) { setToast("수량을 숫자로 입력해 주세요"); return; }
+    const now = new Date().toISOString();
+    update((d) => {
+      const list = d.inventory || [];
+      if (edit.id) {
+        return { ...d, inventory: list.map((x) => (x.id === edit.id ? { ...x, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now } : x)) };
+      }
+      return { ...d, inventory: [...list, { id: uid(), siteId, name: edit.name.trim(), qty, unit: edit.unit.trim(), note: edit.note.trim(), updatedAt: now }] };
+    });
+    setToast(edit.id ? "품목을 수정했습니다" : "품목을 추가했습니다");
+    setEdit(null);
+  };
+  const removeItem = () => {
+    if (!edit?.id) return;
+    const targetId = edit.id;
+    update((d) => ({ ...d, inventory: (d.inventory || []).filter((x) => x.id !== targetId) }));
+    setToast("품목을 삭제했습니다");
+    setEdit(null);
+  };
+  const bump = (it, delta) => {
+    update((d) => ({
+      ...d,
+      inventory: (d.inventory || []).map((x) => (x.id === it.id ? { ...x, qty: Math.max(0, (Number(x.qty) || 0) + delta), updatedAt: new Date().toISOString() } : x)),
+    }));
+  };
+
+  // 다운로드는 "현재 보고 있는 현장"이 아니라 등록된 모든 현장의 재고를 한 번에 묶어서 내보냄(현장별로 묶어서 정리된 보고서 형태)
+  const allByDateSite = [...inventory].sort((a, b) => {
+    const sa = sites.find((s) => s.id === a.siteId)?.name || "";
+    const sb = sites.find((s) => s.id === b.siteId)?.name || "";
+    return sa.localeCompare(sb, "ko") || a.name.localeCompare(b.name, "ko");
+  });
+  const downloadCsv = () => {
+    const head = "현장,품목,수량,단위,메모,최근 수정";
+    const lines = allByDateSite.map((x) => {
+      const siteName = sites.find((s) => s.id === x.siteId)?.name || "미지정";
+      const updated = x.updatedAt ? `${x.updatedAt.slice(0, 10)} ${x.updatedAt.slice(11, 16)}` : "";
+      return [siteName, x.name, x.qty ?? 0, x.unit || "", (x.note || "").replace(/,/g, " "), updated].join(",");
+    });
+    const csvText = "﻿" + [head, ...lines].join("\n");
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `현장별재고_${dKey(new Date())}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setToast("엑셀 파일을 다운로드했습니다");
+  };
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const downloadPdf = async () => {
+    setPdfBusy(true);
+    try {
+      const bySite = {};
+      allByDateSite.forEach((x) => {
+        const siteName = sites.find((s) => s.id === x.siteId)?.name || "미지정";
+        (bySite[siteName] = bySite[siteName] || []).push(x);
+      });
+      const sections = Object.entries(bySite).map(([siteName, list]) => `
+        <div style="margin-top:18px;">
+          <div style="font-size:15px; font-weight:800; padding:6px 0; border-bottom:2px solid #222;">${siteName}</div>
+          <table style="width:100%; border-collapse:collapse; margin-top:4px;">
+            <tr style="font-size:11px; color:#666; text-align:left;">
+              <th style="padding:5px 4px; border-bottom:1px solid #ddd;">품목</th>
+              <th style="padding:5px 4px; border-bottom:1px solid #ddd; text-align:right;">수량</th>
+              <th style="padding:5px 4px; border-bottom:1px solid #ddd;">단위</th>
+              <th style="padding:5px 4px; border-bottom:1px solid #ddd;">메모</th>
+            </tr>
+            ${list.map((x) => `
+              <tr style="font-size:12px;">
+                <td style="padding:5px 4px; border-bottom:1px solid #eee;">${x.name}</td>
+                <td style="padding:5px 4px; border-bottom:1px solid #eee; text-align:right; font-weight:700;">${x.qty ?? 0}</td>
+                <td style="padding:5px 4px; border-bottom:1px solid #eee; color:#666;">${x.unit || ""}</td>
+                <td style="padding:5px 4px; border-bottom:1px solid #eee; color:#666;">${x.note || ""}</td>
+              </tr>`).join("")}
+          </table>
+        </div>`).join("");
+      const html = `
+        <div style="font-family:sans-serif; color:#111; padding:20px;">
+          <div style="font-size:19px; font-weight:900;">현장별 재고 현황</div>
+          <div style="font-size:12px; color:#666; margin-top:2px;">${dKey(new Date())} 기준</div>
+          ${sections || `<div style="margin-top:16px; color:#999; font-size:13px;">등록된 재고가 없습니다.</div>`}
+        </div>`;
+      await downloadHtmlAsPdf(html, `현장별재고_${dKey(new Date())}.pdf`, 800);
+      setToast("PDF를 다운로드했습니다");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div style={{ fontSize: 13, color: C.sub, fontWeight: 700 }}>현장을 고른 뒤 품목·수량을 직접 관리하세요.</div>
+        <div className="flex gap-1.5" style={{ flexShrink: 0 }}>
+          <button onClick={downloadCsv} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
+            <Download size={12} /> 엑셀
+          </button>
+          <button onClick={downloadPdf} disabled={pdfBusy} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 800, color: C.text, background: C.tileSoft, padding: "6px 10px" }}>
+            {pdfBusy ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PDF
+          </button>
+        </div>
+      </div>
+
+      {sites.length === 0 ? (
+        <Tile><div style={{ color: C.sub, fontSize: 13 }}>등록된 현장이 없습니다 — 먼저 설정에서 현장을 추가해 주세요.</div></Tile>
+      ) : (
+        <>
+          <div className="flex gap-1.5 mb-3" style={{ overflowX: "auto" }}>
+            {sites.map((s) => {
+              const cnt = inventory.filter((x) => x.siteId === s.id).length;
+              return (
+                <button key={s.id} onClick={() => setSiteId(s.id)}
+                  style={{ flexShrink: 0, fontSize: 12, fontWeight: 800, padding: "6px 11px", background: siteId === s.id ? C.text : C.tileSoft, color: siteId === s.id ? "#fff" : C.sub, whiteSpace: "nowrap" }}>
+                  {s.name}{cnt > 0 ? ` (${cnt})` : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          <button onClick={openAdd} className="flex items-center gap-1.5 mb-3" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
+            <Plus size={14} /> 품목 추가
+          </button>
+
+          {items.length === 0 ? (
+            <Tile><div style={{ color: C.sub, fontSize: 13 }}>이 현장에 등록된 재고가 없습니다.</div></Tile>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {items.map((it) => (
+                <Tile key={it.id} style={{ padding: "11px 13px" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <button onClick={() => openEdit(it)} className="flex-1 text-left" style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                      {it.note && <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{it.note}</div>}
+                    </button>
+                    <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
+                      <button onClick={() => bump(it, -1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Minus size={13} /></button>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: C.text, minWidth: 34, textAlign: "center", fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{it.qty ?? 0}</span>
+                      <button onClick={() => bump(it, 1)} className="flex items-center justify-center" style={{ width: 26, height: 26, background: C.tileSoft, color: C.text }}><Plus size={13} /></button>
+                      {it.unit && <span style={{ fontSize: 11.5, color: C.sub, marginLeft: 2 }}>{it.unit}</span>}
+                      <button onClick={() => openEdit(it)} style={{ marginLeft: 4 }}><Pencil size={13} color={C.sub} /></button>
+                    </div>
+                  </div>
+                </Tile>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <Modal open={!!edit} onClose={() => setEdit(null)}>
+        {edit && (
+          <>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{edit.id ? "품목 수정" : "품목 추가"}</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, marginBottom: 14 }}>{sites.find((s) => s.id === siteId)?.name}</div>
+            <div className="flex flex-col gap-3">
+              <Field label="품목명">
+                <input value={edit.name} onChange={(e) => setEdit((f) => ({ ...f, name: e.target.value }))} placeholder="예: 청소용 세제" style={inputStyle} />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="수량">
+                  <input type="number" value={edit.qty} onChange={(e) => setEdit((f) => ({ ...f, qty: e.target.value }))} style={inputStyle} />
+                </Field>
+                <Field label="단위 (선택)">
+                  <input value={edit.unit} onChange={(e) => setEdit((f) => ({ ...f, unit: e.target.value }))} placeholder="예: 개, 박스, 리터" style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="메모 (선택)">
+                <input value={edit.note} onChange={(e) => setEdit((f) => ({ ...f, note: e.target.value }))} placeholder="예: 보관 위치, 브랜드 등" style={inputStyle} />
+              </Field>
+            </div>
+            {edit.id && (
+              <div className="mt-4">
+                <Btn kind="danger" full onClick={removeItem}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> 삭제</span></Btn>
+              </div>
+            )}
+            <div className="flex gap-2 mt-3">
+              <Btn kind="ghost" full onClick={() => setEdit(null)}>취소</Btn>
+              <Btn full onClick={saveItem}>저장</Btn>
             </div>
           </>
         )}
@@ -7012,30 +7244,51 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     flatPay: r.flatPay != null ? String(r.flatPay) : "", isFlat: r.flatPay != null,
+    coverForName: r.coverForName || "", capBase: !!r.capBase,
   });
+  // 관리자가 특정 날짜에 "대신근무" 기록을 새로 직접 추가할 때 씀(기존 출퇴근 흐름을 안 거쳐도 됨) —
+  // id를 비워두면(신규) saveCalEdit이 새 기록으로 추가하고, 있으면(기존 편집) 그대로 수정함.
+  const openCoverAdd = () => {
+    if (!selDate) return;
+    setCalEdit({
+      id: null, date: selDate, siteId: worker.siteId || "", siteName: worker.siteId ? (data.sites.find((s) => s.id === worker.siteId)?.name || "") : "",
+      inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
+      flatPay: "", isFlat: false, coverForName: "", capBase: false,
+    });
+  };
   const [calEditBusy, setCalEditBusy] = useState(false);
   const saveCalEdit = async () => {
+    if (!calEdit.isFlat && !calEdit.siteId) { setToast("현장을 선택해 주세요"); return; }
     setCalEditBusy(true);
     const mk = (t) => { if (!t) return null; const [h, mi] = t.split(":").map(Number); const d = parseKey(calEdit.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
     const site = data.sites.find((x) => x.id === calEdit.siteId);
-    const ok = await saveConfirmed((d) => ({
-      ...d,
-      records: d.records.map((r) => (r.id === calEdit.id ? {
-        ...r,
-        ...(calEdit.isFlat
-          ? { site: calEdit.siteName.trim() || "현장 미지정", siteId: null }
-          : { site: site?.name || r.site, siteId: site?.id || r.siteId }),
-        clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
-        breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
-        note: calEdit.note,
-        ...(calEdit.isFlat ? { flatPay: Number(calEdit.flatPay) || 0 } : {}),
-      } : r)),
-    }));
+    const coverForName = calEdit.coverForName.trim() || null;
+    const patch = {
+      ...(calEdit.isFlat
+        ? { site: calEdit.siteName.trim() || "현장 미지정", siteId: null }
+        : { site: site?.name || calEdit.siteName || "", siteId: site?.id || calEdit.siteId || null }),
+      clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
+      breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
+      note: calEdit.note,
+      coverForName, capBase: coverForName ? !!calEdit.capBase : false,
+      ...(calEdit.isFlat ? { flatPay: Number(calEdit.flatPay) || 0, oneOffStatus: "approved" } : { flatPay: null }),
+    };
+    const ok = calEdit.id
+      ? await saveConfirmed((d) => ({ ...d, records: d.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch } : r)) }))
+      : await saveConfirmed((d) => ({
+          ...d,
+          records: [...d.records, {
+            id: uid(), workerId, date: calEdit.date, manual: true,
+            inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
+            ...patch,
+          }],
+        }));
     setCalEditBusy(false);
     if (!ok) return;
-    setCalEdit(null); setToast("기록을 수정했습니다");
+    setCalEdit(null); setToast(calEdit.id ? "기록을 수정했습니다" : "대신근무 기록을 추가했습니다");
   };
   const removeCalEdit = async () => {
+    if (!calEdit.id) { setCalEdit(null); return; }
     setCalEditBusy(true);
     const targetId = calEdit.id;
     const ok = await saveConfirmed((d) => ({ ...d, records: d.records.filter((r) => r.id !== targetId) }));
@@ -7331,11 +7584,18 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
               </>
             )}
 
-            {canAdd && (
-              <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-                <button onClick={openOneOff} className="flex items-center gap-1.5" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
-                  <Plus size={14} /> 이 날짜에 일회성 근무 추가
-                </button>
+            {(canAdd || isAdmin) && (
+              <div className="mt-3 pt-3 flex flex-col gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
+                {canAdd && (
+                  <button onClick={openOneOff} className="flex items-center gap-1.5" style={{ fontSize: 12.5, fontWeight: 800, color: C.aquaDeep }}>
+                    <Plus size={14} /> 이 날짜에 일회성 근무 추가
+                  </button>
+                )}
+                {isAdmin && (
+                  <button onClick={openCoverAdd} className="flex items-center gap-1.5" style={{ fontSize: 12.5, fontWeight: 800, color: ST.cover }}>
+                    <Plus size={14} /> 이 날짜에 대신근무 기록 추가
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -7378,9 +7638,15 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
       <Modal open={!!calEdit} onClose={() => setCalEdit(null)}>
         {calEdit && (
           <>
-            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>기록 수정</div>
-            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{calEdit.date}</div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{calEdit.id ? "기록 수정" : "대신근무 기록 추가"}</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4 }}>{calEdit.date}{!calEdit.id && ` · ${worker.name}`}</div>
             <div className="mt-4 flex flex-col gap-2.5">
+              <Field label="지급 방식">
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setCalEdit((f) => ({ ...f, isFlat: false }))} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: !calEdit.isFlat ? "#fff" : C.text, background: !calEdit.isFlat ? C.blue : C.tile }}>출퇴근시간으로 자동 계산</button>
+                  <button onClick={() => setCalEdit((f) => ({ ...f, isFlat: true }))} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: calEdit.isFlat ? "#fff" : C.text, background: calEdit.isFlat ? C.blue : C.tile }}>고정 금액 직접 입력</button>
+                </div>
+              </Field>
               {calEdit.isFlat ? (
                 <Field label="현장 (직접 입력)">
                   <input value={calEdit.siteName} onChange={(e) => setCalEdit((f) => ({ ...f, siteName: e.target.value }))} placeholder="예: 강남현장" style={inputStyle} />
@@ -7388,7 +7654,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
               ) : (
                 <Field label="현장">
                   <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                    <option value="">현장 미지정</option>
+                    <option value="">현장 선택</option>
                     {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </Field>
@@ -7406,16 +7672,27 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                   <input type="number" value={calEdit.flatPay} onChange={(e) => setCalEdit((f) => ({ ...f, flatPay: e.target.value }))} style={inputStyle} />
                 </Field>
               ) : (
-                <Field label="휴게시간 (분)">
+                <Field label="휴게시간 (분) — 비우면 자동 계산">
                   <input type="number" value={calEdit.breakMinutes} onChange={(e) => setCalEdit((f) => ({ ...f, breakMinutes: e.target.value }))} style={inputStyle} />
                 </Field>
+              )}
+              <Field label="대신 근무 대상자 (비우면 일반 근무로 기록)">
+                <input value={calEdit.coverForName} onChange={(e) => setCalEdit((f) => ({ ...f, coverForName: e.target.value }))} placeholder="예: 홍길동 (결근자 이름)" style={inputStyle} />
+              </Field>
+              {calEdit.coverForName.trim() && !calEdit.isFlat && (
+                <Toggle label="본인근무+대신근무 혼합으로 확정 (본인 몫은 정상 지급, 초과분만 대신근무로 계산)"
+                  on={calEdit.capBase} onChange={(v) => setCalEdit((f) => ({ ...f, capBase: v }))} />
               )}
               <Field label="비고">
                 <textarea value={calEdit.note} onChange={(e) => setCalEdit((f) => ({ ...f, note: e.target.value }))} style={{ ...inputStyle, height: 70 }} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
-              <Btn kind="danger" full disabled={calEditBusy} onClick={removeCalEdit}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> {calEditBusy ? "처리 중…" : "삭제"}</span></Btn>
+              {calEdit.id ? (
+                <Btn kind="danger" full disabled={calEditBusy} onClick={removeCalEdit}><span className="flex items-center justify-center gap-1.5"><Trash2 size={14} /> {calEditBusy ? "처리 중…" : "삭제"}</span></Btn>
+              ) : (
+                <Btn kind="ghost" full disabled={calEditBusy} onClick={() => setCalEdit(null)}>취소</Btn>
+              )}
               <Btn full disabled={calEditBusy} onClick={saveCalEdit}>{calEditBusy ? "저장 중…" : "저장"}</Btn>
             </div>
           </>
