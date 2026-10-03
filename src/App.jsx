@@ -5152,6 +5152,49 @@ function TransferAdminView({ data, update, setToast }) {
   };
   const remove = (id) => update((d) => ({ ...d, transfers: (d.transfers || []).filter((t) => t.id !== id) }));
 
+  // "승인 완료"인데도 계속 "아직 출근 전"으로 보이는 문제 대응:
+  // 승인이 근무 이후에 났거나, 관리자가 캘린더에서 직접 기록을 넣은 경우 등에는 clock-in 시점에
+  // 자동 연결이 안 되고 넘어갈 수 있음 — 그래서 여기서 해당 날짜·현장·근무자의 실제 근무 기록을
+  // 다시 한 번 찾아보고, 명확히 하나만 짚이면 "출근 완료로 확정" 버튼을 보여줌(바로 반영은 안 하고
+  // 관리자가 확인 후 눌러야 반영되게 함 — 잘못 짚였을 때 관리자가 직접 고칠 수 있어야 하니까).
+  const recordById = (id) => (data.records || []).find((r) => r.id === id) || null;
+  const matchRecordForTransfer = (t) => {
+    if (!t.toWorkerId) return null;
+    const recs = data.records || [];
+    const candidates = recs.filter((r) =>
+      r.workerId === t.toWorkerId && r.date === t.date && !r.transferId &&
+      (!t.siteId || !r.siteId || r.siteId === t.siteId)
+    );
+    return candidates.length === 1 ? candidates[0] : null;
+  };
+  const [linkPickerFor, setLinkPickerFor] = useState(null); // 직접 연결 모달을 띄울 transfer id
+  const linkRecord = (transferId, recordId) => {
+    update((d) => {
+      const t = (d.transfers || []).find((x) => x.id === transferId);
+      return {
+        ...d,
+        transfers: (d.transfers || []).map((x) => (x.id === transferId ? { ...x, fulfilledRecordId: recordId } : x)),
+        records: (d.records || []).map((r) => (r.id === recordId
+          ? { ...r, transferId, coverForId: r.coverForId ?? (t?.fromWorkerId ?? null), coverForName: r.coverForName || t?.fromWorkerName || null }
+          : r)),
+      };
+    });
+    setToast("출근 완료로 연결했습니다");
+    setLinkPickerFor(null);
+  };
+  const unlinkRecord = (transferId) => {
+    update((d) => {
+      const t = (d.transfers || []).find((x) => x.id === transferId);
+      const recId = t?.fulfilledRecordId;
+      return {
+        ...d,
+        transfers: (d.transfers || []).map((x) => (x.id === transferId ? { ...x, fulfilledRecordId: null } : x)),
+        records: (d.records || []).map((r) => (r.id === recId ? { ...r, transferId: null } : r)),
+      };
+    });
+    setToast("연결을 해제했습니다");
+  };
+
   const badge = (status) => {
     const map = {
       pending: [C.aqua, C.bg, "관리자 확인 대기"],
@@ -5229,15 +5272,35 @@ function TransferAdminView({ data, update, setToast }) {
                     </div>
                   )}
                   {t.message && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>"{t.message}"</div>}
-                  {t.status === "approved" && (
-                    <div style={{ fontSize: 11.5, color: t.fulfilledRecordId ? C.blue : C.amber, marginTop: 4, fontWeight: 700 }}>
-                      {t.fulfilledRecordId
-                        ? "출근 완료 · 근무 기록에 반영됨"
-                        : t.toWorkerId
-                          ? `${t.toWorkerName}님 승인 완료 · 아직 출근 전`
-                          : "승인됨 · 미등록 인원이라 출근 기록은 수기로 등록해 주세요"}
-                    </div>
-                  )}
+                  {t.status === "approved" && (() => {
+                    const matchedRecord = t.fulfilledRecordId ? recordById(t.fulfilledRecordId) : null;
+                    const autoMatch = !matchedRecord ? matchRecordForTransfer(t) : null;
+                    const effective = matchedRecord || autoMatch;
+                    return (
+                      <>
+                        <div style={{ fontSize: 11.5, color: effective ? C.blue : C.amber, marginTop: 4, fontWeight: 700 }}>
+                          {effective
+                            ? `출근 완료 · 근무 기록에 반영됨 (${tstr(effective.clockIn)}${effective.clockOut ? "–" + tstr(effective.clockOut) : ""})`
+                            : t.toWorkerId
+                              ? `${t.toWorkerName}님 승인 완료 · 아직 출근 전`
+                              : "승인됨 · 미등록 인원이라 출근 기록은 수기로 등록해 주세요"}
+                        </div>
+                        {t.toWorkerId && (
+                          <div className="flex gap-2 mt-2 flex-wrap">
+                            {autoMatch && !matchedRecord && (
+                              <Btn small onClick={() => linkRecord(t.id, autoMatch.id)}>출근 완료로 확정</Btn>
+                            )}
+                            <Btn kind="ghost" small onClick={() => setLinkPickerFor(t.id)}>
+                              {matchedRecord ? "연결된 기록 변경" : autoMatch ? "다른 기록 선택" : "근무 기록 직접 연결"}
+                            </Btn>
+                            {matchedRecord && (
+                              <Btn kind="ghost" small onClick={() => unlinkRecord(t.id)}>연결 해제</Btn>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
                 {badge(t.status)}
               </div>
@@ -5284,6 +5347,44 @@ function TransferAdminView({ data, update, setToast }) {
           );
         })}
       </div>
+
+      {/* 근무 기록 직접 연결 — 자동으로 못 짚었거나(기록이 여러 건이거나 없음), 잘못 짚인 경우를 관리자가 직접 고를 수 있게 함 */}
+      {(() => {
+        const t = linkPickerFor ? transfers.find((x) => x.id === linkPickerFor) : null;
+        if (!t) return null;
+        const candidates = (data.records || [])
+          .filter((r) => r.workerId === t.toWorkerId && (!r.transferId || r.transferId === t.id))
+          .sort((a, b) => (a.date === t.date ? -1 : b.date === t.date ? 1 : 0) || b.date.localeCompare(a.date))
+          .slice(0, 30);
+        return (
+          <Modal open={!!linkPickerFor} onClose={() => setLinkPickerFor(null)}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>근무 기록 연결하기</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, marginBottom: 12 }}>
+              {t.toWorkerName}님의 근무 기록 중에서 {t.date.slice(5).replace("-", "/")} {t.siteName} 대신근무에 해당하는 기록을 골라주세요.
+            </div>
+            <div className="flex flex-col gap-1.5" style={{ maxHeight: 360, overflowY: "auto" }}>
+              {candidates.length === 0 && <div style={{ fontSize: 13, color: C.sub, padding: "10px 2px" }}>이 근무자의 근무 기록을 찾을 수 없어요.</div>}
+              {candidates.map((r) => (
+                <button key={r.id} onClick={() => linkRecord(t.id, r.id)}
+                  className="flex items-center justify-between gap-2" style={{ padding: "10px 12px", background: r.date === t.date ? "#EAF2FB" : C.tileSoft, textAlign: "left" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                      {r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>
+                      {tstr(r.clockIn)}{r.clockOut ? `–${tstr(r.clockOut)}` : " · 근무 중"}{r.transferId === t.id ? " · 이미 이 양도에 연결됨" : r.transferId ? " · 다른 양도에 연결됨" : ""}
+                    </div>
+                  </div>
+                  {r.transferId === t.id && <Check size={16} color={C.blue} />}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3">
+              <Btn kind="ghost" full onClick={() => setLinkPickerFor(null)}>닫기</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
@@ -7728,7 +7829,8 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     // 근무자 본인의 혼합/순수 확인은 아직 안 된" 양도 신청이 있으면 그것도 같이 확정해줌 — 안 그러면
     // 나중에 근무자가 앱을 열었을 때 "이 근무 어떤 거였나요?" 질문이 또 뜨고, 거기서 지금 관리자가
     // 고른 혼합 여부와 다르게 답하면 방금 고친 내용이 다시 덮어써질 수 있음.
-    const linkMatchingTransfer = (d) => {
+    const newRecId = uid(); // 신규 기록일 때 쓸 id를 미리 고정해서, 양도 쪽 fulfilledRecordId에도 같은 id를 연결해 줄 수 있게 함
+    const linkMatchingTransfer = (d, recordId) => {
       if (!coverForName) return { d, extra: {} };
       const t = (d.transfers || []).find((x) =>
         x.status === "approved" && x.toWorkerId === workerId && x.date === calEdit.date &&
@@ -7737,23 +7839,25 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
       if (!t) return { d, extra: {} };
       const d2 = {
         ...d,
+        // fulfilledRecordId까지 같이 채워줘야 "근무 양도" 관리 탭에서도 이 건이 "출근 완료"로 바로 보임 —
+        // 안 그러면 실제로는 근무 기록이 다 있는데도 그 탭에서는 계속 "아직 출근 전"으로 표시되는 문제가 있었음
         transfers: d.transfers.map((x) => (x.id === t.id
-          ? { ...x, coverType: patch.capBase ? "mixed" : "pure", confirmedAt: new Date().toISOString() }
+          ? { ...x, coverType: patch.capBase ? "mixed" : "pure", confirmedAt: new Date().toISOString(), fulfilledRecordId: x.fulfilledRecordId || recordId }
           : x)),
       };
       return { d: d2, extra: { coverForId: t.fromWorkerId ?? null, transferId: t.id } };
     };
     const ok = calEdit.id
       ? await saveConfirmed((d) => {
-          const { d: d2, extra } = linkMatchingTransfer(d);
+          const { d: d2, extra } = linkMatchingTransfer(d, calEdit.id);
           return { ...d2, records: d2.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch, ...extra } : r)) };
         })
       : await saveConfirmed((d) => {
-          const { d: d2, extra } = linkMatchingTransfer(d);
+          const { d: d2, extra } = linkMatchingTransfer(d, newRecId);
           return {
             ...d2,
             records: [...d2.records, {
-              id: uid(), workerId, date: calEdit.date, manual: true,
+              id: newRecId, workerId, date: calEdit.date, manual: true,
               inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
               ...patch, ...extra,
             }],
