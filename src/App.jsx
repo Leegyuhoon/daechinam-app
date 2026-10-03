@@ -7621,26 +7621,52 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     const mk = (t) => { if (!t) return null; const [h, mi] = t.split(":").map(Number); const d = parseKey(calEdit.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
     const site = data.sites.find((x) => x.id === calEdit.siteId);
     const coverForName = calEdit.coverForName.trim() || null;
+    const resolvedSiteId = calEdit.isFlat ? null : (site?.id || calEdit.siteId || null);
     const patch = {
       ...(calEdit.isFlat
         ? { site: calEdit.siteName.trim() || "현장 미지정", siteId: null }
-        : { site: site?.name || calEdit.siteName || "", siteId: site?.id || calEdit.siteId || null }),
+        : { site: site?.name || calEdit.siteName || "", siteId: resolvedSiteId }),
       clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
       breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
       note: calEdit.note,
       coverForName, capBase: coverForName ? !!calEdit.capBase : false,
       ...(calEdit.isFlat ? { flatPay: Number(calEdit.flatPay) || 0, oneOffStatus: "approved" } : { flatPay: null }),
     };
+    // 관리자가 "대신 근무 대상자"를 직접 채워 넣을 때, 마침 같은 근무자·날짜로 "승인은 됐지만
+    // 근무자 본인의 혼합/순수 확인은 아직 안 된" 양도 신청이 있으면 그것도 같이 확정해줌 — 안 그러면
+    // 나중에 근무자가 앱을 열었을 때 "이 근무 어떤 거였나요?" 질문이 또 뜨고, 거기서 지금 관리자가
+    // 고른 혼합 여부와 다르게 답하면 방금 고친 내용이 다시 덮어써질 수 있음.
+    const linkMatchingTransfer = (d) => {
+      if (!coverForName) return { d, extra: {} };
+      const t = (d.transfers || []).find((x) =>
+        x.status === "approved" && x.toWorkerId === workerId && x.date === calEdit.date &&
+        (!x.siteId || x.siteId === resolvedSiteId) && !x.coverType
+      );
+      if (!t) return { d, extra: {} };
+      const d2 = {
+        ...d,
+        transfers: d.transfers.map((x) => (x.id === t.id
+          ? { ...x, coverType: patch.capBase ? "mixed" : "pure", confirmedAt: new Date().toISOString() }
+          : x)),
+      };
+      return { d: d2, extra: { coverForId: t.fromWorkerId ?? null, transferId: t.id } };
+    };
     const ok = calEdit.id
-      ? await saveConfirmed((d) => ({ ...d, records: d.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch } : r)) }))
-      : await saveConfirmed((d) => ({
-          ...d,
-          records: [...d.records, {
-            id: uid(), workerId, date: calEdit.date, manual: true,
-            inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
-            ...patch,
-          }],
-        }));
+      ? await saveConfirmed((d) => {
+          const { d: d2, extra } = linkMatchingTransfer(d);
+          return { ...d2, records: d2.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch, ...extra } : r)) };
+        })
+      : await saveConfirmed((d) => {
+          const { d: d2, extra } = linkMatchingTransfer(d);
+          return {
+            ...d2,
+            records: [...d2.records, {
+              id: uid(), workerId, date: calEdit.date, manual: true,
+              inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
+              ...patch, ...extra,
+            }],
+          };
+        });
     setCalEditBusy(false);
     if (!ok) return;
     setCalEdit(null); setToast(calEdit.id ? "기록을 수정했습니다" : "대신근무 기록을 추가했습니다");
