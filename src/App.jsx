@@ -1658,7 +1658,20 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const myLeaderSiteIds = worker ? (worker.leaderSiteIds || []) : [];
   const mySiteNames = worker ? myLeaderSiteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean) : [];
   const myLeadNotices = worker ? (data.notices || []).filter((n) => n.createdBy === worker.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) : [];
-  const openLeadNotice = () => { setLeadNoticeForm({ title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [], files: [], previews: [], videoFile: null, videoPreview: "", kind: "none" }); setLeadNoticeOpen(true); };
+  const openLeadNotice = () => { setLeadNoticeForm({ id: null, title: "", message: "", days: "3", audience: "site", siteIds: [...myLeaderSiteIds], workerIds: [], files: [], previews: [], videoFile: null, videoPreview: "", kind: "none", photoIds: [], startDate: null }); setLeadNoticeOpen(true); };
+  // 팀장 본인이 보낸 공지를 제출 후에도 직접 고칠 수 있게 — 기존 값을 그대로 불러와 같은 작성 폼으로 수정
+  const openEditLeadNotice = (n) => {
+    const days = Math.max(1, Math.round((parseKey(n.endDate).getTime() - parseKey(n.startDate).getTime()) / 86400000) + 1);
+    setLeadNoticeForm({
+      id: n.id, title: n.title, message: n.message || "", days: String(days),
+      audience: n.audience, siteIds: n.audience === "site" ? (n.siteIds || []) : [...myLeaderSiteIds],
+      workerIds: n.audience === "custom" ? (n.workerIds || []) : [],
+      files: [], previews: [], videoFile: null, videoPreview: n.kind === "video" && n.photoIds?.[0] ? photoUrl(n.photoIds[0]) : "",
+      kind: n.kind || "none", photoIds: n.photoIds || [], startDate: n.startDate,
+    });
+    setMyNoticeViewer(null);
+    setLeadNoticeOpen(true);
+  };
 
   // 일일체크리스트 — 내가 팀장인 현장 중 "체크리스트 대상"으로 켜둔 곳들
   const myChecklistSites = sites.filter((s) => myLeaderSiteIds.includes(s.id) && s.checklistEnabled);
@@ -1766,12 +1779,15 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     if (leadNoticeForm.audience === "site" && siteIds.length === 0) { setToast("현장을 한 곳 이상 선택해 주세요"); return; }
     if (leadNoticeForm.audience === "custom" && workerIds.length === 0) { setToast("받는 사람을 한 명 이상 선택해 주세요"); return; }
     setLeadNoticeSaveBusy(true);
-    let photoIds = [];
+    // 수정일 땐 기존에 올려둔 사진·영상을 그대로 유지하고(새로 고른 파일이 있을 때만 교체),
+    // 새로 작성일 땐 빈 배열에서 시작함
+    let photoIds = leadNoticeForm.photoIds || [];
     let kind = leadNoticeForm.kind === "none" ? null : leadNoticeForm.kind;
     try {
       if (leadNoticeForm.kind === "video" && leadNoticeForm.videoFile) {
         photoIds = [await uploadVideo(leadNoticeForm.videoFile)];
       } else if (leadNoticeForm.kind === "photo" && (leadNoticeForm.files || []).length > 0) {
+        photoIds = [];
         for (const f of leadNoticeForm.files) photoIds.push(await uploadPhoto(f));
       }
     } catch (e) {
@@ -1780,19 +1796,26 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       return;
     }
     const siteNames = siteIds.map((id) => sites.find((s) => s.id === id)?.name).filter(Boolean);
-    const start = dKey(new Date());
-    const endD = new Date(); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
+    // 수정일 땐 처음 올렸던 시작일을 그대로 유지(노출 기간만 "며칠간"으로 다시 계산) — 새로 작성할 땐 오늘부터
+    const start = leadNoticeForm.id && leadNoticeForm.startDate ? leadNoticeForm.startDate : dKey(new Date());
+    const endD = parseKey(start); endD.setDate(endD.getDate() + (Number(leadNoticeForm.days) || 1) - 1);
     update((d) => ({
       ...d,
-      notices: [...(d.notices || []), {
-        id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
-        audience: leadNoticeForm.audience, siteIds, siteName: siteNames.join("·"), workerIds,
-        startDate: start, endDate: dKey(endD), active: true, photoIds, kind,
-        createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
-      }],
+      notices: leadNoticeForm.id
+        ? (d.notices || []).map((x) => (x.id === leadNoticeForm.id ? {
+            ...x, title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
+            audience: leadNoticeForm.audience, siteIds, siteName: siteNames.join("·"), workerIds,
+            startDate: start, endDate: dKey(endD), photoIds, kind,
+          } : x))
+        : [...(d.notices || []), {
+            id: uid(), title: leadNoticeForm.title.trim(), message: leadNoticeForm.message.trim(),
+            audience: leadNoticeForm.audience, siteIds, siteName: siteNames.join("·"), workerIds,
+            startDate: start, endDate: dKey(endD), active: true, photoIds, kind,
+            createdAt: new Date().toISOString(), createdBy: worker.id, createdByName: worker.name,
+          }],
     }));
     setLeadNoticeSaveBusy(false);
-    setToast("공지를 보냈습니다");
+    setToast(leadNoticeForm.id ? "공지를 수정했습니다" : "공지를 보냈습니다");
     setLeadNoticeOpen(false);
   };
 
@@ -1889,6 +1912,22 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     }));
     setToast(validItems.length > 1 ? `용품 ${validItems.length}종을 요청했습니다` : "용품을 요청했습니다");
     setSupplyOpen(false);
+  };
+
+  // 용품 요청 내역 확인: 본인이 요청한 건 누구나, 팀장은 담당 현장에서 올라온 요청 전체를 볼 수 있음
+  const [supplyHistoryOpen, setSupplyHistoryOpen] = useState(false);
+  const mySupplyRequests = worker ? (data.supplyRequests || [])
+    .filter((r) => r.workerId === worker.id || myLeaderSiteIds.includes(r.siteId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
+  const supplyStatusBadge = (status) => {
+    const map = {
+      requested: [C.aqua, C.bg, "요청됨"],
+      approved: [C.blue, "#fff", "승인됨"],
+      delivered: [C.aquaDeep, "#fff", "전달완료"],
+      declined: [C.lineDark, C.onDarkSub, "거절됨"],
+    };
+    const [bg, col, label] = map[status] || map.requested;
+    return <span style={{ fontSize: 9.5, fontWeight: 800, color: col, background: bg, padding: "2px 6px", whiteSpace: "nowrap" }}>{label}</span>;
   };
 
   const [noticeQueue, setNoticeQueue] = useState([]);
@@ -2491,12 +2530,28 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div className="mt-4" style={{ background: C.tileSoft, padding: 13 }}>
               {(() => {
                 const s = signOpen.snapshot;
+                // 예전에 보낸 정산서(수당·대신근무·일회성 근무를 따로 안 담던 시절)는 s.allowances가
+                // 없으므로, 그때는 옛날 방식(기타 수당 한 줄)으로 그대로 보여줌 — 있으면 새 방식으로 항목별 표시
+                const legacy = s.allowances === undefined;
                 return (
                   <>
-                    <Row k={s.shift ? "기본 타임" : "기본급"} v={`${money(s.base)}원`} />
+                    {s.isFixedSalary && s.fixedSalaryItems ? (
+                      s.fixedSalaryItems.map((it) => <Row key={it.id} k={it.label} v={`${money(it.amount)}원`} />)
+                    ) : (
+                      <Row k={s.shift ? "기본 타임" : "기본급"} v={`${money(s.base)}원`} />
+                    )}
                     {s.otPay > 0 && <Row k={s.shift ? "추가근무" : "연장근무"} v={`${money(s.otPay)}원`} />}
                     {s.holidayPay > 0 && <Row k="공휴일 근무" v={`${money(s.holidayPay)}원`} />}
-                    {s.extra > 0 && <Row k={s.extraLabel || "기타 수당"} v={`${money(s.extra)}원`} />}
+                    {legacy ? (
+                      s.extra > 0 && <Row k={s.extraLabel || "기타 수당"} v={`${money(s.extra)}원`} />
+                    ) : (
+                      <>
+                        {(s.allowances || []).map((a) => <Row key={a.id} k={a.label} v={`${money(a.amount)}원`} />)}
+                        {s.manualExtra > 0 && <Row k={s.extraLabel || "기타 수당"} v={`${money(s.manualExtra)}원`} />}
+                        {s.coverPay > 0 && <Row k={`대신 근무${s.coverCount ? ` (${s.coverCount}건)` : ""}`} v={`${money(s.coverPay)}원`} />}
+                        {s.oneOffPay > 0 && <Row k={`일회성 현장 근무${s.oneOffCount ? ` (${s.oneOffCount}건)` : ""}`} v={`${money(s.oneOffPay)}원`} />}
+                      </>
+                    )}
                     <div style={{ borderTop: `1px solid ${C.line}`, margin: "8px 0" }} />
                     <Row k="지급 합계" v={`${money(s.gross)}원`} />
                     {s.tax > 0 && <Row k="원천징수" v={`−${money(s.tax)}원`} />}
@@ -2771,18 +2826,19 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               );
             })()}
 
-            <div className="mt-4">
-              <Btn full kind="ghost" onClick={() => setMyNoticeViewer(null)}>닫기</Btn>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setMyNoticeViewer(null)}>닫기</Btn>
+              <Btn full onClick={() => openEditLeadNotice(myNoticeViewer)}>수정하기</Btn>
             </div>
           </>
         )}
       </Modal>
 
-      {/* 팀장 공지 작성 모달 */}
+      {/* 팀장 공지 작성/수정 모달 */}
       <Modal open={leadNoticeOpen} onClose={() => setLeadNoticeOpen(false)}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>우리 현장 공지 작성</div>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{leadNoticeForm.id ? "우리 현장 공지 수정" : "우리 현장 공지 작성"}</div>
         <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>
-          내가 팀장인 현장({mySiteNames.join("·") || "소속 현장"}) 안에서만 전달돼요. 관리자도 이 공지를 확인할 수 있어요.
+          내가 팀장인 현장({mySiteNames.join("·") || "소속 현장"}) 안에서만 전달돼요. 관리자도 이 공지를 확인·수정할 수 있어요.
         </div>
         <div className="mt-4 flex flex-col gap-2.5">
           <Field label="제목">
@@ -2885,7 +2941,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </div>
         <div className="grid grid-cols-2 gap-2 mt-4">
           <Btn kind="ghost" full disabled={leadNoticeSaveBusy} onClick={() => setLeadNoticeOpen(false)}>취소</Btn>
-          <Btn full disabled={leadNoticeSaveBusy} onClick={submitLeadNotice}>{leadNoticeSaveBusy ? "저장 중…" : "공지 보내기"}</Btn>
+          <Btn full disabled={leadNoticeSaveBusy} onClick={submitLeadNotice}>{leadNoticeSaveBusy ? "저장 중…" : leadNoticeForm.id ? "수정 저장" : "공지 보내기"}</Btn>
         </div>
       </Modal>
 
@@ -3028,6 +3084,49 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           <Package size={14} /> 용품 요청
         </button>
       </div>
+      {mySupplyRequests.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
+          <button onClick={() => setSupplyHistoryOpen(true)} className="w-full flex items-center justify-center gap-1.5"
+            style={{ background: "transparent", border: `1px solid ${C.lineDark}`, padding: "10px 0", color: C.onDarkSub, fontSize: 12, fontWeight: 800 }}>
+            <ClipboardList size={13} /> {myLeaderSiteIds.length > 0 ? "우리 현장 용품 요청 내역" : "내 용품 요청 내역"} ({mySupplyRequests.length})
+          </button>
+        </div>
+      )}
+
+      {/* 용품 요청 내역 — 요청한 사람 본인, 그리고 해당 현장 팀장이 요청·전달완료 시각을 확인할 수 있음 */}
+      <Modal open={supplyHistoryOpen} onClose={() => setSupplyHistoryOpen(false)}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{myLeaderSiteIds.length > 0 ? "우리 현장 용품 요청 내역" : "내 용품 요청 내역"}</div>
+        <div className="mt-3 flex flex-col gap-2" style={{ maxHeight: 460, overflowY: "auto" }}>
+          {mySupplyRequests.map((r) => (
+            <Tile key={r.id} style={{ padding: "11px 13px" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>
+                    {r.siteName}{r.workerId !== worker.id ? ` · ${r.workerName}` : ""}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                    {dKey(new Date(r.createdAt))} {tstr(r.createdAt)} 요청
+                  </div>
+                  {r.status === "delivered" && r.respondedAt && (
+                    <div style={{ fontSize: 11.5, color: C.aquaDeep, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
+                      {dKey(new Date(r.respondedAt))} {tstr(r.respondedAt)} 전달완료
+                    </div>
+                  )}
+                  {r.note && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{r.note}</div>}
+                </div>
+                {supplyStatusBadge(r.status)}
+              </div>
+            </Tile>
+          ))}
+          {mySupplyRequests.length === 0 && (
+            <div style={{ fontSize: 13, color: C.sub, textAlign: "center", padding: "20px 0" }}>요청 내역이 없어요.</div>
+          )}
+        </div>
+        <div className="mt-4">
+          <Btn full kind="ghost" onClick={() => setSupplyHistoryOpen(false)}>닫기</Btn>
+        </div>
+      </Modal>
 
       {/* 현장 사진 등록 작성 */}
       <Modal open={photoOpen} onClose={() => !photoBusy && setPhotoOpen(false)}>
@@ -5589,26 +5688,19 @@ function NoticeAdminView({ data, update, setToast }) {
                   </div>
                 );
               })()}
+              {/* 관리자는 팀장이 작성한 공지든 본인이 작성한 공지든 똑같이 수정·삭제할 수 있음 —
+                  작성자 정보(createdBy/createdByName)는 saveNotice에서 그대로 보존되므로 "팀장 작성" 표시는 유지됨 */}
               <div className="grid grid-cols-2 gap-2 mt-4">
                 <Btn kind="ghost" full onClick={() => { toggleActive(viewer.id); setViewer(null); }}>{viewer.active ? "끄기" : "다시 켜기"}</Btn>
-                {isAdminWritten ? (
-                  <Btn full onClick={() => {
-                    setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [], files: [], previews: [], videoFile: null, videoPreview: "", kind: viewer.kind || "none", photoIds: viewer.photoIds || [] });
-                    setViewer(null);
-                  }}>수정하기</Btn>
-                ) : (
-                  <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
-                    style={{ background: "transparent", color: C.coral, border: `1px solid ${C.coral}`, fontSize: 14, fontWeight: 700 }}>
-                    삭제
-                  </button>
-                )}
+                <Btn full onClick={() => {
+                  setEdit({ ...viewer, mode: "range", leadDays: 7, targetDate: viewer.endDate, includeTarget: true, workerIds: viewer.workerIds || [], files: [], previews: [], videoFile: null, videoPreview: "", kind: viewer.kind || "none", photoIds: viewer.photoIds || [] });
+                  setViewer(null);
+                }}>수정하기</Btn>
               </div>
-              {isAdminWritten && (
-                <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
-                  className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
-                  이 공지 삭제
-                </button>
-              )}
+              <button onClick={() => { if (window.confirm(`"${viewer.title}" 공지를 정말 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) { removeNotice(viewer.id); setViewer(null); } }}
+                className="w-full mt-2" style={{ fontSize: 12.5, color: C.coral, fontWeight: 700, textAlign: "center", padding: "8px 0" }}>
+                이 공지 삭제
+              </button>
             </>
           );
         })()}
@@ -8152,10 +8244,22 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
 
   const sendToWorker = () => {
     setSendBusy(true);
+    // 관리자가 보는 정산서(이 화면의 "지급 내역")와 근무자가 서명할 때 보는 정산서가 똑같은 항목으로
+    // 나오도록, 여기서도 똑같이 수당 각각·대신 근무·일회성 현장 근무를 따로따로 스냅샷에 담아둠.
+    // (예전엔 이 항목들이 금액에는 포함되면서도 항목별 내역에는 안 보여서, 실지급액은 맞는데
+    // "왜 이 금액이 나왔는지"가 관리자 화면과 다르게 보이는 문제가 있었음)
     const snapshot = {
       shift: agg.shift, times: agg.times, days: agg.days, net: agg.net,
+      isFixedSalary: p.isFixedSalary,
+      fixedSalaryItems: p.isFixedSalary
+        ? (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ id: "base", label: "기본급 (월 고정)", amount: p.base }])
+        : null,
       base: p.base, otPay: agg.otPay, holidayPay: agg.holidayPay || 0,
-      extra: p.extra, extraLabel: adj.extraLabel, gross: p.gross,
+      allowances: p.allowances,
+      manualExtra: Number(adj.extra) || 0, extraLabel: adj.extraLabel,
+      coverPay: p.coverPay, coverCount: p.coverRecs.length,
+      oneOffPay: p.oneOffPay, oneOffCount: p.oneOffRecs.length,
+      gross: p.gross,
       tax: p.tax, deduct: p.deduct, deductLabel: adj.deductLabel, net_pay: p.net,
     };
     update((d) => {
@@ -8184,13 +8288,19 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
           <div style="font-size:22px; font-weight:900; margin-top:6px;">${ymLabel(ym)} 근무 정산서</div>
           <div style="font-size:13px; color:#71767D; margin-top:10px;">${sign.workerName} 님</div>
           <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:13px;">
-            ${s.shift
-              ? `<tr><td style="padding:6px 0;">기본 타임</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>
-                 ${s.otPay ? `<tr><td style="padding:6px 0;">추가근무</td><td style="padding:6px 0; text-align:right;">${money(s.otPay)}원</td></tr>` : ""}`
-              : `<tr><td style="padding:6px 0;">기본급</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>
-                 ${s.otPay ? `<tr><td style="padding:6px 0;">연장근무</td><td style="padding:6px 0; text-align:right;">${money(s.otPay)}원</td></tr>` : ""}`}
+            ${s.isFixedSalary && s.fixedSalaryItems
+              ? s.fixedSalaryItems.map((it) => `<tr><td style="padding:6px 0;">${it.label}</td><td style="padding:6px 0; text-align:right;">${money(it.amount)}원</td></tr>`).join("")
+              : s.shift
+              ? `<tr><td style="padding:6px 0;">기본 타임</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>`
+              : `<tr><td style="padding:6px 0;">기본급</td><td style="padding:6px 0; text-align:right;">${money(s.base)}원</td></tr>`}
+            ${s.otPay ? `<tr><td style="padding:6px 0;">${s.shift ? "추가근무" : "연장근무"}</td><td style="padding:6px 0; text-align:right;">${money(s.otPay)}원</td></tr>` : ""}
             ${s.holidayPay ? `<tr><td style="padding:6px 0;">공휴일 근무</td><td style="padding:6px 0; text-align:right;">${money(s.holidayPay)}원</td></tr>` : ""}
-            ${s.extra ? `<tr><td style="padding:6px 0;">${s.extraLabel || "기타 수당"}</td><td style="padding:6px 0; text-align:right;">${money(s.extra)}원</td></tr>` : ""}
+            ${s.allowances === undefined
+              ? (s.extra ? `<tr><td style="padding:6px 0;">${s.extraLabel || "기타 수당"}</td><td style="padding:6px 0; text-align:right;">${money(s.extra)}원</td></tr>` : "")
+              : `${(s.allowances || []).map((a) => `<tr><td style="padding:6px 0;">${a.label}</td><td style="padding:6px 0; text-align:right;">${money(a.amount)}원</td></tr>`).join("")}
+                 ${s.manualExtra ? `<tr><td style="padding:6px 0;">${s.extraLabel || "기타 수당"}</td><td style="padding:6px 0; text-align:right;">${money(s.manualExtra)}원</td></tr>` : ""}
+                 ${s.coverPay ? `<tr><td style="padding:6px 0;">대신 근무${s.coverCount ? ` (${s.coverCount}건)` : ""}</td><td style="padding:6px 0; text-align:right;">${money(s.coverPay)}원</td></tr>` : ""}
+                 ${s.oneOffPay ? `<tr><td style="padding:6px 0;">일회성 현장 근무${s.oneOffCount ? ` (${s.oneOffCount}건)` : ""}</td><td style="padding:6px 0; text-align:right;">${money(s.oneOffPay)}원</td></tr>` : ""}`}
             <tr style="border-top:1px solid #E5E1DA;"><td style="padding:8px 0; font-weight:800;">지급 합계</td><td style="padding:8px 0; text-align:right; font-weight:800;">${money(s.gross)}원</td></tr>
             ${s.tax ? `<tr><td style="padding:6px 0; color:#D8503F;">원천징수</td><td style="padding:6px 0; text-align:right; color:#D8503F;">−${money(s.tax)}원</td></tr>` : ""}
             ${s.deduct ? `<tr><td style="padding:6px 0; color:#D8503F;">${s.deductLabel || "기타 공제"}</td><td style="padding:6px 0; text-align:right; color:#D8503F;">−${money(s.deduct)}원</td></tr>` : ""}
