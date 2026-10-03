@@ -5195,6 +5195,30 @@ function TransferAdminView({ data, update, setToast }) {
     setToast("연결을 해제했습니다");
   };
 
+  // 이미 쌓여 있는, 자동으로 명확하게 짚이는 건들을 한 번에 다 확정 — 하나씩 들어가서 누를 필요 없게
+  const autoLinkable = (data.transfers || []).filter((t) => t.status === "approved" && !t.fulfilledRecordId && matchRecordForTransfer(t));
+  const linkAllAuto = () => {
+    update((d) => {
+      const links = (d.transfers || [])
+        .filter((t) => t.status === "approved" && !t.fulfilledRecordId)
+        .map((t) => ({ t, r: matchRecordForTransfer(t) }))
+        .filter((x) => x.r);
+      if (links.length === 0) return d;
+      const tMap = new Map(links.map(({ t, r }) => [t.id, r.id]));
+      const rMap = new Map(links.map(({ t, r }) => [r.id, t]));
+      return {
+        ...d,
+        transfers: d.transfers.map((x) => (tMap.has(x.id) ? { ...x, fulfilledRecordId: tMap.get(x.id) } : x)),
+        records: d.records.map((r) => {
+          const t = rMap.get(r.id);
+          if (!t) return r;
+          return { ...r, transferId: t.id, coverForId: r.coverForId ?? (t.fromWorkerId ?? null), coverForName: r.coverForName || t.fromWorkerName || null };
+        }),
+      };
+    });
+    setToast(`${autoLinkable.length}건을 출근 완료로 확정했습니다`);
+  };
+
   const badge = (status) => {
     const map = {
       pending: [C.aqua, C.bg, "관리자 확인 대기"],
@@ -5245,6 +5269,15 @@ function TransferAdminView({ data, update, setToast }) {
               {ymLabel(ym)}
             </button>
           ))}
+        </div>
+      )}
+
+      {autoLinkable.length > 0 && (
+        <div className="flex items-center justify-between gap-2 mb-3" style={{ background: "#EAF2FB", border: `1px solid ${C.blue}`, padding: "10px 12px" }}>
+          <div style={{ fontSize: 12.5, color: C.text, fontWeight: 700 }}>
+            "출근 전"으로 보이지만 실제 근무 기록이 있는 건 {autoLinkable.length}건 — 자동으로 찾았어요.
+          </div>
+          <Btn small onClick={linkAllAuto}>모두 확정</Btn>
         </div>
       )}
 
