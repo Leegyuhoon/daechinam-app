@@ -1535,6 +1535,20 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
+  // 이미 서명한 정산서 중 최근 3건 — 내용을 다시 보거나 서명을 취소(철회)할 수 있게 함
+  const mySignedSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && x.signedAt).sort((a, b) => b.signedAt.localeCompare(a.signedAt)).slice(0, 3) : [];
+  const cancelSign = async (sgn) => {
+    if (!window.confirm(`${ymLabel(sgn.ym)} 정산서 서명을 취소할까요?\n취소하면 다시 서명해야 해요.`)) return;
+    try {
+      await update((d) => ({
+        ...d,
+        payslipSigns: (d.payslipSigns || []).map((x) => (x.id === sgn.id ? { ...x, signedAt: null, signatureDataUrl: null, cancelledAt: new Date().toISOString() } : x)),
+      }));
+      setToast("서명을 취소했습니다 — 다시 서명할 수 있어요");
+    } catch (e) {
+      setToast("취소에 실패했어요 — 인터넷 연결을 확인해 주세요");
+    }
+  };
   const myContractRequest = worker ? (data.contractRequests || []).find((x) => x.workerId === worker.id) : null;
   const [contractSignOpen, setContractSignOpen] = useState(false);
   const [contractSigData, setContractSigData] = useState(null);
@@ -2505,6 +2519,25 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </div>
       )}
 
+      {/* 서명을 마친 정산서 — 내용 다시 보기 · 서명 취소 */}
+      {mySignedSigns.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          {mySignedSigns.map((sgn) => (
+            <div key={sgn.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1px solid ${C.lineDark}` }}>
+              <div className="flex items-center gap-1.5" style={{ color: ST.complete, fontSize: 11.5, fontWeight: 800 }}>
+                <Check size={12} /> 서명 완료 · {sgn.signedAt.slice(0, 10)}
+              </div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>{ymLabel(sgn.ym)} 근무 정산서</div>
+              <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <Btn kind="ghost" small onClick={() => { setSignOpen(sgn); setSigData(null); }}>내용 보기</Btn>
+                <Btn kind="ghost" small onClick={() => cancelSign(sgn)}>서명 취소</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {myContractRequest && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
           <div style={{ background: C.tile, padding: 14, border: `1.5px solid #0369A1` }}>
@@ -2527,6 +2560,12 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           <>
             <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{ymLabel(signOpen.ym)} 근무 정산서</div>
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{signOpen.company}</div>
+            {signOpen.snapshot.model ? (
+              <div className="mt-3" style={{ maxHeight: "52vh", overflowY: "auto", paddingRight: 2 }}>
+                <PayslipDetail m={signOpen.snapshot.model} />
+              </div>
+            ) : (
+              <>
             <div className="mt-4" style={{ background: C.tileSoft, padding: 13 }}>
               {(() => {
                 const s = signOpen.snapshot;
@@ -2565,6 +2604,17 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               <div style={{ color: "#fff", fontSize: 20, fontWeight: 900, marginTop: 3, whiteSpace: "nowrap" }}>{money(signOpen.snapshot.net_pay)}원</div>
             </div>
 
+              </>
+            )}
+
+            {signOpen.signedAt ? (
+              <div className="mt-4">
+                <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>{signOpen.signedAt.slice(0, 10)} 서명 완료</div>
+                {signOpen.signatureDataUrl && <img src={signOpen.signatureDataUrl} style={{ height: 50, background: "#fff", border: `1px solid ${C.line}`, padding: 4 }} />}
+                <div className="mt-3"><Btn kind="ghost" full onClick={() => setSignOpen(null)}>닫기</Btn></div>
+              </div>
+            ) : (
+              <>
             <div className="mt-4">
               <Eyebrow>서명</Eyebrow>
               <div className="mt-1.5"><SignaturePad onChange={setSigData} /></div>
@@ -2577,6 +2627,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               <Btn kind="ghost" full disabled={signBusy} onClick={() => setSignOpen(null)}>나중에</Btn>
               <Btn full disabled={signBusy || !sigData} onClick={submitSign}>{signBusy ? "저장 중…" : "서명 완료"}</Btn>
             </div>
+              </>
+            )}
           </>
         )}
       </Modal>
@@ -8364,6 +8416,249 @@ const LineItem = ({ k, v, sub, bold, color }) => (
   </div>
 );
 
+/* ─────────────────────────  정산서 표시 모델 (관리자 화면 · 근무자 서명 화면 공용)  ─────────────────────────
+   관리자가 보는 정산서와 근무자가 서명할 때 보는 정산서가 항목·순서·금액까지 똑같이 나오도록,
+   화면에 그릴 내용을 한 번에 "순수 데이터(JSON)"로 만들어 두고 두 화면이 같은 컴포넌트(PayslipDetail)로 그림.
+   근무자에게 전달할 때는 이 모델을 그대로 스냅샷에 담아서, 전달 이후에 기록이 바뀌어도 서명한 내용은 그대로 유지됨. */
+function buildPayslipModel(data, workerId, ym) {
+  const p = payslipCalc(data, workerId, ym);
+  const { worker, recs, agg, adj } = p;
+  const st = data.settings;
+  const lines = [];
+  if (p.isFixedSalary) {
+    (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ id: "base", label: "기본급 (월 고정)", amount: p.base }])
+      .forEach((it) => lines.push({ k: it.label, sub: it.label.includes("기본급") ? "출퇴근 시간과 무관하게 고정 지급" : undefined, v: `${money(it.amount)}원` }));
+  } else if (agg.shift) {
+    lines.push({ k: "기본 타임", sub: `${agg.times}회 × ${money(worker.shiftPay ?? st.shiftPay)}원`, v: `${money(agg.base)}원` });
+    if (agg.blocks > 0) lines.push({ k: "추가근무", sub: `${agg.blocks}회 × ${money(st.otPay)}원`, v: `${money(agg.otPay)}원` });
+  } else {
+    lines.push({ k: "기본급", sub: `${agg.net.toFixed(1)}시간 × ${money(agg.wage)}원`, v: `${money(agg.base)}원` });
+    if (agg.otPay > 0) lines.push({ k: "연장근무", sub: `${(agg.otMin / 60).toFixed(1)}시간 × ${money(agg.wage)}원 × 1.5`, v: `${money(agg.otPay)}원` });
+  }
+  if (agg.holidayPay > 0) lines.push({ k: "공휴일 근무", sub: `${agg.holidayNet.toFixed(1)}시간 × ${money(agg.wage)}원 × ${agg.holidayMultiplier}`, v: `${money(agg.holidayPay)}원` });
+  p.allowances.forEach((a) => lines.push({ k: a.label, v: `${money(a.amount)}원` }));
+  if (Number(adj.extra) > 0) lines.push({ k: adj.extraLabel || "기타 수당", v: `${money(adj.extra)}원` });
+  if (p.coverPay > 0) lines.push({ k: "대신 근무", sub: `${p.coverRecs.length}건`, v: `${money(p.coverPay)}원` });
+  if (p.oneOffPay > 0) lines.push({ k: "일회성 현장 근무", sub: `${p.oneOffRecs.length}건`, v: `${money(p.oneOffPay)}원` });
+
+  // "본인근무+대신근무 혼합" 확정된 날은 calcPay 기본값(본인 몫만)이 아니라 본인 몫 + 대신근무 몫을 합친 총액을 써야 함
+  const mixedSplit = (r, q) => {
+    const rpq = resolvePay(worker, r.siteId, st);
+    const extraH = Math.max(0, q.net - rpq.shiftHours);
+    const ownNet = Math.min(q.net, rpq.shiftHours);
+    const hM = q.holiday ? (st.holidayMultiplier || 1.5) : 1;
+    return { own: Math.round(ownNet / rpq.shiftHours) * rpq.shiftPay * hM, extra: Math.round(extraH / st.shiftHours) * st.shiftPay * hM, extraH };
+  };
+  const coverDetail = p.coverRecs.map((r) => {
+    const q = calcPay(r, worker, st);
+    let amt = q.open ? null : q.pay;
+    if (!q.open && r.capBase && r.flatPay == null && agg.shift) amt = mixedSplit(r, q).extra;
+    return { label: `${r.date.slice(5).replace("-", "/")} · ${r.site || "현장 미지정"} · 대신 근무${r.coverForName ? ` (${r.coverForName}님 대신)` : ""}`, v: q.open ? "진행중" : `${money(amt)}원` };
+  });
+  p.oneOffRecs.forEach((r) => {
+    const q = calcPay(r, worker, st);
+    coverDetail.push({ label: `${r.date.slice(5).replace("-", "/")} · ${r.site || "현장 미지정"} · 일회성 현장 근무`, v: q.open ? "진행중" : `${money(q.pay)}원` });
+  });
+
+  const tiles = p.isFixedSalary
+    ? [["근무일수", `${agg.days}일`, "text"], ["근무시간", hmc(agg.net), "text"], ["초과 누계", `+${minStr(agg.otMin)}`, "blue"], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? "red" : "sub"]]
+    : agg.shift
+    ? [["근무 타임", `${agg.times + agg.blocks}회`, "text"], ["근무시간", hmc(agg.net), "text"], ["└ 추가 인정 포함", `${agg.blocks}회`, "blue"], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? "red" : "sub"]]
+    : [["근무일수", `${agg.days}일`, "text"], ["근무시간", hmc(agg.net), "text"], ["추가근무", `+${hmc(agg.ot)}`, "blue"], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? "red" : "sub"]];
+
+  const deductLines = [];
+  if (p.tax > 0) deductLines.push({ k: "원천징수", sub: "사업소득 3.3%", v: `−${money(p.tax)}원` });
+  if (p.deduct > 0) deductLines.push({ k: adj.deductLabel || "기타 공제", v: `−${money(p.deduct)}원` });
+
+  const offDays = (data.transfers || [])
+    .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date.slice(0, 7) === ym)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((t) => ({ label: `${t.date.slice(5).replace("-", "/")} · ${t.siteName}${t.startTime ? ` (${t.startTime}–${t.endTime})` : ""}`, who: t.toWorkerName ? `${t.toWorkerName}님이 대신 근무` : "휴무", message: t.message || "" }));
+
+  const rows = recs.map((r) => {
+    const q = calcPay(r, worker, st);
+    const d = parseKey(r.date);
+    const shortish = q.shortMin >= st.shortThreshold;
+    const fixedDiffMin = p.isFixedSalary ? Math.round((q.net - agg.std) * 60) : 0;
+    let displayPay = q.pay, mixedNote = "";
+    if (r.capBase && r.flatPay == null && !q.open && agg.shift) {
+      const ms = mixedSplit(r, q);
+      displayPay = ms.own + ms.extra;
+      if (ms.extraH > 0.001) mixedNote = ` (본인 ${money(ms.own)} + 대신 ${money(ms.extra)})`;
+    }
+    let diff, diffColor;
+    if (p.isFixedSalary) {
+      diff = fixedDiffMin === 0 ? "정확" : fixedDiffMin > 0 ? `+${minStr(fixedDiffMin)}` : `−${minStr(-fixedDiffMin)}`;
+      diffColor = fixedDiffMin > 0 ? "blue" : fixedDiffMin < 0 ? "red" : "sub";
+    } else {
+      diff = r.capBase ? "혼합" : !agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확";
+      diffColor = q.blocks > 0 ? "blue" : shortish ? "red" : "sub";
+    }
+    return {
+      id: r.id, date: r.date.slice(5).replace("-", "."), wd: WD[d.getDay()], sun: d.getDay() === 0,
+      site: `${r.site || ""}${r.note ? ` · ${r.note}` : ""}`,
+      holiday: q.holiday ? `공휴일×${agg.holidayMultiplier}` : "", cover: r.coverForName ? `${r.coverForName}님 대신` : "",
+      inout: `${tstr(r.clockIn)}–${tstr(r.clockOut)}`, work: hmc(q.net),
+      diff, diffColor, pay: p.isFixedSalary ? null : money(displayPay), mixedNote,
+    };
+  });
+
+  return {
+    v: 2,
+    isFixedSalary: p.isFixedSalary, shift: agg.shift,
+    rateLine: worker.fixedSalary ? fixedSalaryLine(worker) : agg.shift ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? st.shiftPay)}원` : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`,
+    tiles, lines, gross: `${money(p.gross)}원`,
+    coverDetail,
+    shortNote: agg.shift && agg.shortMin > 0 ? `기준보다 모자란 ${minStr(agg.shortMin)}은 지급액에서 빼지 않았습니다. 확인용으로만 표시합니다.` : "",
+    deductLines, net: `${money(p.net)}`, memo: adj.memo || "", offDays,
+    dayTitle: p.isFixedSalary ? "출퇴근 확인 (참고용 · 지급액과 무관)" : agg.shift ? "타임별 근무 내역" : "일자별 근무 내역",
+    dayNote: p.isFixedSalary ? "정규직은 근무시간과 무관하게 기본급이 고정 지급돼요. 아래는 출퇴근 확인용 참고 기록이고, 지급액 계산에는 반영되지 않아요. (대신근무·일회성 근무는 사전 협의된 별도 항목이라 위 \"지급 내역\"에 따로 표시돼요.)" : "",
+    rows,
+    totalLabel: `합계 ${p.isFixedSalary ? `${agg.days}일` : agg.shift ? `${agg.times + agg.blocks}타임 (${agg.days}일)` : `${agg.days}일`}`,
+    totalWork: hmc(agg.net + (agg.coverMin || 0) / 60),
+    totalBlocks: agg.blocks ? `${agg.blocks}회` : "",
+    totalPay: p.isFixedSalary ? null : money(agg.pay + (agg.coverPay || 0)),
+  };
+}
+
+const PS_COLOR = { text: C.text, blue: C.blue, red: C.red, sub: C.sub, coral: C.coral };
+function PayslipDetail({ m, dayAction }) {
+  return (
+    <>
+      <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{m.rateLine}</div>
+
+      {/* 근무 요약 */}
+      <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.line }}>
+        {m.tiles.map(([k, v, col]) => (
+          <div key={k} style={{ background: C.tileSoft, padding: "10px 8px" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.sub, letterSpacing: "0.06em" }}>{k}</div>
+            <div style={{ marginTop: 3 }}><Num size={15} color={PS_COLOR[col]}>{v}</Num></div>
+          </div>
+        ))}
+      </div>
+
+      {/* 지급 · 공제 */}
+      <div className="mt-5"><Eyebrow>지급 내역</Eyebrow></div>
+      <div style={{ marginTop: 4 }}>
+        {m.lines.map((l, i) => <LineItem key={i} k={l.k} sub={l.sub} v={l.v} />)}
+        <div style={{ borderTop: `1px solid ${C.line}` }} />
+        <LineItem k="지급 합계" v={m.gross} bold />
+      </div>
+
+      {m.coverDetail.length > 0 && (
+        <div className="mt-4">
+          <Eyebrow>대신 근무 · 일회성 현장 근무 상세</Eyebrow>
+          <div style={{ marginTop: 6 }}>
+            {m.coverDetail.map((c, i) => (
+              <div key={i} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                <span>{c.label}</span>
+                <span style={{ fontWeight: 700, color: C.text }}>{c.v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {m.shortNote && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>{m.shortNote}</div>}
+
+      {m.deductLines.length > 0 && (
+        <>
+          <div className="mt-4"><Eyebrow>공제 내역</Eyebrow></div>
+          <div style={{ marginTop: 4 }}>
+            {m.deductLines.map((l, i) => <LineItem key={i} k={l.k} sub={l.sub} v={l.v} color={C.coral} />)}
+          </div>
+        </>
+      )}
+
+      <div className="mt-4" style={{ background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`, padding: "17px 18px", borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)` }}>
+        <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</div>
+        <div className="mt-1" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}>
+          <Num size={26} color="#fff" weight={900}>{m.net}<span style={{ fontSize: 15 }}> 원</span></Num>
+        </div>
+      </div>
+
+      {m.memo && <div style={{ marginTop: 12, fontSize: 12.5, color: C.text, background: C.tileSoft, padding: "9px 11px", lineHeight: 1.6 }}>※ {m.memo}</div>}
+
+      {m.offDays.length > 0 && (
+        <div className="mt-4">
+          <Eyebrow>이 달 중 양도한 휴무 ({m.offDays.length}건)</Eyebrow>
+          <div style={{ marginTop: 6 }}>
+            {m.offDays.map((t, i) => (
+              <div key={i} style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
+                <div className="flex items-center justify-between">
+                  <span>{t.label}</span>
+                  <span style={{ fontWeight: 700, color: C.blue }}>{t.who}</span>
+                </div>
+                {t.message && <div style={{ fontSize: 11, color: C.text, marginTop: 1 }}>사유: {t.message}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 일자별 */}
+      <div className="flex items-center justify-between mt-6 mb-2">
+        <Eyebrow>{m.dayTitle}</Eyebrow>
+        {dayAction}
+      </div>
+      {m.dayNote && <div style={{ fontSize: 11, color: C.sub, lineHeight: 1.6, marginBottom: 8 }}>{m.dayNote}</div>}
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ borderTop: `2px solid ${C.text}`, minWidth: m.isFixedSalary ? 340 : 420 }}>
+          <div className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 800, color: C.sub, letterSpacing: "0.04em" }}>
+            <span style={{ width: 58 }}>날짜</span>
+            <span style={{ width: 70 }}>현장</span>
+            <span style={{ width: 84, textAlign: "right" }}>출퇴근</span>
+            <span style={{ width: 46, textAlign: "right" }}>근무</span>
+            {m.isFixedSalary ? (
+              <span style={{ width: 60, textAlign: "right" }}>증감</span>
+            ) : (
+              <>
+                <span style={{ width: 54, textAlign: "right" }}>증감</span>
+                <span style={{ width: 80, textAlign: "right" }}>금액</span>
+              </>
+            )}
+          </div>
+          {m.rows.map((r) => (
+            <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ width: 58, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 700, color: C.text }}>
+                {r.date}<span style={{ color: r.sun ? C.coral : C.sub }}>({r.wd})</span>
+              </span>
+              <span style={{ width: 70, fontSize: 11.5, color: C.sub, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", paddingRight: 6 }}>
+                {r.site}
+                {r.holiday && <span style={{ color: C.coral, fontWeight: 800 }}> · {r.holiday}</span>}
+                {r.cover && <span style={{ color: C.blue, fontWeight: 800 }}> · {r.cover}</span>}
+              </span>
+              <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.sub }}>{r.inout}</span>
+              <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.work}</span>
+              {m.isFixedSalary ? (
+                <span style={{ width: 60, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: PS_COLOR[r.diffColor] }}>{r.diff}</span>
+              ) : (
+                <>
+                  <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: PS_COLOR[r.diffColor] }}>{r.diff}</span>
+                  <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }} title={r.mixedNote}>{r.pay}</span>
+                </>
+              )}
+            </div>
+          ))}
+          {m.rows.length === 0 && <div style={{ padding: "14px 0", fontSize: 12.5, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
+          <div className="flex items-center" style={{ padding: "9px 0", borderBottom: `2px solid ${C.text}` }}>
+            <span style={{ width: 178, fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.totalLabel}</span>
+            <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{m.totalWork}</Num></span>
+            {m.isFixedSalary ? (
+              <span style={{ width: 60, textAlign: "right" }} />
+            ) : (
+              <>
+                <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{m.totalBlocks}</span>
+                <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{m.totalPay}</Num></span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4 }}>← 표가 넓으면 좌우로 밀어서 볼 수 있어요</div>
+    </>
+  );
+}
+
 /* ─────────────────────────  개인 월 정산서  ───────────────────────── */
 function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
   useBackClose(true, onClose);
@@ -8374,6 +8669,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
   const [dlBusy, setDlBusy] = useState(false);
   const p = payslipCalc(data, workerId, ym);
   const { worker, recs, agg, adj } = p;
+  const liveModel = buildPayslipModel(data, workerId, ym);
   const company = data.settings.companyName || "";
   const issued = new Date();
 
@@ -8398,6 +8694,8 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       oneOffPay: p.oneOffPay, oneOffCount: p.oneOffRecs.length,
       gross: p.gross,
       tax: p.tax, deduct: p.deduct, deductLabel: adj.deductLabel, net_pay: p.net,
+      // 관리자 화면과 똑같은 지급 내역 · 타임별 근무 내역을 그대로 보여주기 위한 표시용 모델 (전달 시점 내용으로 고정)
+      model: buildPayslipModel(data, workerId, ym),
     };
     update((d) => {
       const others = (d.payslipSigns || []).filter((x) => !(x.workerId === workerId && x.ym === ym));
@@ -8419,7 +8717,36 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
     setDlBusy(true);
     try {
       const s = sign.snapshot;
-      const html = `
+      const m = s.model;
+      const esc = (x) => String(x ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const td = (a, b, st = "") => `<tr><td style="padding:5px 0;${st}">${esc(a)}</td><td style="padding:5px 0; text-align:right;${st}">${esc(b)}</td></tr>`;
+      const modelHtml = m ? `
+        <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:36px; color:#1D232A; font-size:12px;">
+          ${company ? `<div style="font-size:15px; font-weight:800;">${esc(company)}</div>` : ""}
+          <div style="font-size:22px; font-weight:900; margin-top:6px;">${ymLabel(ym)} 근무 정산서</div>
+          <div style="font-size:13px; color:#71767D; margin-top:8px;">${esc(sign.workerName)} 님 · ${esc(m.rateLine)}</div>
+          <div style="display:flex; gap:4px; margin-top:12px;">${m.tiles.map(([k, v]) => `<div style="flex:1; background:#F3F0EA; padding:8px;"><div style="font-size:10px; color:#71767D;">${esc(k)}</div><div style="font-size:14px; font-weight:800; margin-top:2px;">${esc(v)}</div></div>`).join("")}</div>
+          <div style="font-size:11px; font-weight:800; color:#71767D; margin-top:16px;">지급 내역</div>
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            ${m.lines.map((l) => td(l.k + (l.sub ? "  (" + l.sub + ")" : ""), l.v)).join("")}
+            ${td("지급 합계", m.gross, "font-weight:800; border-top:1px solid #E5E1DA;")}
+          </table>
+          ${m.coverDetail.length ? `<div style="font-size:11px; font-weight:800; color:#71767D; margin-top:12px;">대신 근무 · 일회성 현장 근무 상세</div><table style="width:100%; border-collapse:collapse; font-size:12px; color:#555;">${m.coverDetail.map((c) => td(c.label, c.v)).join("")}</table>` : ""}
+          ${m.deductLines.length ? `<div style="font-size:11px; font-weight:800; color:#71767D; margin-top:12px;">공제 내역</div><table style="width:100%; border-collapse:collapse; font-size:13px; color:#D8503F;">${m.deductLines.map((l) => td(l.k, l.v)).join("")}</table>` : ""}
+          <div style="margin-top:12px; background:#1D232A; padding:14px; color:#fff;"><div style="font-size:11px; opacity:0.7;">실지급액</div><div style="font-size:24px; font-weight:900; margin-top:3px;">${esc(m.net)}원</div></div>
+          ${m.memo ? `<div style="margin-top:8px; font-size:12px;">※ ${esc(m.memo)}</div>` : ""}
+          <div style="font-size:11px; font-weight:800; color:#71767D; margin-top:16px;">${esc(m.dayTitle)}</div>
+          <table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-top:4px; border-top:2px solid #1D232A;">
+            <tr style="color:#71767D;"><td style="padding:4px 0;">날짜</td><td>현장</td><td style="text-align:right;">출퇴근</td><td style="text-align:right;">근무</td><td style="text-align:right;">증감</td>${m.isFixedSalary ? "" : '<td style="text-align:right;">금액</td>'}</tr>
+            ${m.rows.map((r) => `<tr style="border-top:1px solid #E5E1DA;"><td style="padding:4px 0;">${esc(r.date)}(${esc(r.wd)})</td><td>${esc(r.site)}${r.holiday ? " · " + esc(r.holiday) : ""}${r.cover ? " · " + esc(r.cover) : ""}</td><td style="text-align:right;">${esc(r.inout)}</td><td style="text-align:right;">${esc(r.work)}</td><td style="text-align:right;">${esc(r.diff)}</td>${m.isFixedSalary ? "" : `<td style="text-align:right;">${esc(r.pay)}</td>`}</tr>`).join("")}
+            <tr style="border-top:2px solid #1D232A; font-weight:800;"><td colspan="3" style="padding:5px 0;">${esc(m.totalLabel)}</td><td style="text-align:right;">${esc(m.totalWork)}</td><td style="text-align:right;">${esc(m.totalBlocks)}</td>${m.isFixedSalary ? "" : `<td style="text-align:right;">${esc(m.totalPay)}</td>`}</tr>
+          </table>
+          <div style="margin-top:24px; display:flex; align-items:flex-end; justify-content:space-between;">
+            <div style="font-size:12px; color:#71767D;">전달일 ${sign.sentAt.slice(0, 10)}<br/>서명일 ${sign.signedAt.slice(0, 10)}</div>
+            <div style="text-align:center;"><img src="${sign.signatureDataUrl}" style="height:70px;" /><div style="font-size:11px; color:#71767D; border-top:1px solid #1D232A; padding-top:4px; margin-top:2px;">${esc(sign.workerName)} (서명)</div></div>
+          </div>
+        </div>` : null;
+      const html = modelHtml || `
         <div style="font-family:'Noto Sans CJK KR','Noto Sans KR',sans-serif; padding:40px; color:#1D232A;">
           ${company ? `<div style="font-size:15px; font-weight:800;">${company}</div>` : ""}
           <div style="font-size:22px; font-weight:900; margin-top:6px;">${ymLabel(ym)} 근무 정산서</div>
@@ -8579,7 +8906,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             <div className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
               <Send size={13} color={C.blue} /> 전달됨 · 서명 대기 중
             </div>
-            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · 아직 근무자가 서명하지 않았어요.</div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · {sign.cancelledAt ? `근무자가 ${sign.cancelledAt.slice(0, 10)}에 서명을 취소했어요. 다시 서명을 기다리는 중이에요.` : "아직 근무자가 서명하지 않았어요."}</div>
             <div className="mt-2.5"><Btn small kind="ghost" onClick={sendToWorker} disabled={sendBusy}>다시 전달하기</Btn></div>
           </>
         )}
@@ -8597,256 +8924,17 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
         )}
       </div>
 
-      <div className="flex items-baseline justify-between flex-wrap" style={{ rowGap: 4 }}>
-        <div className="flex items-baseline gap-1.5 flex-wrap">
-          <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></span>
-          {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
-        </div>
-        <div style={{ fontSize: 13.5, color: C.sub, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-          {worker.fixedSalary
-            ? fixedSalaryLine(worker)
-            : agg.shift
-            ? `1타임 ${agg.sh}시간 · ${money(worker.shiftPay ?? data.settings.shiftPay)}원`
-            : `시급 ${money(agg.wage)}원 · 1일 ${agg.std}시간`}
-        </div>
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span style={{ fontSize: 20, fontWeight: 900, color: C.text }}>{worker.name} <span style={{ fontSize: 14, fontWeight: 700, color: C.sub }}>님</span></span>
+        {worker.isTeamLead && <span style={{ fontSize: 9.5, fontWeight: 900, color: "#7A4E07", background: C.amber, padding: "1px 5px" }}>팀장{(worker.leaderSiteIds || []).length ? ` · ${worker.leaderSiteIds.map((id) => data.sites.find((s) => s.id === id)?.name).filter(Boolean).join("·")}` : ""}</span>}
       </div>
 
-      {/* 근무 요약 */}
-      <div className="grid grid-cols-4 gap-0.5 mt-3" style={{ background: C.line }}>
-        {(p.isFixedSalary
-          ? [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["초과 누계", `+${minStr(agg.otMin)}`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
-          : agg.shift
-          ? [["근무 타임", `${agg.times + agg.blocks}회`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["└ 추가 인정 포함", `${agg.blocks}회`, C.blue], ["부족 누계", `−${minStr(agg.shortMin)}`, agg.shortMin > 0 ? C.red : C.sub]]
-          : [["근무일수", `${agg.days}일`, C.text], ["근무시간", hmc(agg.net), C.text],
-             ["추가근무", `+${hmc(agg.ot)}`, C.blue], ["부족시간", `−${hmc(agg.short)}`, agg.short > 0.01 ? C.red : C.sub]]
-        ).map(([k, v, col]) => (
-          <div key={k} style={{ background: C.tileSoft, padding: "10px 8px" }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.sub, letterSpacing: "0.06em" }}>{k}</div>
-            <div style={{ marginTop: 3 }}><Num size={15} color={col}>{v}</Num></div>
-          </div>
-        ))}
-      </div>
-
-      {/* 지급 · 공제 */}
-      <div className="mt-5"><Eyebrow>지급 내역</Eyebrow></div>
-      <div style={{ marginTop: 4 }}>
-        {p.isFixedSalary ? (
-          (worker.fixedSalaryItems && worker.fixedSalaryItems.length > 0 ? worker.fixedSalaryItems : [{ id: "base", label: "기본급 (월 고정)", amount: p.base }]).map((it) => (
-            <LineItem key={it.id} k={it.label} sub={it.label.includes("기본급") ? "출퇴근 시간과 무관하게 고정 지급" : undefined} v={`${money(it.amount)}원`} />
-          ))
-        ) : agg.shift ? (
-          <>
-            <LineItem k="기본 타임" sub={`${agg.times}회 × ${money(worker.shiftPay ?? data.settings.shiftPay)}원`} v={`${money(agg.base)}원`} />
-            {agg.blocks > 0 && <LineItem k="추가근무" sub={`${agg.blocks}회 × ${money(data.settings.otPay)}원`} v={`${money(agg.otPay)}원`} />}
-          </>
-        ) : (
-          <>
-            <LineItem k="기본급" sub={`${agg.net.toFixed(1)}시간 × ${money(agg.wage)}원`} v={`${money(agg.base)}원`} />
-            {agg.otPay > 0 && <LineItem k="연장근무" sub={`${(agg.otMin / 60).toFixed(1)}시간 × ${money(agg.wage)}원 × 1.5`} v={`${money(agg.otPay)}원`} />}
-          </>
-        )}
-        {agg.holidayPay > 0 && (
-          <LineItem k="공휴일 근무" sub={`${agg.holidayNet.toFixed(1)}시간 × ${money(agg.wage)}원 × ${agg.holidayMultiplier}`} v={`${money(agg.holidayPay)}원`} />
-        )}
-        {p.allowances.map((a) => (
-          <LineItem key={a.id} k={a.label} v={`${money(a.amount)}원`} />
-        ))}
-        {Number(adj.extra) > 0 && <LineItem k={adj.extraLabel || "기타 수당"} v={`${money(adj.extra)}원`} />}
-        {p.coverPay > 0 && <LineItem k="대신 근무" sub={`${p.coverRecs.length}건`} v={`${money(p.coverPay)}원`} />}
-        {p.oneOffPay > 0 && <LineItem k="일회성 현장 근무" sub={`${p.oneOffRecs.length}건`} v={`${money(p.oneOffPay)}원`} />}
-        <div style={{ borderTop: `1px solid ${C.line}` }} />
-        <LineItem k="지급 합계" v={`${money(p.gross)}원`} bold />
-      </div>
-
-      {(p.coverRecs.length > 0 || p.oneOffRecs.length > 0) && (
-        <div className="mt-4">
-          <Eyebrow>대신 근무 · 일회성 현장 근무 상세</Eyebrow>
-          <div style={{ marginTop: 6 }}>
-            {p.coverRecs.map((r) => {
-              // flatPay(고정금액 승인 방식)로 등록된 것도 있고, 정상 출퇴근(clockIn/clockOut) 방식으로
-              // 등록된 것도 있어서, r.flatPay만 믿으면 정상 출퇴근 방식인 경우 그 필드가 비어있어
-              // NaN원으로 잘못 나왔음 — 항상 calcPay로 다시 계산한 실제 값을 써야 정확함.
-              // 이 목록은 "대신근무 몫"만 보여줘야 함(위의 "대신 근무 90,000원" 합계와 정확히 맞아떨어지도록) —
-              // 본인근무+대신근무 혼합인 날은, 본인 몫은 빼고 초과분(진짜 대신근무 몫)만 표시함.
-              const q = calcPay(r, worker, data.settings);
-              let amt = q.open ? null : q.pay;
-              if (!q.open && r.capBase && r.flatPay == null && agg.shift) {
-                const rpq = resolvePay(worker, r.siteId, data.settings);
-                const ownHoursQ = rpq.shiftHours;
-                const extraHoursQ = Math.max(0, q.net - ownHoursQ);
-                const hMultQ = q.holiday ? (data.settings.holidayMultiplier || 1.5) : 1;
-                amt = Math.round(extraHoursQ / data.settings.shiftHours) * data.settings.shiftPay * hMultQ;
-              }
-              return (
-                <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                  <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 대신 근무{r.coverForName ? ` (${r.coverForName}님 대신)` : ""}</span>
-                  <span style={{ fontWeight: 700, color: C.text }}>{q.open ? "진행중" : `${money(amt)}원`}</span>
-                </div>
-              );
-            })}
-            {p.oneOffRecs.map((r) => {
-              const q = calcPay(r, worker, data.settings);
-              return (
-                <div key={r.id} className="flex items-center justify-between" style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                  <span>{r.date.slice(5).replace("-", "/")} · {r.site || "현장 미지정"} · 일회성 현장 근무</span>
-                  <span style={{ fontWeight: 700, color: C.text }}>{q.open ? "진행중" : `${money(q.pay)}원`}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {agg.shift && agg.shortMin > 0 && (
-        <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
-          기준보다 모자란 {minStr(agg.shortMin)}은 지급액에서 빼지 않았습니다. 확인용으로만 표시합니다.
-        </div>
-      )}
-
-      {(p.tax > 0 || p.deduct > 0) && (
-        <>
-          <div className="mt-4"><Eyebrow>공제 내역</Eyebrow></div>
-          <div style={{ marginTop: 4 }}>
-            {p.tax > 0 && <LineItem k="원천징수" sub="사업소득 3.3%" v={`−${money(p.tax)}원`} color={C.coral} />}
-            {p.deduct > 0 && <LineItem k={adj.deductLabel || "기타 공제"} v={`−${money(p.deduct)}원`} color={C.coral} />}
-          </div>
-        </>
-      )}
-
-      <div className="mt-4" style={{
-        background: `linear-gradient(155deg, ${C.coral} 0%, #E85A4D 100%)`,
-        padding: "17px 18px", borderRadius: RADIUS, boxShadow: `0 8px 20px ${C.coral}4D, 0 2px 6px rgba(0,0,0,0.15)`,
-      }}>
-        <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em" }}>실지급액</div>
-        <div className="mt-1" style={{ overflowWrap: "break-word", wordBreak: "break-all" }}>
-          <Num size={26} color="#fff" weight={900}>{money(p.net)}<span style={{ fontSize: 15 }}> 원</span></Num>
-        </div>
-      </div>
-
-      {adj.memo && (
-        <div style={{ marginTop: 12, fontSize: 12.5, color: C.text, background: C.tileSoft, padding: "9px 11px", lineHeight: 1.6 }}>
-          ※ {adj.memo}
-        </div>
-      )}
-
-      {(() => {
-        const offDays = (data.transfers || [])
-          .filter((t) => t.fromWorkerId === workerId && t.status === "approved" && t.date.slice(0, 7) === ym)
-          .sort((a, b) => a.date.localeCompare(b.date));
-        if (offDays.length === 0) return null;
-        return (
-          <div className="mt-4">
-            <Eyebrow>이 달 중 양도한 휴무 ({offDays.length}건)</Eyebrow>
-            <div style={{ marginTop: 6 }}>
-              {offDays.map((t) => (
-                <div key={t.id} style={{ padding: "5px 0", fontSize: 12, color: C.sub }}>
-                  <div className="flex items-center justify-between">
-                    <span>{t.date.slice(5).replace("-", "/")} · {t.siteName}{t.startTime ? ` (${t.startTime}–${t.endTime})` : ""}</span>
-                    <span style={{ fontWeight: 700, color: C.blue }}>{t.toWorkerName ? `${t.toWorkerName}님이 대신 근무` : "휴무"}</span>
-                  </div>
-                  {t.message && <div style={{ fontSize: 11, color: C.text, marginTop: 1 }}>사유: {t.message}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* 일자별 */}
-      <div className="flex items-center justify-between mt-6 mb-2">
-        <Eyebrow>{p.isFixedSalary ? "출퇴근 확인 (참고용 · 지급액과 무관)" : agg.shift ? "타임별 근무 내역" : "일자별 근무 내역"}</Eyebrow>
+      {/* 지급 내역 · 타임별 근무 내역 — 근무자가 서명할 때 보는 화면과 같은 컴포넌트로 그림 */}
+      <PayslipDetail m={liveModel} dayAction={
         <button onClick={() => setWithDays(!withDays)} className="no-print" style={{ fontSize: 11, color: C.sub, fontWeight: 700 }}>
           복사에 {withDays ? "포함됨" : "제외됨"}
         </button>
-      </div>
-      {p.isFixedSalary && (
-        <div style={{ fontSize: 11, color: C.sub, lineHeight: 1.6, marginBottom: 8 }}>
-          정규직은 근무시간과 무관하게 기본급이 고정 지급돼요. 아래는 출퇴근 확인용 참고 기록이고, 지급액 계산에는 반영되지 않아요. (대신근무·일회성 근무는 사전 협의된 별도 항목이라 위 "지급 내역"에 따로 표시돼요.)
-        </div>
-      )}
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ borderTop: `2px solid ${C.text}`, minWidth: p.isFixedSalary ? 340 : 420 }}>
-          <div className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 800, color: C.sub, letterSpacing: "0.04em" }}>
-            <span style={{ width: 58 }}>날짜</span>
-            <span style={{ width: 70 }}>현장</span>
-            <span style={{ width: 84, textAlign: "right" }}>출퇴근</span>
-            <span style={{ width: 46, textAlign: "right" }}>근무</span>
-            {p.isFixedSalary ? (
-              <span style={{ width: 60, textAlign: "right" }}>증감</span>
-            ) : (
-              <>
-                <span style={{ width: 54, textAlign: "right" }}>증감</span>
-                <span style={{ width: 80, textAlign: "right" }}>금액</span>
-              </>
-            )}
-          </div>
-          {recs.map((r) => {
-            const q = calcPay(r, worker, data.settings);
-            const d = parseKey(r.date);
-            const shortish = q.shortMin >= data.settings.shortThreshold;
-            const fixedDiffMin = p.isFixedSalary ? Math.round((q.net - agg.std) * 60) : 0;
-            // "본인근무+대신근무 혼합"으로 확정된 날은, calcPay 기본값(본인 몫만)이 아니라
-            // 본인 몫 + 대신근무 몫을 합친 실제 총액을 보여줘야 함(집계판 계산과 동일한 방식)
-            let displayPay = q.pay, mixedNote = "";
-            if (r.capBase && r.flatPay == null && !q.open && agg.shift) {
-              const rpq = resolvePay(worker, r.siteId, data.settings);
-              const ownHoursQ = rpq.shiftHours;
-              const extraHoursQ = Math.max(0, q.net - ownHoursQ);
-              const ownNetQ = Math.min(q.net, ownHoursQ);
-              const hMultQ = q.holiday ? (data.settings.holidayMultiplier || 1.5) : 1;
-              const ownPayQ = Math.round(ownNetQ / rpq.shiftHours) * rpq.shiftPay * hMultQ;
-              const extraPayQ = Math.round(extraHoursQ / data.settings.shiftHours) * data.settings.shiftPay * hMultQ;
-              displayPay = ownPayQ + extraPayQ;
-              if (extraHoursQ > 0.001) mixedNote = ` (본인 ${money(ownPayQ)} + 대신 ${money(extraPayQ)})`;
-            }
-            return (
-              <div key={r.id} className="flex items-center" style={{ padding: "7px 0", borderBottom: `1px solid ${C.line}` }}>
-                <span style={{ width: 58, fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 700, color: C.text }}>
-                  {r.date.slice(5).replace("-", ".")}<span style={{ color: d.getDay() === 0 ? C.coral : C.sub }}>({WD[d.getDay()]})</span>
-                </span>
-                <span style={{ width: 70, fontSize: 11.5, color: C.sub, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", paddingRight: 6 }}>
-                  {r.site}{r.note ? ` · ${r.note}` : ""}
-                  {q.holiday && <span style={{ color: C.coral, fontWeight: 800 }}> · 공휴일×{agg.holidayMultiplier}</span>}
-                  {r.coverForName && <span style={{ color: C.blue, fontWeight: 800 }}> · {r.coverForName}님 대신</span>}
-                </span>
-                <span style={{ width: 84, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.sub }}>{tstr(r.clockIn)}–{tstr(r.clockOut)}</span>
-                <span style={{ width: 46, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13.5, fontWeight: 800, color: C.text }}>{hmc(q.net)}</span>
-                {p.isFixedSalary ? (
-                  <span style={{ width: 60, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: fixedDiffMin > 0 ? C.blue : fixedDiffMin < 0 ? C.red : C.sub }}>
-                    {fixedDiffMin === 0 ? "정확" : fixedDiffMin > 0 ? `+${minStr(fixedDiffMin)}` : `−${minStr(-fixedDiffMin)}`}
-                  </span>
-                ) : (
-                  <>
-                    <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: q.blocks > 0 ? C.blue : shortish ? C.red : C.sub }}>
-                      {r.capBase ? "혼합" : !agg.shift ? "—" : q.blocks > 0 ? `추가 ${otLabel(q.otMin)}` : q.diffMin < 0 ? `−${minStr(q.shortMin)}` : q.diffMin > 0 ? `+${minStr(q.diffMin)}` : "정확"}
-                    </span>
-                    <span style={{ width: 80, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 13, color: C.coral }} title={mixedNote}>{money(displayPay)}</span>
-                  </>
-                )}
-              </div>
-            );
-          })}
-          {recs.length === 0 && <div style={{ padding: "14px 0", fontSize: 12.5, color: C.sub }}>이 달의 근무 기록이 없습니다.</div>}
-          <div className="flex items-center" style={{ padding: "9px 0", borderBottom: `2px solid ${C.text}` }}>
-            <span style={{ width: 178, fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              합계 {p.isFixedSalary ? `${agg.days}일` : agg.shift ? `${agg.times + agg.blocks}타임 (${agg.days}일)` : `${agg.days}일`}
-            </span>
-            {/* agg.net/pay는 "정상근무" 몫만이라, 위 표의 개별 행(대신근무 혼합이면 본인+대신 합산으로 표시됨)들의
-                합과 맞으려면 coverMin/coverPay까지 더해야 함 — 안 그러면 "합계"가 실제보다 적게 나와서 혼동됨 */}
-            <span style={{ width: 46, textAlign: "right" }}><Num size={13}>{hmc(agg.net + (agg.coverMin || 0) / 60)}</Num></span>
-            {p.isFixedSalary ? (
-              <span style={{ width: 60, textAlign: "right" }} />
-            ) : (
-              <>
-                <span style={{ width: 54, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums", fontSize: 12.5, fontWeight: 800, color: C.blue }}>{agg.blocks ? `${agg.blocks}회` : ""}</span>
-                <span style={{ width: 80, textAlign: "right" }}><Num size={13}>{money(agg.pay + (agg.coverPay || 0))}</Num></span>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4 }}>← 표가 넓으면 좌우로 밀어서 볼 수 있어요</div>
+      } />
 
       <div className="flex items-end justify-between" style={{ marginTop: 26 }}>
         <div style={{ fontSize: 11.5, color: C.sub, lineHeight: 1.6, maxWidth: 200 }}>
