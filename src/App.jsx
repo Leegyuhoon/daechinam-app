@@ -1753,12 +1753,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     return wSites.some((id) => myLeaderSiteIds.includes(id));
   }) : [];
 
-  // 사진/영상 열람: 팀장은 자기 현장 전체(팀원+본인), 일반 근무자는 자기 현장의 "팀장이 올린 것"만
+  // 사진/영상 열람: 내가 올린 것(어느 현장이든) + 내가 소속된 현장에 올라온 모든 게시물(동료·팀장·관리자가 올린 것 전부).
+  // 내가 팀장인 현장의 게시물도 당연히 전부 보임.
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryViewer, setGalleryViewer] = useState(null);
   const myVisibleReports = worker ? (data.siteReports || []).filter((r) => {
+    if (r.workerId === worker.id) return true; // 내가 올린 것
     if (myLeaderSiteIds.includes(r.siteId)) return true; // 내가 팀장인 현장 = 전부 다 보임
-    if (myWorkerSiteIds2.includes(r.siteId) && (r.authorRole === "leader" || r.authorRole === "admin")) return true; // 내 현장의 팀장·관리자 게시물
+    if (myWorkerSiteIds2.includes(r.siteId)) return true; // 내가 소속된 현장 = 동료가 올린 것도 보임
     return false;
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 
@@ -3019,7 +3021,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       <Modal open={galleryOpen} onClose={() => setGalleryOpen(false)}>
         <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>현장 게시물</div>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 3, marginBottom: 14 }}>
-          {myLeaderSiteIds.length > 0 ? "우리 현장의 사진·영상을 모두 볼 수 있어요." : "우리 현장 팀장이 올린 사진·영상만 보여요."}
+          내가 올린 것과 우리 현장 근무자·팀장이 올린 사진·영상을 볼 수 있어요.
         </div>
         {myVisibleReports.length === 0 ? (
           <div style={{ fontSize: 13, color: C.sub, padding: "20px 0", textAlign: "center" }}>아직 게시물이 없습니다.</div>
@@ -3059,7 +3061,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                     <span style={{ position: "absolute", top: 6, left: 6, fontSize: 9, fontWeight: 900, color: "#fff", background: C.aquaDeep, padding: "1px 5px", whiteSpace: "nowrap" }}>관리자</span>
                   )}
                 </div>
-                <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 3 }}>{r.workerName} · {r.date.slice(5)}</div>
+                <div style={{ fontSize: 10.5, color: C.onDarkSub, marginTop: 3 }}>{r.workerId === worker.id ? "내가 올림" : r.workerName} · {r.date.slice(5)}{r.siteName ? ` · ${r.siteName}` : ""}</div>
               </div>
             ))}
           </div>
