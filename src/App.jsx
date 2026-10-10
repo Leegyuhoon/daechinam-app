@@ -54,7 +54,7 @@ const DKEY = "cleanwork:device";   // 개인 — 이 기기가 누구 것인지
 let lastKnownEtag = null; // 서버에 마지막으로 확인한 데이터 버전(etag) — 저장할 때 "그 사이 다른 기기가 먼저 안 바꿨는지" 확인하는 데 씀
 class ConflictError extends Error {}
 async function loadShared() {
-  const res = await fetch("/api/data");
+  const res = await fetch("/api/data", { cache: "no-store" });
   if (!res.ok) throw new Error("shared load failed");
   const etag = res.headers.get("etag");
   if (etag) lastKnownEtag = etag;
