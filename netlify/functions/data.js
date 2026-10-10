@@ -1,5 +1,6 @@
 import { getStore } from "@netlify/blobs";
 
+const NOCACHE = { "Cache-Control": "no-store" };
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
@@ -12,7 +13,10 @@ export default async (req, context) => {
     return new Response(null, { status: 204, headers: CORS });
   }
 
-  const store = getStore("daechinam-data");
+  // 읽기도 항상 "가장 최신 저장본"을 보게 함(strong). 기본값(eventual)은 저장 직후에도 몇 초~1분간 옛날 값이
+  // 나올 수 있어서, 그 옛날 값을 기준으로 다른 기기가 저장하면 방금 저장된 출근 기록이 통째로 사라질 수 있었음.
+  let store;
+  try { store = getStore({ name: "daechinam-data", consistency: "strong" }); } catch (e) { store = getStore("daechinam-data"); }
   const key = "shared";
 
   try {
@@ -22,7 +26,7 @@ export default async (req, context) => {
       // 새 기능 때문에 서비스 전체가 멈추는 일이 절대 없도록 하기 위함.
       try {
         const entry = await store.getWithMetadata(key, { type: "text" });
-        const headers = { "Content-Type": "application/json", ...CORS };
+        const headers = { "Content-Type": "application/json", ...NOCACHE, ...CORS };
         if (entry?.etag) headers["ETag"] = entry.etag;
         return new Response(entry?.data ?? "null", { status: 200, headers });
       } catch (e) {
@@ -46,7 +50,11 @@ export default async (req, context) => {
           const result = await store.set(key, body, { onlyIfMatch: ifMatch });
           if (!result || result.modified === false) conflict = true;
         } catch (e) {
-          await store.set(key, body);
+          // 조건부 쓰기 자체가 에러났을 때 예전에는 그냥 덮어썼는데, 그러면 오래된 데이터를 기준으로 한 저장이
+          // 최신 기록(출근 등)을 지워버릴 수 있음. 그래서 지금 저장본의 버전이 클라이언트가 본 버전과 같을 때만 저장함.
+          const cur = await store.getWithMetadata(key, { type: "text", consistency: "strong" }).catch(() => null);
+          if (cur && cur.etag && cur.etag !== ifMatch) conflict = true;
+          else await store.set(key, body);
         }
       } else {
         // If-Match 없이 오는 예전 클라이언트 호환용 — 조건 없이 그냥 씀
