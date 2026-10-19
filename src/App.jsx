@@ -1535,20 +1535,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
-  // 이미 서명한 정산서 중 최근 3건 — 내용을 다시 보거나 서명을 취소(철회)할 수 있게 함
+  // 이미 서명한 정산서 중 최근 3건 — 내용을 다시 볼 수만 있고, 서명은 한번 완료되면 근무자가 취소할 수 없음(급여 지급이 끝난 정산서 보호)
   const mySignedSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && x.signedAt).sort((a, b) => b.signedAt.localeCompare(a.signedAt)).slice(0, 3) : [];
-  const cancelSign = async (sgn) => {
-    if (!window.confirm(`${ymLabel(sgn.ym)} 정산서 서명을 취소할까요?\n취소하면 다시 서명해야 해요.`)) return;
-    try {
-      await update((d) => ({
-        ...d,
-        payslipSigns: (d.payslipSigns || []).map((x) => (x.id === sgn.id ? { ...x, signedAt: null, signatureDataUrl: null, cancelledAt: new Date().toISOString() } : x)),
-      }));
-      setToast("서명을 취소했습니다 — 다시 서명할 수 있어요");
-    } catch (e) {
-      setToast("취소에 실패했어요 — 인터넷 연결을 확인해 주세요");
-    }
-  };
   const myContractRequest = worker ? (data.contractRequests || []).find((x) => x.workerId === worker.id) : null;
   const [contractSignOpen, setContractSignOpen] = useState(false);
   const [contractSigData, setContractSigData] = useState(null);
@@ -1653,9 +1641,19 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     if (!sigData) { setToast("서명을 먼저 그려주세요"); return; }
     setSignBusy(true);
     try {
+      // 관리자가 그 사이 서명 요청을 취소(회수)했거나 이미 서명이 끝난 건이면, 서명이 저장된 것처럼 보이지 않게 먼저 확인
+      try {
+        const latest = await loadShared();
+        const cur = latest ? (latest.payslipSigns || []).find((x) => x.id === signOpen.id) : null;
+        if (latest && (!cur || cur.signedAt)) {
+          setToast(!cur ? "관리자가 이 정산서 전달을 취소했어요 — 서명할 수 없어요" : "이미 서명이 완료된 정산서예요");
+          setSignOpen(null); setSigData(null);
+          return;
+        }
+      } catch (e) {}
       await update((d) => ({
         ...d,
-        payslipSigns: (d.payslipSigns || []).map((x) => (x.id === signOpen.id ? { ...x, signedAt: new Date().toISOString(), signatureDataUrl: sigData } : x)),
+        payslipSigns: (d.payslipSigns || []).map((x) => (x.id === signOpen.id && !x.signedAt ? { ...x, signedAt: new Date().toISOString(), signatureDataUrl: sigData } : x)),
       }));
       setToast("서명이 완료됐습니다");
       setSignOpen(null); setSigData(null);
@@ -2521,7 +2519,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </div>
       )}
 
-      {/* 서명을 마친 정산서 — 내용 다시 보기 · 서명 취소 */}
+      {/* 서명을 마친 정산서 — 내용 다시 보기 (취소 불가) */}
       {mySignedSigns.length > 0 && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
           {mySignedSigns.map((sgn) => (
@@ -2531,9 +2529,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               </div>
               <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>{ymLabel(sgn.ym)} 근무 정산서</div>
               <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
-              <div className="grid grid-cols-2 gap-2 mt-3">
-                <Btn kind="ghost" small onClick={() => { setSignOpen(sgn); setSigData(null); }}>내용 보기</Btn>
-                <Btn kind="ghost" small onClick={() => cancelSign(sgn)}>서명 취소</Btn>
+              <div className="mt-3">
+                <Btn kind="ghost" full small onClick={() => { setSignOpen(sgn); setSigData(null); }}>내용 보기</Btn>
               </div>
             </div>
           ))}
@@ -8678,6 +8675,7 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
   const sign = (data.payslipSigns || []).find((x) => x.workerId === workerId && x.ym === ym) || null;
 
   const sendToWorker = () => {
+    if (sign?.signedAt) { setToast("이미 서명이 완료된 정산서는 다시 전달할 수 없어요"); return; }
     setSendBusy(true);
     // 관리자가 보는 정산서(이 화면의 "지급 내역")와 근무자가 서명할 때 보는 정산서가 똑같은 항목으로
     // 나오도록, 여기서도 똑같이 수당 각각·대신 근무·일회성 현장 근무를 따로따로 스냅샷에 담아둠.
@@ -8700,6 +8698,8 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
       model: buildPayslipModel(data, workerId, ym),
     };
     update((d) => {
+      // 이미 근무자가 서명한 정산서는 어떤 경우에도 덮어쓰거나 지우지 않음(지급이 끝난 건 보호)
+      if ((d.payslipSigns || []).some((x) => x.workerId === workerId && x.ym === ym && x.signedAt)) return d;
       const others = (d.payslipSigns || []).filter((x) => !(x.workerId === workerId && x.ym === ym));
       return {
         ...d,
@@ -8712,6 +8712,17 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
     });
     setToast(`${worker.name}님에게 정산서를 전달했습니다`);
     setSendBusy(false);
+  };
+
+  // 서명 전에 잘못 보낸 정산서 전달을 회수 — 서명이 끝난 건은 불가(지급 끝난 정산서 보호)
+  const cancelSend = () => {
+    if (!sign || sign.signedAt) return;
+    if (!window.confirm(`${worker.name}님에게 보낸 ${ymLabel(ym)} 정산서 전달을 취소할까요?\n근무자 화면에서 서명 요청이 사라져요.`)) return;
+    update((d) => ({
+      ...d,
+      payslipSigns: (d.payslipSigns || []).filter((x) => !(x.id === sign.id && !x.signedAt)),
+    }));
+    setToast("정산서 전달을 취소했습니다");
   };
 
   const downloadSigned = async () => {
@@ -8908,8 +8919,11 @@ function PayslipView({ data, update, workerId, ym, onClose, setToast }) {
             <div className="flex items-center gap-1.5" style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
               <Send size={13} color={C.blue} /> 전달됨 · 서명 대기 중
             </div>
-            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · {sign.cancelledAt ? `근무자가 ${sign.cancelledAt.slice(0, 10)}에 서명을 취소했어요. 다시 서명을 기다리는 중이에요.` : "아직 근무자가 서명하지 않았어요."}</div>
-            <div className="mt-2.5"><Btn small kind="ghost" onClick={sendToWorker} disabled={sendBusy}>다시 전달하기</Btn></div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{sign.sentAt.slice(0, 10)} 전달 · 아직 근무자가 서명하지 않았어요. 잘못 보냈다면 "전달 취소"로 회수할 수 있어요.</div>
+            <div className="flex gap-2 mt-2.5">
+              <Btn small kind="ghost" onClick={sendToWorker} disabled={sendBusy}>다시 전달하기</Btn>
+              <Btn small kind="danger" onClick={cancelSend}>전달 취소</Btn>
+            </div>
           </>
         )}
         {sign && sign.signedAt && (
