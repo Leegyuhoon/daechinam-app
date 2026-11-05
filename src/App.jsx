@@ -478,6 +478,20 @@ function nearestSite(loc, sites) {
   return best;
 }
 const TOL = (acc) => Math.min(acc || 0, 100); // GPS 오차 보정 상한 100m
+// 출근 위치가 여러 현장 반경에 동시에 들어오면(겹치는 현장), 거리와 상관없이 근무자에게 설정된 현장으로 인식함.
+// 설정된 현장이 겹친 곳 중에 없거나 한 곳만 걸리면 기존 방식(가장 가까운 현장)을 그대로 씀.
+function pickSiteForWorker(loc, sites, worker) {
+  const n = nearestSite(loc, sites);
+  const inside = sites.filter((s) => haversine(loc, s) - TOL(loc.acc) <= s.radius);
+  if (inside.length >= 2) {
+    const order = [worker?.siteId, ...(worker?.siteIds || [])].filter(Boolean);
+    for (const id of order) {
+      const m = inside.find((x) => x.id === id);
+      if (m) return { site: m, d: haversine(loc, m) };
+    }
+  }
+  return n;
+}
 
 const DEFAULTS = {
   workers: [], sites: [], records: [], bindings: {}, bindLog: [], adjustments: {}, transfers: [], notices: [], siteReports: [], supplyRequests: [], payslipSigns: [], siteManuals: [], closurePeriods: [], supplyCatalog: [], checklistItems: [], dailyChecklists: [], contractRequests: [], workerContracts: [], inventory: [], inventoryLog: [],
@@ -2095,7 +2109,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         setChk({ state: "nogeo", loc: v });
         return;
       }
-      const n = nearestSite(v, geoSites);
+      const n = pickSiteForWorker(v, geoSites, worker);
       const inside = n.d - TOL(v.acc) <= n.site.radius;
       setChk({ state: inside ? "inside" : "outside", loc: v, site: n.site, d: n.d });
     } else {
@@ -3798,7 +3812,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
           <Lock size={16} color={C.onDarkSub} />
         </button>
       </div>
-      {view === "records" && <RecordsView data={data} update={update} saveConfirmed={saveConfirmed} setToast={setToast} />}
+      {view === "records" && <RecordsView data={data} update={update} saveConfirmed={saveConfirmed} dev={dev} setToast={setToast} />}
       {view === "transfers" && <TransferAdminView data={data} update={update} setToast={setToast} />}
       {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
       {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
@@ -5896,7 +5910,7 @@ function NoticeAdminView({ data, update, setToast }) {
 
 
 /* ─────────────────────────  근무 기록  ───────────────────────── */
-function RecordsView({ data, update, saveConfirmed, setToast }) {
+function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
   const { workers, sites, records, settings, transfers } = data;
   const [mode, setMode] = useState("month");
   const [anchor, setAnchor] = useState(new Date());
@@ -7069,7 +7083,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
       </Modal>
 
       {detail && (
-        <WorkerDetail data={data} update={update} saveConfirmed={saveConfirmed} workerId={detail} mode={mode} anchor={anchor}
+        <WorkerDetail data={data} update={update} saveConfirmed={saveConfirmed} canBadge={!!dev?.workerId && dev.workerId === detail} workerId={detail} mode={mode} anchor={anchor}
           onClose={() => setDetail(null)} setToast={setToast}
           onPayslip={() => setSlip({ workerId: detail, ym: dKey(s).slice(0, 7) })} />
       )}
@@ -7081,7 +7095,7 @@ function RecordsView({ data, update, saveConfirmed, setToast }) {
 }
 
 /* ─────────────────────────  개인 상세  ───────────────────────── */
-function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onClose, setToast, onPayslip }) {
+function WorkerDetail({ data, update, saveConfirmed, canBadge, workerId, mode, anchor, onClose, setToast, onPayslip }) {
   useBackClose(true, onClose);
   const { records, settings } = data;
   const worker = data.workers.find((w) => w.id === workerId);
@@ -7224,13 +7238,14 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
 
   const addManual = () => setEdit({
     id: null, workerId, date: dKey(new Date()),
-    siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "", isFlat: false, siteName: "", flatPay: "",
+    siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "", isFlat: false, siteName: "", flatPay: "", manual: true,
   });
   const openEdit = (r) => setEdit({
     id: r.id, workerId, date: r.date, siteId: r.siteId || "",
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     isFlat: r.flatPay != null, siteName: r.site || "", flatPay: r.flatPay != null ? String(r.flatPay) : "",
+    manual: !!r.manual,
   });
   const [editBusy, setEditBusy] = useState(false);
   const saveEdit = async () => {
@@ -7251,8 +7266,8 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
       return {
         ...d,
         records: edit.id
-          ? d.records.map((r) => (r.id === edit.id ? { ...r, ...base } : r))
-          : [...d.records, { id: newId, ...base, inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false, manual: true }],
+          ? d.records.map((r) => (r.id === edit.id ? { ...r, ...base, manual: !!edit.manual } : r))
+          : [...d.records, { id: newId, ...base, inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false, manual: !!edit.manual }],
       };
     });
     setEditBusy(false);
@@ -7736,6 +7751,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
                 <input type="number" inputMode="numeric" placeholder="자동" value={edit.breakMinutes} onChange={(ev) => setEdit({ ...edit, breakMinutes: ev.target.value })} style={inputStyle} />
               </Field>
             )}
+            {canBadge && <Toggle label="'수기' 뱃지 표시" on={!!edit.manual} onChange={(v) => setEdit({ ...edit, manual: v })} />}
             <Field label="비고">
               <textarea value={edit.note} placeholder="추가 작업, 지각 사유, 위치 오류로 인한 수기 입력 등" onChange={(ev) => setEdit({ ...edit, note: ev.target.value })} style={{ ...inputStyle, height: 74 }} />
             </Field>
@@ -7749,7 +7765,7 @@ function WorkerDetail({ data, update, saveConfirmed, workerId, mode, anchor, onC
       </Modal>
 
       {calOpen && (
-        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} saveConfirmed={saveConfirmed} canAdd isAdmin setToast={setToast} />
+        <AttendanceCalendar data={data} workerId={workerId} onClose={() => setCalOpen(false)} update={update} saveConfirmed={saveConfirmed} canAdd isAdmin canBadge={canBadge} setToast={setToast} />
       )}
     </div>
   );
@@ -7764,7 +7780,7 @@ const PRINT_CSS = `@media print {
 }`;
 
 /* ─────────────────────────  출퇴근 캘린더 (근무자·관리자 공용)  ───────────────────────── */
-function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, canAdd, isAdmin, setToast }) {
+function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, canAdd, isAdmin, canBadge, setToast }) {
   useBackClose(true, onClose);
   const worker = data.workers.find((w) => w.id === workerId);
   const settings = data.settings;
@@ -7879,7 +7895,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     inT: tstr(r.clockIn), outT: r.clockOut ? tstr(r.clockOut) : "",
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     flatPay: r.flatPay != null ? String(r.flatPay) : "", isFlat: r.flatPay != null,
-    coverForName: r.coverForName || "", capBase: !!r.capBase,
+    coverForName: r.coverForName || "", capBase: !!r.capBase, manual: !!r.manual,
   });
   // 관리자가 특정 날짜에 "대신근무" 기록을 새로 직접 추가할 때 씀(기존 출퇴근 흐름을 안 거쳐도 됨) —
   // id를 비워두면(신규) saveCalEdit이 새 기록으로 추가하고, 있으면(기존 편집) 그대로 수정함.
@@ -7888,7 +7904,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     setCalEdit({
       id: null, date: selDate, siteId: worker.siteId || "", siteName: worker.siteId ? (data.sites.find((s) => s.id === worker.siteId)?.name || "") : "",
       inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
-      flatPay: "", isFlat: false, coverForName: "", capBase: false,
+      flatPay: "", isFlat: false, coverForName: "", capBase: false, manual: true,
     });
   };
   const [calEditBusy, setCalEditBusy] = useState(false);
@@ -7934,14 +7950,14 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     const ok = calEdit.id
       ? await saveConfirmed((d) => {
           const { d: d2, extra } = linkMatchingTransfer(d, calEdit.id);
-          return { ...d2, records: d2.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch, ...extra } : r)) };
+          return { ...d2, records: d2.records.map((r) => (r.id === calEdit.id ? { ...r, ...patch, ...extra, manual: !!calEdit.manual } : r)) };
         })
       : await saveConfirmed((d) => {
           const { d: d2, extra } = linkMatchingTransfer(d, newRecId);
           return {
             ...d2,
             records: [...d2.records, {
-              id: newRecId, workerId, date: calEdit.date, manual: true,
+              id: newRecId, workerId, date: calEdit.date, manual: !!calEdit.manual,
               inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
               ...patch, ...extra,
             }],
@@ -8338,6 +8354,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 <Toggle label="본인근무+대신근무 혼합으로 확정 (본인 몫은 정상 지급, 초과분만 대신근무로 계산)"
                   on={calEdit.capBase} onChange={(v) => setCalEdit((f) => ({ ...f, capBase: v }))} />
               )}
+              {canBadge && <Toggle label="'수기' 뱃지 표시" on={!!calEdit.manual} onChange={(v) => setCalEdit((f) => ({ ...f, manual: v }))} />}
               <Field label="비고">
                 <textarea value={calEdit.note} onChange={(e) => setCalEdit((f) => ({ ...f, note: e.target.value }))} style={{ ...inputStyle, height: 70 }} />
               </Field>
