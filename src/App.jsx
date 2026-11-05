@@ -452,6 +452,15 @@ const WD = ["일", "월", "화", "수", "목", "금", "토"];
 const money = (n) => Math.round(n).toLocaleString("ko-KR");
 const hm = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}시간 ${m % 60}분`; };
 const hmc = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
+const dtStr = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+// 용품 요청의 단계별 일시(예전 기록은 respondedAt으로 대체)와 수령 확인 상태를 한곳에서 계산
+const supplyTimes = (r) => ({
+  requestedAt: r.createdAt || "",
+  approvedAt: r.approvedAt || (r.status === "approved" ? r.respondedAt : "") || "",
+  deliveredAt: r.deliveredAt || (r.status === "delivered" ? r.respondedAt : "") || "",
+  receivedAt: r.receivedAt || "",
+});
+const recvLabel = (r) => (r.receiveStatus === "ok" ? "수령 확인" : r.receiveStatus === "missing" ? "미수령/불일치" : "");
 const tstr = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const uid = () => Math.random().toString(36).slice(2, 10);
 const dist = (m) => (m == null ? "—" : m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`);
@@ -1947,6 +1956,30 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   const mySupplyRequests = worker ? (data.supplyRequests || [])
     .filter((r) => r.workerId === worker.id || myLeaderSiteIds.includes(r.siteId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
+  // 전달완료됐지만 아직 수령 확인을 안 한 내 요청 — 같이 요청한 묶음끼리 모아서 품목별로 체크
+  const [recvChecks, setRecvChecks] = useState({});
+  const [recvBusy, setRecvBusy] = useState(false);
+  const pendingRecvGroups = (() => {
+    const mine = mySupplyRequests.filter((r) => worker && r.workerId === worker.id && r.status === "delivered" && !r.receiveStatus);
+    const map = new Map();
+    mine.forEach((r) => { const k = r.batchId || r.id; if (!map.has(k)) map.set(k, []); map.get(k).push(r); });
+    return [...map.values()];
+  })();
+  const confirmReceive = async (group) => {
+    const unchecked = group.filter((r) => !recvChecks[r.id]);
+    if (unchecked.length > 0 && !window.confirm(`체크하지 않은 ${unchecked.length}개 품목(${unchecked.map((r) => r.itemName).join(", ")})은 "미수령/불일치"로 관리자에게 전달돼요. 계속할까요?`)) return;
+    setRecvBusy(true);
+    const at = new Date().toISOString();
+    const ids = new Set(group.map((r) => r.id));
+    const ok = await saveConfirmed((d) => ({
+      ...d,
+      supplyRequests: (d.supplyRequests || []).map((x) => (ids.has(x.id) && !x.receiveStatus
+        ? { ...x, receiveStatus: recvChecks[x.id] ? "ok" : "missing", receivedAt: at, receivedByName: worker.name }
+        : x)),
+    }));
+    setRecvBusy(false);
+    if (ok) setToast(unchecked.length ? "수령 확인을 전달했습니다 (미수령 품목은 관리자가 확인해요)" : "수령 완료 처리했습니다");
+  };
   const supplyStatusBadge = (status) => {
     const map = {
       requested: [C.aqua, C.bg, "요청됨"],
@@ -3162,6 +3195,21 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
       <Modal open={supplyHistoryOpen} onClose={() => setSupplyHistoryOpen(false)}>
         <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>{myLeaderSiteIds.length > 0 ? "우리 현장 용품 요청 내역" : "내 용품 요청 내역"}</div>
         <div className="mt-3 flex flex-col gap-2" style={{ maxHeight: 460, overflowY: "auto" }}>
+          {pendingRecvGroups.map((group) => (
+            <div key={group[0].id} style={{ border: `2px solid ${C.aquaDeep}`, padding: "11px 13px", background: C.tile }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.aquaDeep }}>📦 용품이 전달됐어요 — 받은 품목을 체크해 주세요</div>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{group[0].siteName} · {dtStr(supplyTimes(group[0]).deliveredAt)} 전달</div>
+              <div className="flex flex-col gap-1.5 mt-2">
+                {group.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2" style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
+                    <input type="checkbox" checked={!!recvChecks[r.id]} onChange={(e) => setRecvChecks((c) => ({ ...c, [r.id]: e.target.checked }))} style={{ width: 20, height: 20 }} />
+                    <span>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2.5"><Btn full small disabled={recvBusy} onClick={() => confirmReceive(group)}>{recvBusy ? "처리 중…" : "수령 완료"}</Btn></div>
+            </div>
+          ))}
           {mySupplyRequests.map((r) => (
             <Tile key={r.id} style={{ padding: "11px 13px" }}>
               <div className="flex items-start justify-between gap-2">
@@ -3173,11 +3221,16 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                   <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
                     {dKey(new Date(r.createdAt))} {tstr(r.createdAt)} 요청
                   </div>
-                  {r.status === "delivered" && r.respondedAt && (
+                  {supplyTimes(r).approvedAt && r.status !== "declined" && (
+                    <div style={{ fontSize: 11.5, color: C.blue, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{dtStr(supplyTimes(r).approvedAt)} 승인</div>
+                  )}
+                  {r.status === "delivered" && supplyTimes(r).deliveredAt && (
                     <div style={{ fontSize: 11.5, color: C.aquaDeep, marginTop: 2, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>
-                      {dKey(new Date(r.respondedAt))} {tstr(r.respondedAt)} 전달완료
+                      {dtStr(supplyTimes(r).deliveredAt)} 전달완료
                     </div>
                   )}
+                  {r.receiveStatus === "ok" && <div style={{ fontSize: 11.5, color: C.aquaDeep, marginTop: 2, fontWeight: 800, fontFamily: MONO }}>✓ {dtStr(r.receivedAt)} 수령 확인</div>}
+                  {r.receiveStatus === "missing" && <div style={{ fontSize: 11.5, color: C.red, marginTop: 2, fontWeight: 800, fontFamily: MONO }}>⚠ {dtStr(r.receivedAt)} 미수령/불일치</div>}
                   {r.note && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>{r.note}</div>}
                 </div>
                 {supplyStatusBadge(r.status)}
@@ -4216,7 +4269,7 @@ function SupplyAdminView({ data, update, setToast }) {
   );
 
   const setStatus = (id, status) => {
-    update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString() } : x)) }));
+    update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).map((x) => (x.id === id ? { ...x, status, respondedAt: new Date().toISOString(), ...(status === "approved" ? { approvedAt: new Date().toISOString() } : {}), ...(status === "delivered" ? { deliveredAt: new Date().toISOString(), receiveStatus: null, receivedAt: null } : {}) } : x)) }));
     setToast("상태를 변경했습니다");
   };
   const remove = (id) => update((d) => ({ ...d, supplyRequests: (d.supplyRequests || []).filter((x) => x.id !== id) }));
@@ -4332,13 +4385,14 @@ function SupplyAdminView({ data, update, setToast }) {
   const totalSpent = shown.reduce((sum, r) => sum + (Number(r.totalPrice) || 0), 0);
 
   const downloadSupplyCsv = () => {
-    const head = "날짜,현장,용품명,수량,요청자,전달상태,전달완료일,구매처,구매방식,단가,구매가격,메모";
+    const head = "날짜,현장,용품명,수량,요청자,전달상태,요청일시,승인일시,전달완료일시,수령확인,수령확인일시,구매처,구매방식,단가,구매가격,메모";
     const methodLabel = { online: "온라인", offline: "오프라인" };
     const statusLabel = { requested: "요청됨", approved: "승인됨", delivered: "전달완료", declined: "거절됨" };
     const lines = shown.map((r) => [
       r.date, r.siteName || "", r.itemName, r.qty, r.workerName || "",
       statusLabel[r.status] || r.status,
-      r.status === "delivered" && r.respondedAt ? dKey(new Date(r.respondedAt)) : "",
+      dtStr(supplyTimes(r).requestedAt), dtStr(supplyTimes(r).approvedAt), dtStr(supplyTimes(r).deliveredAt),
+      recvLabel(r), dtStr(supplyTimes(r).receivedAt),
       r.vendor || "", methodLabel[r.purchaseMethod] || "", r.unitPrice ?? "", r.totalPrice ?? "",
       (r.note || "").replace(/,/g, " "),
     ].join(","));
@@ -4367,6 +4421,10 @@ function SupplyAdminView({ data, update, setToast }) {
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:center;">${r.qty}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.workerName || ""}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${statusLabel[r.status] || r.status}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; white-space:nowrap;">${dtStr(supplyTimes(r).requestedAt)}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; white-space:nowrap;">${dtStr(supplyTimes(r).approvedAt) || "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; white-space:nowrap;">${dtStr(supplyTimes(r).deliveredAt) || "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; white-space:nowrap;">${recvLabel(r) ? recvLabel(r) + "<br/>" + dtStr(supplyTimes(r).receivedAt) : "—"}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.vendor || "—"}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.purchaseMethod ? methodLabel[r.purchaseMethod] : "—"}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:right;">${r.unitPrice != null ? money(r.unitPrice) + "원" : "—"}</td>
@@ -4387,6 +4445,10 @@ function SupplyAdminView({ data, update, setToast }) {
                 <th style="padding:7px 8px; text-align:center; font-size:11px;">수량</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">요청자</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">상태</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">요청일시</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">승인일시</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">전달일시</th>
+                <th style="padding:7px 8px; text-align:left; font-size:11px;">수령확인</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">구매처</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">구매방식</th>
                 <th style="padding:7px 8px; text-align:right; font-size:11px;">단가</th>
@@ -4399,7 +4461,7 @@ function SupplyAdminView({ data, update, setToast }) {
             총 구매금액 합계: ${money(totalSpent)}원
           </div>
         </div>`;
-      await downloadHtmlAsPdf(html, `용품내역_${monthFilter || "전체기간"}.pdf`, 900);
+      await downloadHtmlAsPdf(html, `용품내역_${monthFilter || "전체기간"}.pdf`, 1300);
       setToast("PDF를 다운로드했습니다");
     } catch (e) {
       setToast("PDF 생성에 실패했습니다");
@@ -4484,11 +4546,19 @@ function SupplyAdminView({ data, update, setToast }) {
                   )}
                 </div>
                 <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3, fontWeight: 700 }}>
-                  {r.date.slice(5).replace("-", "/")} 요청 · {r.siteName} · {r.workerName}
-                  {r.status === "delivered" && r.respondedAt && (
-                    <span style={{ color: C.aquaDeep }}> · {dKey(new Date(r.respondedAt)).slice(5).replace("-", "/")} 전달완료</span>
-                  )}
+                  {r.siteName} · {r.workerName}
                 </div>
+                {(() => { const t = supplyTimes(r); return (
+                  <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, fontFamily: MONO, fontVariantNumeric: "tabular-nums", lineHeight: 1.6 }}>
+                    <div>{dtStr(t.requestedAt)} 요청</div>
+                    {t.approvedAt && r.status !== "declined" && <div style={{ color: C.blue }}>{dtStr(t.approvedAt)} 승인</div>}
+                    {r.status === "declined" && r.respondedAt && <div>{dtStr(r.respondedAt)} 거절</div>}
+                    {t.deliveredAt && r.status === "delivered" && <div style={{ color: C.aquaDeep }}>{dtStr(t.deliveredAt)} 전달완료</div>}
+                    {r.status === "delivered" && !r.receiveStatus && <div style={{ color: C.sub }}>수령 확인 대기 중</div>}
+                    {r.receiveStatus === "ok" && <div style={{ color: C.aquaDeep, fontWeight: 800 }}>✓ {dtStr(t.receivedAt)} 수령 확인 ({r.receivedByName || r.workerName})</div>}
+                    {r.receiveStatus === "missing" && <div style={{ color: C.red, fontWeight: 800 }}>⚠ {dtStr(t.receivedAt)} 미수령/불일치 표시 ({r.receivedByName || r.workerName})</div>}
+                  </div>
+                ); })()}
                 {r.batchId && batchMates.length > 1 && (
                   <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
                     같이 요청한 다른 품목: {batchMates.filter((x) => x.id !== r.id).map((x) => `${x.itemName}×${x.qty}`).join(", ")}
