@@ -7083,7 +7083,7 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
       </Modal>
 
       {detail && (
-        <WorkerDetail data={data} update={update} saveConfirmed={saveConfirmed} canBadge={!!dev?.workerId && dev.workerId === detail} workerId={detail} mode={mode} anchor={anchor}
+        <WorkerDetail data={data} update={update} saveConfirmed={saveConfirmed} canBadge={(data.workers.find((w) => w.id === detail)?.name || "").trim() === "관리자"} workerId={detail} mode={mode} anchor={anchor}
           onClose={() => setDetail(null)} setToast={setToast}
           onPayslip={() => setSlip({ workerId: detail, ym: dKey(s).slice(0, 7) })} />
       )}
