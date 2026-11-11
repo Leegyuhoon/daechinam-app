@@ -452,6 +452,10 @@ const WD = ["일", "월", "화", "수", "목", "금", "토"];
 const money = (n) => Math.round(n).toLocaleString("ko-KR");
 const hm = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}시간 ${m % 60}분`; };
 const hmc = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
+// 내가 대신 근무하기로 확정(수락·승인)된 양도 건 — 달력 표시와 D-7 알림에 같이 씀
+const incomingCoversFor = (data, workerId) => (data.transfers || []).filter((t) =>
+  t.status === "approved" && (t.toWorkerId === workerId || t.assignedWorkerId === workerId) && t.fromWorkerId !== workerId);
+const daysUntil = (dateKey) => Math.round((parseKey(dateKey).getTime() - parseKey(dKey(new Date())).getTime()) / 86400000);
 const dtStr = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 // 용품 요청의 단계별 일시(예전 기록은 respondedAt으로 대체)와 수령 확인 상태를 한곳에서 계산
 const supplyTimes = (r) => ({
@@ -1547,6 +1551,29 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const myAssignedTransfers = worker ? (data.transfers || []).filter((t) => t.status === "assigned" && t.assignedWorkerId === worker.id) : [];
+  // 대신 근무 예정 알림: 7일 전부터 당일까지 홈에 계속 표시, 앱을 열 때 건별로 하루 한 번 팝업
+  const upcomingCovers = worker ? incomingCoversFor(data, worker.id)
+    .filter((t) => !t.fulfilledRecordId && daysUntil(t.date) >= 0 && daysUntil(t.date) <= 7)
+    .sort((a, b) => a.date.localeCompare(b.date)) : [];
+  const [coverAlertOpen, setCoverAlertOpen] = useState(false);
+  useEffect(() => {
+    if (upcomingCovers.length === 0) return;
+    try {
+      const key = "cleanwork:coverAlertSeen";
+      const seen = JSON.parse(localStorage.getItem(key) || "{}");
+      const todayK = dKey(new Date());
+      if (upcomingCovers.some((t) => seen[t.id] !== todayK)) setCoverAlertOpen(true);
+    } catch (e) { setCoverAlertOpen(true); }
+  }, [upcomingCovers.map((t) => t.id).join(",")]);
+  const closeCoverAlert = () => {
+    try {
+      const key = "cleanwork:coverAlertSeen";
+      const seen = JSON.parse(localStorage.getItem(key) || "{}");
+      upcomingCovers.forEach((t) => { seen[t.id] = dKey(new Date()); });
+      localStorage.setItem(key, JSON.stringify(seen));
+    } catch (e) {}
+    setCoverAlertOpen(false);
+  };
   const respondAssignedTransfer = (t, accept) => {
     update((d) => ({
       ...d,
@@ -2503,6 +2530,42 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           ))}
         </div>
       )}
+
+      {/* 대신 근무 예정 (D-7 ~ 당일) */}
+      {upcomingCovers.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
+          {upcomingCovers.map((t) => {
+            const dd = daysUntil(t.date);
+            return (
+              <div key={t.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${ST.cover}` }}>
+                <div className="flex items-center gap-1.5" style={{ color: ST.cover, fontSize: 11.5, fontWeight: 800 }}>
+                  <Repeat size={12} /> 대신 근무 예정 · {dd === 0 ? "오늘" : `D-${dd}`}
+                </div>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>
+                  {t.date.slice(5).replace("-", "/")} ({WD[parseKey(t.date).getDay()]}) · {t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : ""}
+                </div>
+                <div style={{ fontSize: 12.5, color: C.sub, marginTop: 3 }}>{t.fromWorkerName}님의 근무를 대신해요</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <Modal open={coverAlertOpen} onClose={closeCoverAlert}>
+        <div style={{ fontSize: 19, fontWeight: 900, color: C.text }}>📅 대신 근무 예정 알림</div>
+        <div className="mt-3 flex flex-col gap-2">
+          {upcomingCovers.map((t) => {
+            const dd = daysUntil(t.date);
+            return (
+              <Tile key={t.id} style={{ padding: "11px 13px" }}>
+                <div style={{ fontSize: 14, fontWeight: 900, color: ST.cover }}>{dd === 0 ? "오늘" : `${dd}일 뒤`} · {t.date.slice(5).replace("-", "/")} ({WD[parseKey(t.date).getDay()]})</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginTop: 3 }}>{t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : ""}</div>
+                <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{t.fromWorkerName}님의 근무를 대신해요</div>
+              </Tile>
+            );
+          })}
+        </div>
+        <div className="mt-4"><Btn full onClick={closeCoverAlert}>확인했어요</Btn></div>
+      </Modal>
 
       {/* 대체근무 유형 확인 (퇴근 완료 후) */}
       {myCoverConfirmNeeded.length > 0 && (
@@ -7907,9 +7970,16 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
   );
   const weekAgg = aggregate(weekRecs, worker, settings);
 
+  // 미리 받아 둔 양도(대신 근무 예정) — 날짜별로 모아서 달력에 표시
+  const incomingByDate = useMemo(() => {
+    const map = {};
+    incomingCoversFor(data, workerId).forEach((t) => { (map[t.date] ||= []).push(t); });
+    return map;
+  }, [data.transfers, workerId]);
   const cellStatus = (dateKey) => {
     const recs = byDate[dateKey];
     if (!recs || recs.length === 0) {
+      if (incomingByDate[dateKey]) return "incoming";
       const off = (data.transfers || []).find((t) => t.fromWorkerId === workerId && t.date === dateKey && t.status === "approved");
       if (off) return off.noRequest ? "offNoRequest" : "offRequested";
       return "none";
@@ -7921,7 +7991,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
 
   const cellColors = {
     complete: ST.complete, incomplete: ST.incomplete, pending: ST.pending,
-    offRequested: ST.offRequested, offNoRequest: ST.offNoRequest, none: C.tile,
+    offRequested: ST.offRequested, offNoRequest: ST.offNoRequest, incoming: ST.cover, none: C.tile,
   };
 
   const cells = [];
@@ -8182,6 +8252,9 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 {closureInfo && (
                   <div style={{ position: "absolute", top: 1, right: 2, fontSize: 8 }}>🏫</div>
                 )}
+                {incomingByDate[dateKey] && (
+                  <div style={{ position: "absolute", top: 1, left: 2, fontSize: 8, fontWeight: 900, color: status === "incoming" ? "#fff" : ST.cover }}>대신</div>
+                )}
               </button>
             );
           })}
@@ -8197,6 +8270,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.pending, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>승인 대기</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offRequested, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(양도)</span></div>
           <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.offNoRequest, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>휴무(사후등록)</span></div>
+          <div className="flex items-center gap-1"><div style={{ width: 10, height: 10, background: ST.cover, borderRadius: 3 }} /><span style={{ fontSize: 11, color: C.sub }}>대신 근무 예정(양도받음)</span></div>
         </div>
 
         {/* 선택한 날짜 상세 */}
@@ -8219,6 +8293,19 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 );
               })()}
             </div>
+            {(incomingByDate[selDate] || []).map((t) => {
+              const dd = daysUntil(t.date);
+              return (
+                <div key={t.id} className="mt-2" style={{ border: `1.5px solid ${ST.cover}`, padding: "8px 10px" }}>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#fff", background: ST.cover, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                    대신 근무 {dd > 0 ? `예정 · D-${dd}` : dd === 0 ? "오늘" : t.fulfilledRecordId ? "완료" : "예정이었던 날"}
+                  </span>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginTop: 6 }}>{t.siteName}{t.startTime ? ` · ${t.startTime}–${t.endTime}` : ""}</div>
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{t.fromWorkerName}님의 근무를 대신해요</div>
+                  {t.message && <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>"{t.message}"</div>}
+                </div>
+              );
+            })}
             {selRecs.length === 0 ? (
               (() => {
                 const offs = (data.transfers || []).filter((t) => t.fromWorkerId === workerId && t.date === selDate && t.status === "approved");
@@ -8236,6 +8323,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                     </div>
                   );
                 }
+                if ((incomingByDate[selDate] || []).length > 0) return null;
                 return <div style={{ fontSize: 13, color: C.sub, marginTop: 8 }}>이 날은 출퇴근 기록이 없어요.</div>;
               })()
             ) : (
