@@ -32,9 +32,19 @@
       background:#1D232A;
       transition:opacity 0.5s ease, visibility 0.5s ease;
     ">
-      <img src="/icons/splash-bg.jpg" alt="대신치워주는남자" style="
-        position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+      <!-- 뒷면: 같은 이미지를 화면 전체에 채워서 흐리게 깔아, 위·아래에 빈 띠나 칼같이 잘린 선이 안 보이게 함 -->
+      <img src="/icons/splash-bg.jpg" alt="" aria-hidden="true" style="
+        position:absolute; inset:-6%; width:112%; height:112%; object-fit:cover; filter:blur(22px) brightness(0.8);
       " />
+      <!-- 앞면: 이미지 전체(로고 포함)가 잘리지 않게 비율을 유지해서 가운데에 놓고, 위·아래 가장자리는 부드럽게 섞음 -->
+      <div style="
+        position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+        width:min(100%, calc(100vh * 768 / 1344)); aspect-ratio:768 / 1344;
+        -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+        mask-image:linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%);
+      ">
+        <img src="/icons/splash-bg.jpg" alt="대신치워주는남자" style="display:block; width:100%; height:100%;" />
+      </div>
     </div>
 
     <!-- 카카오톡 인앱브라우저 감지 → 안내 오버레이 -->
