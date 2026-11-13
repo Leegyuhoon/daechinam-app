@@ -11,7 +11,7 @@ const items = [
 
 export default function Sidebar() {
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-page-border bg-page-bg px-4 py-6 md:flex">
+    <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-page-border bg-page-bg px-4 py-6">
       <p className="mb-8 px-2 text-sm font-semibold leading-snug text-page-text">
         (주)이엘씨_대치남 통합 관리
       </p>
@@ -36,9 +36,12 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* 왼쪽 아래 세로 로고 — 아래에서 위로 읽힘, 은은하게 */}
-      <div className="mt-auto pl-2 pt-6">
-        <img src="/brand/logo-vertical-text.png" alt="DAECHINAM" className="h-[120px] w-auto select-none opacity-30" draggable={false} />
+      <div className="mt-auto flex items-center gap-2 rounded-lg border border-page-border px-3 py-2.5 text-xs text-page-sub">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mist-400 opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-mist-400" />
+        </span>
+        (주)이엘씨_대치남 관리 사이트
       </div>
     </aside>
   )
