@@ -97,11 +97,13 @@
         }
       })();
 
-      // 스플래시 화면 숨기기 (앱이 뜬 뒤 잠시 보여주고 자연스럽게 사라짐)
+      // 스플래시 화면 숨기기: 앱이 데이터를 다 불러와서 "app-ready"를 알려주면(또는 최대 10초 뒤) 부드럽게 사라짐
       (function () {
-        var MIN_MS = 900;
+        var MIN_MS = 900, MAX_MS = 10000;
         var start = Date.now();
+        var done = false;
         function hide() {
+          if (done) return; done = true;
           var el = document.getElementById("app-splash");
           if (!el) return;
           var wait = Math.max(0, MIN_MS - (Date.now() - start));
@@ -111,8 +113,8 @@
             setTimeout(function () { el.remove(); }, 550);
           }, wait);
         }
-        if (document.readyState === "complete") hide();
-        else window.addEventListener("load", hide);
+        window.addEventListener("app-ready", hide);
+        setTimeout(hide, MAX_MS);
       })();
 
       // 혹시 이전에 등록됐을 수 있는 서비스 워커 정리 (설치 경고 방지)
