@@ -1,13 +1,34 @@
-// 최소한의 서비스 워커 — PWA "설치 가능" 조건을 충족시키기 위한 용도예요.
-// 지금은 캐싱 없이 그냥 통과시키기만 해요 (나중에 오프라인 지원을 추가할 수도 있어요).
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
-});
+// 웹 푸시 알림용 서비스 워커 — 알림 표시와 알림을 눌렀을 때 페이지 열기만 담당
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()))
 
-self.addEventListener("activate", (event) => {
-  self.clients.claim();
-});
+self.addEventListener('push', (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  } catch {
+    data = { body: event.data ? event.data.text() : '' }
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || '(주)이엘씨_대치남', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png?v=2',
+      badge: '/icons/icon-192.png',
+      data: { url: data.url || '/' },
+      tag: data.tag || undefined
+    })
+  )
+})
 
-self.addEventListener("fetch", (event) => {
-  // 지금은 그냥 네트워크 그대로 통과 — 캐싱 안 함
-});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url || '/', self.location.origin).href
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if (c.url === url && 'focus' in c) return c.focus()
+      }
+      return self.clients.openWindow(url)
+    })
+  )
+})
