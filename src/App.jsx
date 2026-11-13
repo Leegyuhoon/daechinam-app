@@ -1407,13 +1407,15 @@ export default function App() {
     saveDevice(next);
   }, []);
 
+  // 데이터가 다 불러와지면 index.html의 커버(스플래시) 화면에 "이제 닫아도 돼"라고 알려줌 — 커버가 닫힌 뒤 또 로딩 화면이 뜨는 걸 막기 위함
+  const appReady = !(loading || !data || !dev);
+  useEffect(() => { if (appReady) { try { window.dispatchEvent(new Event("app-ready")); } catch (e) {} } }, [appReady]);
+
   const goTab = (k) => { if (k === "clock") { setUnlocked(false); setRevealAdmin(false); } setTab(k); };
 
   if (loading || !data || !dev) {
     return (
-      <div className="flex items-center justify-center" style={{ background: C.bg, minHeight: 640, fontFamily: SANS }}>
-        <Loader2 className="animate-spin" size={22} color={C.aqua} />
-      </div>
+      <div style={{ background: "#1D232A", minHeight: "100vh" }} />
     );
   }
 
