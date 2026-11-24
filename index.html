@@ -136,11 +136,11 @@
         setTimeout(hide, MAX_MS);
       })();
 
-      // 혹시 이전에 등록됐을 수 있는 서비스 워커 정리 (설치 경고 방지)
+      // 서비스 워커 등록 (채팅 푸시 알림용)
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          regs.forEach(function (r) { r.unregister(); });
-        }).catch(function () {});
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("/sw.js").catch(function () {});
+        });
       }
     </script>
   </body>
