@@ -136,7 +136,7 @@ async function uploadPhoto(file) {
   const data = await res.json();
   return data.id;
 }
-const MAX_VIDEO_MB = 300; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지 — 서버가 파일을 한번에 메모리로 읽어들이는 구조라, Edge Functions 메모리 한도(512MB)를 넘지 않는 선에서 안전하게 잡은 값
+const MAX_VIDEO_MB = 500; // 서버(netlify/functions/photo.js)의 MAX_VIDEO와 반드시 같은 값으로 유지 — 서버가 파일을 한번에 메모리로 읽어들이는 구조라, Edge Functions 메모리 한도(512MB)를 넘지 않는 선에서 안전하게 잡은 값
 // 회사 도장처럼 "투명 배경"이 중요한 이미지는 uploadPhoto(JPEG로 압축, 투명도 사라짐)를 쓰면 안 되고,
 // PNG 투명도를 그대로 보존한 채로 업로드해야 함. 다만 용량은 줄여서 올림(원본 그대로면 너무 클 수 있으므로).
 function compressPngKeepAlpha(file, maxSize = 600) {
@@ -177,11 +177,21 @@ function checkVideoSize(file) {
   return null;
 }
 async function uploadVideo(file) {
-  const res = await fetch("/api/photo", {
-    method: "POST",
-    headers: { "Content-Type": file.type || "video/mp4" },
-    body: file,
-  });
+  const ct = file.type || "video/mp4";
+  // 1) 신형: 폰에서 Cloudflare R2로 바로 업로드(서버 용량 제한 없음)
+  let prep = null;
+  try {
+    const r = await fetch("/api/video", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contentType: ct }) });
+    if (r.ok) prep = await r.json();
+  } catch (e) { /* 아래 구형 방식으로 */ }
+  if (prep && prep.uploadUrl) {
+    const put = await fetch(prep.uploadUrl, { method: "PUT", headers: { "Content-Type": ct }, body: file });
+    if (!put.ok) throw new Error("upload failed");
+    return prep.id;
+  }
+  // 2) 구형(R2 설정 전): 서버 경유 — Netlify 제한으로 약 25MB까지만 가능
+  if (file.size > 24 * 1024 * 1024) throw new Error("영상 저장소(R2) 설정이 아직 안 돼 있어 24MB까지만 올릴 수 있어요. 관리자에게 문의해 주세요.");
+  const res = await fetch("/api/photo", { method: "POST", headers: { "Content-Type": ct }, body: file });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     if (res.status === 413) throw new Error(`영상 용량이 너무 커요 (최대 ${err.limitMB || 25}MB). 더 짧게 촬영해 주세요.`);
@@ -3052,7 +3062,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               ) : (
                 <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
                   <Camera size={20} color={C.sub} />
-                  <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 300MB)</div>
+                  <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 500MB)</div>
                   <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickLeadNoticeVideo(e.target.files?.[0])} />
                 </label>
               )
@@ -3410,7 +3420,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
               )}
               {photoForm.kind === "video" && (
                 <div style={{ fontSize: 11.5, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
-                  가능하면 30초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸릴 수 있어요 (최대 300MB).
+                  가능하면 30초 이내로 짧게 촬영해 주세요. 길게 찍으면 업로드가 오래 걸릴 수 있어요 (최대 500MB).
                 </div>
               )}
             </Field>
@@ -6283,7 +6293,7 @@ function NoticeAdminView({ data, update, setToast }) {
                   ) : (
                     <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `1.5px dashed ${C.line}`, borderRadius: RADIUS_SM, padding: "22px 0", cursor: "pointer", background: C.tileSoft }}>
                       <Camera size={20} color={C.sub} />
-                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 300MB)</div>
+                      <div style={{ fontSize: 11.5, color: C.sub, fontWeight: 700, marginTop: 6 }}>눌러서 영상 선택 (최대 500MB)</div>
                       <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => pickNoticeVideo(e.target.files?.[0])} />
                     </label>
                   )
