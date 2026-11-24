@@ -24,6 +24,12 @@ export default async (req, context) => {
       if (!id) {
         return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } });
       }
+      // R2에 저장된 영상(id가 r2_로 시작)은 영상 전용 함수로 연결
+      if (id.startsWith("r2_")) {
+        const loc = new URL("/api/video", req.url);
+        url.searchParams.forEach((v, k) => loc.searchParams.set(k, v));
+        return new Response(null, { status: 302, headers: { Location: loc.toString(), ...CORS } });
+      }
       const result = await store.getWithMetadata(id, { type: "arrayBuffer" });
       if (!result || !result.data) {
         return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "Content-Type": "application/json", ...CORS } });
