@@ -1,13 +1,37 @@
-// 최소한의 서비스 워커 — PWA "설치 가능" 조건을 충족시키기 위한 용도예요.
-// 지금은 캐싱 없이 그냥 통과시키기만 해요 (나중에 오프라인 지원을 추가할 수도 있어요).
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
+// 서비스 워커 — 앱 설치 조건 충족 + 채팅 푸시 알림 수신용 (캐싱은 하지 않고 네트워크 그대로 통과)
+self.addEventListener("install", () => { self.skipWaiting(); });
+self.addEventListener("activate", (event) => { event.waitUntil(self.clients.claim()); });
+self.addEventListener("fetch", () => {});
+
+self.addEventListener("push", (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) { d = { body: event.data ? event.data.text() : "" }; }
+  const title = d.title || "새 메시지";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: d.body || "",
+      tag: d.tag || "chat",
+      renotify: true,
+      icon: "/icons/icon-192.png?v=2",
+      badge: "/icons/icon-192.png?v=2",
+      data: { url: d.url || "/" },
+    })
+  );
 });
 
-self.addEventListener("activate", (event) => {
-  self.clients.claim();
-});
-
-self.addEventListener("fetch", (event) => {
-  // 지금은 그냥 네트워크 그대로 통과 — 캐싱 안 함
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of list) {
+      if ("focus" in c) {
+        await c.focus();
+        // 이미 열린 앱은 채팅 주소로 이동시켜 곧바로 대화방이 열리게 함
+        if ("navigate" in c) { try { await c.navigate(url); } catch (e) {} }
+        return;
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
 });
