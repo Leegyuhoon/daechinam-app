@@ -456,6 +456,9 @@ const hmc = (h) => { const m = Math.max(0, Math.round(h * 60)); return `${Math.f
 const incomingCoversFor = (data, workerId) => (data.transfers || []).filter((t) =>
   t.status === "approved" && (t.toWorkerId === workerId || t.assignedWorkerId === workerId) && t.fromWorkerId !== workerId);
 const daysUntil = (dateKey) => Math.round((parseKey(dateKey).getTime() - parseKey(dKey(new Date())).getTime()) / 86400000);
+// 관리자가 아직 열어보지 않은 근무자 사진·영상 — "확인했다"는 표시는 기기가 아니라 서버(data)에 저장돼서
+// 어느 관리자 기기에서 봐도 같이 사라짐. photoSeenSince 이전에 올라온 예전 사진은 모두 확인된 걸로 침.
+const isPhotoUnseen = (r, data) => r.authorRole !== "admin" && !r.adminSeenAt && r.createdAt > ((data.settings && data.settings.photoSeenSince) || "9999");
 const dtStr = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 // 용품 요청의 단계별 일시(예전 기록은 respondedAt으로 대체)와 수령 확인 상태를 한곳에서 계산
 const supplyTimes = (r) => ({
@@ -525,6 +528,7 @@ const DEV_DEFAULT = { deviceId: null, workerId: null, boundAt: null };
 
 function migrate(p) {
   const d = { ...DEFAULTS, ...p, settings: { ...DEFAULTS.settings, ...(p.settings || {}) } };
+  if (!d.settings.photoSeenSince) d.settings.photoSeenSince = new Date().toISOString(); // 사진 "미확인" 표시의 기준 시점(이전 사진은 확인된 걸로 침)
   d.sites = (d.sites || []).map((s) => {
     const site = typeof s === "string" ? { id: uid(), name: s, lat: null, lng: null, radius: d.settings.defaultRadius } : s;
     return { workDays: [], startTime: "", endTime: "", ...site };
@@ -1447,9 +1451,8 @@ export default function App() {
             .map(([k, l, I]) => {
               let badge = 0;
               if (k === "admin") {
-                const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
                 const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
-                badge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length
+                badge = (data.siteReports || []).filter((r) => isPhotoUnseen(r, data)).length
                   + (data.supplyRequests || []).filter((r) => r.status === "requested").length
                   + (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length
                   + (data.transfers || []).filter((t) => t.status === "pending").length
@@ -3854,9 +3857,8 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     };
   }, []);
 
-  const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
   const lastSeenNotices = localStorage.getItem("cleanwork:lastSeenNotices") || "";
-  const photoBadge = (data.siteReports || []).filter((r) => r.createdAt > lastSeenPhotos).length;
+  const photoBadge = (data.siteReports || []).filter((r) => isPhotoUnseen(r, data)).length;
   const supplyBadge = (data.supplyRequests || []).filter((r) => r.status === "requested").length;
   const oneOffBadge = (data.records || []).filter((r) => r.flatPay != null && r.oneOffStatus === "pending").length;
   const transferBadge = (data.transfers || []).filter((t) => t.status === "pending").length;
@@ -3871,7 +3873,6 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
 
   const goView = (k) => {
     setView(k);
-    if (k === "photos") { localStorage.setItem("cleanwork:lastSeenPhotos", new Date().toISOString()); setSeenTick((t) => t + 1); }
     if (k === "notices") { localStorage.setItem("cleanwork:lastSeenNotices", new Date().toISOString()); setSeenTick((t) => t + 1); }
   };
 
@@ -4043,6 +4044,14 @@ function PhotoAdminView({ data, update, setToast }) {
   const [siteId, setSiteId] = useState(null);
   const [workerId, setWorkerId] = useState(null);
   const [viewer, setViewer] = useState(null);
+  // 사진을 열어보면 "확인함"으로 서버에 기록 → 빨간 표시가 사라지고, 다른 관리자 기기에서도 같이 사라짐
+  const markSeen = (ids) => {
+    const set = new Set(ids);
+    if (set.size === 0) return;
+    const at = new Date().toISOString();
+    update((d) => ({ ...d, siteReports: (d.siteReports || []).map((r) => (set.has(r.id) && !r.adminSeenAt ? { ...r, adminSeenAt: at } : r)) }));
+  };
+  const openViewer = (r) => { setViewer(r); if (isPhotoUnseen(r, data)) markSeen([r.id]); };
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState({ siteId: "", category: "작업 후", note: "", file: null, preview: "", files: [], previews: [], kind: "photo" });
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -4133,12 +4142,11 @@ function PhotoAdminView({ data, update, setToast }) {
 
   // 1단계: 현장 폴더 목록
   if (!siteId) {
-    const lastSeenPhotos = localStorage.getItem("cleanwork:lastSeenPhotos") || "";
     const bySite = {};
     reports.forEach((r) => { (bySite[r.siteId || "none"] ||= { name: r.siteName, items: [] }).items.push(r); });
     const entries = Object.entries(bySite).sort(([, a], [, b]) => {
-      const aUn = a.items.filter((r) => r.createdAt > lastSeenPhotos).length > 0 ? 1 : 0;
-      const bUn = b.items.filter((r) => r.createdAt > lastSeenPhotos).length > 0 ? 1 : 0;
+      const aUn = a.items.filter((r) => isPhotoUnseen(r, data)).length > 0 ? 1 : 0;
+      const bUn = b.items.filter((r) => isPhotoUnseen(r, data)).length > 0 ? 1 : 0;
       if (aUn !== bUn) return bUn - aUn;
       return b.items.length - a.items.length;
     });
@@ -4151,7 +4159,7 @@ function PhotoAdminView({ data, update, setToast }) {
         <MonthChips />
         <div className="flex flex-col gap-0.5 mt-2" style={{ background: C.grout }}>
           {entries.map(([sid, g]) => {
-            const unCnt = g.items.filter((r) => r.createdAt > lastSeenPhotos).length;
+            const unCnt = g.items.filter((r) => isPhotoUnseen(r, data)).length;
             return (
               <Tile key={sid} onClick={() => setSiteId(sid)} style={{ padding: "14px 16px" }}>
                 <div className="flex items-center justify-between">
@@ -4196,7 +4204,12 @@ function PhotoAdminView({ data, update, setToast }) {
           {Object.entries(byWorker).map(([wid, g]) => (
             <Tile key={wid} onClick={() => setWorkerId(wid)} style={{ padding: "14px 16px" }}>
               <div className="flex items-center justify-between">
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{g.name}</div>
+                <div className="flex items-center gap-2">
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{g.name}</div>
+                  {g.items.filter((r) => isPhotoUnseen(r, data)).length > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 900, color: "#fff", background: C.red, padding: "1px 6px", whiteSpace: "nowrap" }}>미확인 {g.items.filter((r) => isPhotoUnseen(r, data)).length}</span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: 12, color: C.sub, fontWeight: 700 }}>{g.items.length}개</span>
                   <ChevronRight size={16} color={C.sub} />
@@ -4219,11 +4232,14 @@ function PhotoAdminView({ data, update, setToast }) {
         <ArrowLeft size={14} /> {siteName}
       </button>
       <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 4 }}>{workerName}</div>
+      {items.some((r) => isPhotoUnseen(r, data)) && (
+        <div className="mt-2"><Btn kind="ghost" small onClick={() => markSeen(items.filter((r) => isPhotoUnseen(r, data)).map((r) => r.id))}>미확인 {items.filter((r) => isPhotoUnseen(r, data)).length}건 모두 확인 처리</Btn></div>
+      )}
       <MonthChips />
 
       <div className="grid grid-cols-2 gap-2">
         {items.map((r) => (
-          <div key={r.id} onClick={() => setViewer(r)} className="pressable" style={{ cursor: "pointer" }}>
+          <div key={r.id} onClick={() => openViewer(r)} className="pressable" style={{ cursor: "pointer" }}>
             <div style={{ position: "relative", borderRadius: RADIUS_SM, overflow: "hidden", boxShadow: SHADOW_SM, aspectRatio: "1", background: "#000" }}>
               {r.kind === "video" ? (
                 <>
@@ -4256,8 +4272,13 @@ function PhotoAdminView({ data, update, setToast }) {
                 position: "absolute", top: 6, left: 6, fontSize: 9.5, fontWeight: 800, color: "#fff",
                 background: catColor[r.category] || C.sub, padding: "2px 6px",
               }}>{r.category}</span>
+              {isPhotoUnseen(r, data) && (
+                <span style={{ position: "absolute", top: 6, right: 6, display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 900, color: "#fff", background: C.red, padding: "2px 6px", whiteSpace: "nowrap" }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: "#fff" }} />NEW
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>{r.date.slice(5).replace("-", "/")}</div>
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>{r.date.slice(5).replace("-", "/")} {tstr(r.createdAt)}</div>
           </div>
         ))}
       </div>
@@ -5368,6 +5389,32 @@ function TransferAdminView({ data, update, setToast }) {
     return candidates.length === 1 ? candidates[0] : null;
   };
   const [linkPickerFor, setLinkPickerFor] = useState(null); // 직접 연결 모달을 띄울 transfer id
+  // 양도로 반영된(연결된) 근무 기록의 출퇴근 시간·지급 금액을 관리자가 바로 고치는 창
+  const [recEdit, setRecEdit] = useState(null); // { recId, workerName, date, siteName, inT, outT, amount, hadFlat }
+  const openRecEdit = (t, r) => setRecEdit({
+    recId: r.id, workerName: t.toWorkerName, date: r.date, siteName: t.siteName,
+    inT: r.clockIn ? tstr(r.clockIn) : "", outT: r.clockOut ? tstr(r.clockOut) : "",
+    amount: r.flatPay != null ? String(r.flatPay) : "", hadFlat: r.flatPay != null,
+  });
+  const saveRecEdit = () => {
+    if (!recEdit.inT) { setToast("출근 시간을 입력해 주세요"); return; }
+    const mk = (hhmm) => { if (!hhmm) return null; const [h, mi] = hhmm.split(":").map(Number); const dd = parseKey(recEdit.date); dd.setHours(h, mi, 0, 0); return dd.toISOString(); };
+    const inIso = mk(recEdit.inT), outIso = mk(recEdit.outT);
+    if (outIso && outIso <= inIso) { setToast("퇴근 시간이 출근 시간보다 늦어야 해요"); return; }
+    const amt = recEdit.amount.trim();
+    if (amt !== "" && !(Number(amt) >= 0)) { setToast("금액은 숫자로 입력해 주세요"); return; }
+    update((d) => ({
+      ...d,
+      records: d.records.map((r) => (r.id !== recEdit.recId ? r : {
+        ...r, clockIn: inIso, clockOut: outIso,
+        // 금액을 적으면 그 금액을 그대로 지급(자동 계산 대신), 비우면 다시 자동 계산
+        ...(amt !== "" ? { flatPay: Number(amt), oneOffStatus: "approved" } : { flatPay: null }),
+        editedByAdminAt: new Date().toISOString(),
+      })),
+    }));
+    setRecEdit(null);
+    setToast("근무 기록을 수정했습니다");
+  };
   const linkRecord = (transferId, recordId) => {
     update((d) => {
       const t = (d.transfers || []).find((x) => x.id === transferId);
@@ -5526,6 +5573,9 @@ function TransferAdminView({ data, update, setToast }) {
                             <Btn kind="ghost" small onClick={() => setLinkPickerFor(t.id)}>
                               {matchedRecord ? "연결된 기록 변경" : autoMatch ? "다른 기록 선택" : "근무 기록 직접 연결"}
                             </Btn>
+                            {effective && (
+                              <Btn kind="ghost" small onClick={() => openRecEdit(t, effective)}>시간·금액 수정</Btn>
+                            )}
                             {matchedRecord && (
                               <Btn kind="ghost" small onClick={() => unlinkRecord(t.id)}>연결 해제</Btn>
                             )}
@@ -5580,6 +5630,37 @@ function TransferAdminView({ data, update, setToast }) {
           );
         })}
       </div>
+
+      {/* 양도 반영 근무 기록 수정 (시간·금액) */}
+      <Modal open={!!recEdit} onClose={() => setRecEdit(null)}>
+        {recEdit && (
+          <>
+            <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>근무 시간·금액 수정</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, marginBottom: 12 }}>
+              {recEdit.workerName}님 · {recEdit.date.slice(5).replace("-", "/")} · {recEdit.siteName}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="출근 시간">
+                <input type="time" value={recEdit.inT} onChange={(e) => setRecEdit((f) => ({ ...f, inT: e.target.value }))} style={inputStyle} />
+              </Field>
+              <Field label="퇴근 시간">
+                <input type="time" value={recEdit.outT} onChange={(e) => setRecEdit((f) => ({ ...f, outT: e.target.value }))} style={inputStyle} />
+              </Field>
+            </div>
+            <Field label="지급 금액 직접 입력 (원)">
+              <input type="number" inputMode="numeric" value={recEdit.amount} placeholder="비워두면 자동 계산"
+                onChange={(e) => setRecEdit((f) => ({ ...f, amount: e.target.value }))} style={inputStyle} />
+            </Field>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 6, lineHeight: 1.6 }}>
+              금액을 적으면 시간과 상관없이 그 금액이 그대로 정산에 반영돼요. 비워두면 입력한 시간 기준으로 자동 계산돼요.
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <Btn kind="ghost" full onClick={() => setRecEdit(null)}>취소</Btn>
+              <Btn full onClick={saveRecEdit}>저장</Btn>
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* 근무 기록 직접 연결 — 자동으로 못 짚었거나(기록이 여러 건이거나 없음), 잘못 짚인 경우를 관리자가 직접 고를 수 있게 함 */}
       {(() => {
