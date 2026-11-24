@@ -10,9 +10,9 @@
     <meta name="theme-color" content="#1D232A" />
 
     <!-- 아이콘 -->
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=2" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=2" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=2" />
 
     <!-- iOS 홈화면(PWA) 대응 -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -32,16 +32,30 @@
       background:#1D232A;
       transition:opacity 0.5s ease, visibility 0.5s ease;
     ">
-      <!-- 앞면: 이미지 전체(로고 포함)가 잘리지 않게 비율을 유지해서 가운데에 놓고, 위·아래 가장자리는 부드럽게 섞음 -->
-      <div style="
-        position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-        width:min(100%, calc(100vh * 768 / 1344)); aspect-ratio:768 / 1344;
-        -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%);
-        mask-image:linear-gradient(to bottom, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%);
-        -webkit-mask-composite:source-in; mask-composite:intersect;
-      ">
-        <img src="/icons/splash-bg.jpg" alt="대신치워주는남자" style="display:block; width:100%; height:100%;" />
-      </div>
+      <!-- 배경: 로고를 뺀 배경 이미지를 화면 전체에 꽉 채움(위아래 빈 곳 없음) -->
+      <img src="/icons/splash-bg-clean.jpg" alt="" aria-hidden="true" style="
+        position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center;
+      " />
+      <!-- 로고: 배경과 따로 올려서 화면 크기가 달라도 잘리지 않고 항상 가운데에 보임.
+           글씨 색이 흰색 → 노란색으로 물결치듯 지나가며 "불러오는 중"을 표현함 -->
+      <img src="/icons/logo_cut.png" alt="대신치워주는남자" style="
+        position:absolute; left:50%; top:49%; transform:translate(-50%,-50%);
+        width:min(85%, 520px); height:auto; filter:drop-shadow(0 3px 6px rgba(0,0,0,0.55));
+      " />
+      <div class="splash-sweep" role="img" aria-label="대신치워주는남자" style="
+        position:absolute; left:50%; top:49%; transform:translate(-50%,-50%);
+        width:min(85%, 520px); aspect-ratio:651 / 162;
+        -webkit-mask:url(/icons/logo_cut.png) center / 100% 100% no-repeat; mask:url(/icons/logo_cut.png) center / 100% 100% no-repeat;
+        background:linear-gradient(100deg, #fff 0%, #fff 38%, #EB9E18 50%, #fff 62%, #fff 100%);
+        background-size:300% 100%; background-position:100% 0;
+        animation:splash-text 1.5s ease-in-out infinite;
+        filter:drop-shadow(0 3px 6px rgba(0,0,0,0.55));
+      "></div>
+      <style>
+        @keyframes splash-text { 0% { background-position: 100% 0; } 100% { background-position: 0% 0; } }
+        /* 글씨 색 효과를 지원하지 않는 오래된 브라우저에서는 효과만 빼고 흰 로고는 그대로 보임 */
+        @supports not ((-webkit-mask-image: url(x)) or (mask-image: url(x))) { .splash-sweep { display: none; } }
+      </style>
     </div>
 
     <!-- 카카오톡 인앱브라우저 감지 → 안내 오버레이 -->
