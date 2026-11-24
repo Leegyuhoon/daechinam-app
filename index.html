@@ -33,16 +33,16 @@
       transition:opacity 0.5s ease, visibility 0.5s ease;
     ">
       <!-- 배경: 로고를 뺀 배경 이미지를 화면 전체에 꽉 채움(위아래 빈 곳 없음) -->
-      <img src="/icons/splash-bg-clean.jpg" alt="" aria-hidden="true" style="
+      <img class="splash-bg" src="/icons/splash-bg-clean.jpg" alt="" aria-hidden="true" style="
         position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center;
       " />
       <!-- 로고: 배경과 따로 올려서 화면 크기가 달라도 잘리지 않고 항상 가운데에 보임.
            글씨 색이 흰색 → 노란색으로 물결치듯 지나가며 "불러오는 중"을 표현함 -->
-      <img src="/icons/logo_cut.png" alt="대신치워주는남자" style="
+      <img class="splash-logo" src="/icons/logo_cut.png" alt="대신치워주는남자" style="
         position:absolute; left:50%; top:49%; transform:translate(-50%,-50%);
         width:min(85%, 520px); height:auto; filter:drop-shadow(0 3px 6px rgba(0,0,0,0.55));
       " />
-      <div class="splash-sweep" role="img" aria-label="대신치워주는남자" style="
+      <div class="splash-sweep splash-logo" role="img" aria-label="대신치워주는남자" style="
         position:absolute; left:50%; top:49%; transform:translate(-50%,-50%);
         width:min(85%, 520px); aspect-ratio:651 / 162;
         -webkit-mask:url(/icons/logo_cut.png) center / 100% 100% no-repeat; mask:url(/icons/logo_cut.png) center / 100% 100% no-repeat;
@@ -53,6 +53,14 @@
       "></div>
       <style>
         @keyframes splash-text { 0% { background-position: 100% 0; } 100% { background-position: 0% 0; } }
+        /* PC처럼 가로로 넓은 화면: 이미지를 키우지 않고 세로형 화면 크기 그대로 가운데에 두고, 양옆은 부드럽게 어두운 배경과 섞음 */
+        @media (min-aspect-ratio: 1/1) {
+          .splash-bg { inset: auto !important; top: 0 !important; left: 50% !important; width: auto !important; height: 100% !important;
+            aspect-ratio: 768 / 1344; transform: translateX(-50%); object-fit: fill !important;
+            -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%); }
+          .splash-logo { width: calc(100vh * 0.4857) !important; max-width: 520px; }
+        }
         /* 글씨 색 효과를 지원하지 않는 오래된 브라우저에서는 효과만 빼고 흰 로고는 그대로 보임 */
         @supports not ((-webkit-mask-image: url(x)) or (mask-image: url(x))) { .splash-sweep { display: none; } }
       </style>
