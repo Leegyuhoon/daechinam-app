@@ -7,7 +7,7 @@ import {
   ShieldCheck, Delete, Settings as SettingsIcon, ClipboardList, Crosshair,
   Smartphone, ShieldAlert, Receipt, Printer, SlidersHorizontal, Repeat, Send, Bell,
   Camera, Package, Image as ImageIcon, Folder, Search, CalendarDays, RefreshCw, Download,
-  Boxes, Minus,
+  Boxes, Minus, MessageCircle,
 } from "lucide-react";
 
 /* ─────────────────────────  토큰 (DAECHINAM 브랜드 컬러: 네이비 + 오렌지) ───────────────────────── */
@@ -1888,6 +1888,9 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     setLeadNoticeOpen(false);
   };
 
+  const [chatOpen, setChatOpen] = useState(() => !!(__chatLink && __chatLink.role === "worker" && !__chatLink.used));
+  useEffect(() => { if (__chatLink && __chatLink.role === "worker") __chatLink.used = true; }, []);
+  const workerChat = useChatUnread("worker", worker ? worker.id : null);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [photoForm, setPhotoForm] = useState({ siteId: "", category: "작업 후", note: "", files: [], previews: [], file: null, preview: "", kind: "photo" });
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -3250,6 +3253,18 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
           <Package size={14} /> 용품 요청
         </button>
       </div>
+      {worker && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
+          <button onClick={() => setChatOpen(true)} className="w-full flex items-center justify-center gap-1.5 relative"
+            style={{ background: C.bgSoft, border: `1px solid ${workerChat.unread > 0 ? C.aqua : C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+            <MessageCircle size={14} /> 관리자와 채팅
+            {workerChat.unread > 0 && (
+              <span style={{ minWidth: 18, height: 18, borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 900, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px", marginLeft: 4 }}>{workerChat.unread > 99 ? "99+" : workerChat.unread}</span>
+            )}
+          </button>
+        </div>
+      )}
+      {chatOpen && worker && <ChatRoom role="worker" workerId={worker.id} workerName={worker.name} onBack={() => { setChatOpen(false); workerChat.reload(); }} setToast={setToast} />}
       {mySupplyRequests.length > 0 && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
           <button onClick={() => setSupplyHistoryOpen(true)} className="w-full flex items-center justify-center gap-1.5"
@@ -3834,7 +3849,10 @@ function AdminGate({ data, update, setToast, onPass }) {
 
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
 function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLock, onRefresh }) {
-  const [view, setView] = useState("records");
+  const [view, setView] = useState(() => (__chatLink && __chatLink.role === "admin" && !__chatLink.used ? "chat" : "records"));
+  const chatInitialWorker = useRef(__chatLink && __chatLink.role === "admin" && !__chatLink.used ? __chatLink.w : "");
+  useEffect(() => { if (__chatLink) __chatLink.used = true; }, []);
+  const chatUnread = useChatUnread("admin", null);
   const [settingsAutoOpenReqId, setSettingsAutoOpenReqId] = useState(null); // 배너 눌렀을 때 설정에서 바로 열어줄 서명요청 id
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
   const [refreshing, setRefreshing] = useState(false);
@@ -3882,6 +3900,7 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
     ["photos", "사진", Camera, photoBadge],
     ["supplies", "용품", Package, supplyBadge],
     ["inventory", "재고", Boxes, 0],
+    ["chat", "채팅", MessageCircle, chatUnread.unread],
     ["notices", "공지", Bell, noticeBadge],
     ["settings", "설정", SettingsIcon, expiringWorkers.length + pendingContractSigns.length],
   ];
@@ -3936,8 +3955,337 @@ function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLo
       {view === "photos" && <PhotoAdminView data={data} update={update} setToast={setToast} />}
       {view === "supplies" && <SupplyAdminView data={data} update={update} setToast={setToast} />}
       {view === "inventory" && <InventoryAdminView data={data} update={update} setToast={setToast} />}
+      {view === "chat" && <ChatAdminView data={data} inbox={chatUnread.inbox} onReload={chatUnread.reload} setToast={setToast} initialWorkerId={chatInitialWorker.current} />}
       {view === "notices" && <NoticeAdminView data={data} update={update} setToast={setToast} />}
       {view === "settings" && <SettingsView data={data} update={update} dev={dev} updateDev={updateDev} setToast={setToast} autoOpenContractReqId={settingsAutoOpenReqId} onAutoOpenHandled={() => setSettingsAutoOpenReqId(null)} />}
+    </div>
+  );
+}
+
+/* ─────────────────────────  근무자 ↔ 관리자 1:1 채팅  ───────────────────────── */
+// 채팅 서버: netlify/functions/chat.js (/api/chat). 앱이 켜져 있고 채팅방이 열려 있는 동안 3초마다 새 메시지를 확인함.
+// 앱이 닫혀 있을 때는 푸시 알림(웹 푸시)으로 알려줌.
+const CHAT_POLL_MS = 3000;
+// 알림을 눌러서 앱이 열렸을 때 곧바로 채팅방으로 가기 위한 정보 (주소 뒤의 ?chat=... 를 한 번만 읽고 지움)
+const __chatLink = (() => {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const c = q.get("chat");
+    if (!c) return null;
+    const r = { role: c === "admin" ? "admin" : "worker", w: q.get("w") || "", used: false };
+    window.history.replaceState(window.history.state, "", window.location.pathname);
+    return r;
+  } catch (e) { return null; }
+})();
+const chatGet = async (qs) => {
+  const r = await fetch(`/api/chat?${qs}`, { cache: "no-store" });
+  if (!r.ok) throw new Error("chat get failed");
+  return r.json();
+};
+const chatPost = async (body) => {
+  const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error("chat post failed");
+  return r.json();
+};
+const urlB64ToUint8Array = (b64) => {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+};
+const chatPushSupported = () => typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+// 푸시 알림 켜기(권한 요청 포함) / 이미 허용돼 있으면 구독 정보만 서버에 다시 등록. owner = "admin" 또는 근무자 id
+async function enableChatPush(owner, askPermission) {
+  if (!chatPushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  if (Notification.permission !== "granted") {
+    if (!askPermission) return "default";
+    const p = await Notification.requestPermission();
+    if (p !== "granted") return "denied";
+  }
+  const { key } = await chatGet("action=vapid");
+  if (!key) return "server-off";
+  const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error("sw timeout")), 6000))]);
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+  await chatPost({ action: "subscribe", owner, sub: sub.toJSON() });
+  return "ok";
+}
+// 안 읽은 메시지 수 — 근무자는 내 대화방의 안 읽은 수, 관리자는 전체 합계와 근무자별 요약(inbox)
+function useChatUnread(role, workerId) {
+  const [unread, setUnread] = useState(0);
+  const [inbox, setInbox] = useState({});
+  const load = useCallback(async () => {
+    try {
+      if (role === "admin") {
+        const d = await chatGet("action=inbox");
+        const ib = d.inbox || {};
+        setInbox(ib);
+        setUnread(Object.values(ib).reduce((s, e) => s + (e.unreadA || 0), 0));
+      } else if (workerId) {
+        const d = await chatGet(`action=unread&workerId=${encodeURIComponent(workerId)}`);
+        setUnread(d.unread || 0);
+      }
+    } catch (e) { /* 일시적인 네트워크 오류는 무시하고 다음 확인 때 다시 시도 */ }
+  }, [role, workerId]);
+  useEffect(() => {
+    load();
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, role === "admin" ? 8000 : 12000);
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [load, role]);
+  return { unread, inbox, reload: load };
+}
+const chatDayLabel = (iso) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`;
+};
+const chatTime = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+function ChatRoom({ role, workerId, workerName, onBack, setToast }) {
+  useBackClose(true, onBack);
+  const me = role === "admin" ? "admin" : "worker";
+  const [msgs, setMsgs] = useState([]);
+  const [readOther, setReadOther] = useState("");
+  const [text, setText] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [offline, setOffline] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [viewImg, setViewImg] = useState(null);
+  const [pushState, setPushState] = useState(() => (chatPushSupported() ? Notification.permission : "unsupported"));
+  const lastAtRef = useRef("");
+  const listRef = useRef(null);
+  const stickRef = useRef(true);
+  const fileRef = useRef(null);
+  const inputRef = useRef(null);
+  const pushOwner = me === "admin" ? "admin" : workerId;
+
+  const merge = useCallback((incoming) => {
+    setMsgs((prev) => {
+      const map = new Map(prev.map((m) => [m.id, m]));
+      incoming.forEach((m) => map.set(m.id, m));
+      return [...map.values()].sort((a, b) => (a.at || "").localeCompare(b.at || ""));
+    });
+  }, []);
+  const markRead = useCallback(() => {
+    chatPost({ action: "read", workerId, by: me }).catch(() => {});
+  }, [workerId, me]);
+  const poll = useCallback(async () => {
+    try {
+      const qs = `action=thread&workerId=${encodeURIComponent(workerId)}` + (lastAtRef.current ? `&since=${encodeURIComponent(lastAtRef.current)}` : "");
+      const d = await chatGet(qs);
+      setOffline(false);
+      if (d.messages.length) {
+        merge(d.messages);
+        lastAtRef.current = d.messages[d.messages.length - 1].at;
+        if (d.messages.some((m) => m.from !== me)) markRead();
+      }
+      setReadOther(me === "admin" ? d.readW : d.readA);
+      setLoaded(true);
+    } catch (e) { setOffline(true); }
+  }, [workerId, me, merge, markRead]);
+
+  useEffect(() => {
+    poll().then(() => markRead());
+    const t = setInterval(() => { if (document.visibilityState === "visible") poll(); }, CHAT_POLL_MS);
+    const onVis = () => { if (document.visibilityState === "visible") { poll(); markRead(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [poll, markRead]);
+  // 이미 알림을 허용한 기기는 구독 정보를 조용히 다시 등록(만료 대비)
+  useEffect(() => {
+    if (chatPushSupported() && Notification.permission === "granted") enableChatPush(pushOwner, false).catch(() => {});
+  }, [pushOwner]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  }, [msgs, loaded]);
+  const onScroll = () => {
+    const el = listRef.current;
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+  };
+
+  const deliver = async (local) => {
+    try {
+      const r = await chatPost({ action: "send", workerId, workerName, from: me, text: local.text, imageId: local.imageId, cid: local.id });
+      merge([r.message]);
+    } catch (e) {
+      merge([{ ...local, pending: false, failed: true }]);
+    }
+  };
+  const newLocal = (extra) => ({ id: uid() + Date.now().toString(36), from: me, at: new Date().toISOString(), pending: true, ...extra });
+  const submit = () => {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    stickRef.current = true;
+    const local = newLocal({ text: t.slice(0, 1000) });
+    merge([local]);
+    deliver(local);
+    if (inputRef.current) inputRef.current.style.height = "auto";
+  };
+  const retry = (m) => { const l = { ...m, failed: false, pending: true }; merge([l]); deliver(l); };
+  const pickImage = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { setToast && setToast("사진만 보낼 수 있어요"); return; }
+    setUploading(true);
+    try {
+      const imageId = await uploadPhoto(f);
+      stickRef.current = true;
+      const local = newLocal({ imageId });
+      merge([local]);
+      deliver(local);
+    } catch (err) {
+      setToast && setToast("사진을 보내지 못했어요. 다시 시도해 주세요");
+    }
+    setUploading(false);
+  };
+  const turnOnPush = async () => {
+    try {
+      const r = await enableChatPush(pushOwner, true);
+      if (r === "ok") { setPushState("granted"); setToast && setToast("새 메시지 알림을 켰어요"); }
+      else if (r === "denied") { setPushState("denied"); setToast && setToast("알림이 차단돼 있어요. 휴대폰 설정에서 이 앱의 알림을 허용해 주세요"); }
+      else if (r === "server-off") setToast && setToast("알림 서버 설정이 아직 안 돼 있어요. 관리자에게 문의해 주세요");
+      else setToast && setToast("이 기기에서는 알림을 켤 수 없어요(홈 화면에 앱으로 추가한 뒤 다시 시도해 주세요)");
+    } catch (e) { setToast && setToast("알림을 켜지 못했어요. 잠시 후 다시 시도해 주세요"); }
+  };
+
+  const title = me === "admin" ? workerName : "관리자";
+  const lastMine = (() => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].from === me && !msgs[i].pending && !msgs[i].failed) return msgs[i].id; return null; })();
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: C.bg, display: "flex", flexDirection: "column", fontFamily: SANS }}>
+      <div className="flex items-center gap-2 px-3" style={{ height: 54, borderBottom: `1px solid ${C.lineDark}`, flexShrink: 0, paddingTop: "env(safe-area-inset-top)" }}>
+        <button onClick={onBack} className="flex items-center justify-center" style={{ width: 36, height: 36 }}><ChevronLeft size={22} color={C.onDark} /></button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15.5, fontWeight: 900, color: C.onDark, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+          <div style={{ fontSize: 10.5, color: offline ? C.coral : C.onDarkSub }}>{offline ? "연결이 불안정해요 — 다시 연결 중" : me === "admin" ? "근무자와 1:1 대화" : "관리자와 1:1 대화"}</div>
+        </div>
+        {pushState !== "unsupported" && pushState !== "granted" && (
+          <button onClick={turnOnPush} className="flex items-center gap-1" style={{ background: C.aqua, color: C.bg, fontSize: 11, fontWeight: 900, padding: "6px 9px" }}>
+            <Bell size={12} /> 알림 켜기
+          </button>
+        )}
+      </div>
+
+      <div ref={listRef} onScroll={onScroll} style={{ flex: 1, overflowY: "auto", padding: "12px 12px 6px", WebkitOverflowScrolling: "touch" }}>
+        {!loaded && <div className="flex justify-center" style={{ padding: 30 }}><Loader2 className="animate-spin" size={20} color={C.aqua} /></div>}
+        {loaded && msgs.length === 0 && (
+          <div style={{ textAlign: "center", color: C.onDarkSub, fontSize: 13, padding: "40px 20px", lineHeight: 1.7 }}>
+            {me === "admin" ? `${workerName}님과의 첫 대화예요.` : "관리자에게 궁금한 점이나 전달할 내용을 보내 보세요."}
+          </div>
+        )}
+        {msgs.map((m, i) => {
+          const mine = m.from === me;
+          const showDay = i === 0 || chatDayLabel(msgs[i - 1].at) !== chatDayLabel(m.at);
+          const read = mine && m.id === lastMine && readOther && m.at <= readOther;
+          return (
+            <div key={m.id}>
+              {showDay && <div style={{ textAlign: "center", margin: "12px 0 8px" }}><span style={{ fontSize: 10.5, color: C.onDarkSub, background: C.bgSoft, padding: "3px 10px", borderRadius: 999 }}>{chatDayLabel(m.at)}</span></div>}
+              <div className="flex items-end gap-1.5" style={{ justifyContent: mine ? "flex-end" : "flex-start", marginTop: 5 }}>
+                {mine && (
+                  <div style={{ fontSize: 9.5, color: m.failed ? C.coral : C.onDarkSub, textAlign: "right", flexShrink: 0, lineHeight: 1.3 }}>
+                    {m.failed ? <button onClick={() => retry(m)} style={{ color: C.coral, fontWeight: 900 }}>↻ 다시 보내기</button> : m.pending ? "전송 중" : (<>{read ? <span style={{ color: C.aqua, fontWeight: 800 }}>읽음<br /></span> : null}{chatTime(m.at)}</>)}
+                  </div>
+                )}
+                <div style={{
+                  maxWidth: "74%", padding: m.imageId && !m.text ? 4 : "9px 12px", fontSize: 14.5, lineHeight: 1.5, wordBreak: "break-word", whiteSpace: "pre-wrap",
+                  background: mine ? C.aqua : C.tile, color: C.text, borderRadius: 14,
+                  borderBottomRightRadius: mine ? 4 : 14, borderBottomLeftRadius: mine ? 14 : 4, opacity: m.pending ? 0.7 : 1,
+                }}>
+                  {m.imageId && <img src={photoUrl(m.imageId)} alt="사진" loading="lazy" onClick={() => setViewImg(m.imageId)}
+                    style={{ display: "block", maxWidth: "100%", maxHeight: 260, borderRadius: 10, cursor: "pointer", marginBottom: m.text ? 6 : 0 }} />}
+                  {m.text}
+                </div>
+                {!mine && <div style={{ fontSize: 9.5, color: C.onDarkSub, flexShrink: 0 }}>{chatTime(m.at)}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-end gap-2 px-3 pt-2" style={{ borderTop: `1px solid ${C.lineDark}`, background: C.bg, flexShrink: 0, paddingBottom: "calc(10px + env(safe-area-inset-bottom))" }}>
+        <input ref={fileRef} type="file" accept="image/*" onChange={pickImage} style={{ display: "none" }} />
+        <button onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="flex items-center justify-center"
+          style={{ width: 42, height: 42, background: C.bgSoft, border: `1px solid ${C.lineDark}`, flexShrink: 0, borderRadius: 12 }}>
+          {uploading ? <Loader2 className="animate-spin" size={17} color={C.onDarkSub} /> : <Camera size={18} color={C.onDark} />}
+        </button>
+        <textarea ref={inputRef} value={text} rows={1} placeholder="메시지를 입력하세요"
+          onChange={(e) => { setText(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 110) + "px"; }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !("ontouchstart" in window)) { e.preventDefault(); submit(); } }}
+          style={{ flex: 1, background: C.bgSoft, color: C.onDark, border: `1px solid ${C.lineDark}`, borderRadius: 12, padding: "10px 12px", fontSize: 15, resize: "none", outline: "none", maxHeight: 110, lineHeight: 1.4, fontFamily: SANS }} />
+        <button onClick={submit} disabled={!text.trim()} className="flex items-center justify-center"
+          style={{ width: 42, height: 42, background: text.trim() ? C.aqua : C.bgSoft, flexShrink: 0, borderRadius: 12, border: `1px solid ${text.trim() ? C.aqua : C.lineDark}` }}>
+          <Send size={17} color={text.trim() ? C.bg : C.onDarkSub} />
+        </button>
+      </div>
+
+      {viewImg && (
+        <div onClick={() => setViewImg(null)} className="flex items-center justify-center" style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.92)" }}>
+          <img src={photoUrl(viewImg)} alt="사진" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+          <button onClick={() => setViewImg(null)} style={{ position: "absolute", top: "calc(14px + env(safe-area-inset-top))", right: 14 }}><X size={26} color="#fff" /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 관리자: 근무자별 대화 목록 → 대화방
+function ChatAdminView({ data, inbox, onReload, setToast, initialWorkerId }) {
+  const [room, setRoom] = useState(() => {
+    if (initialWorkerId) { const w = (data.workers || []).find((x) => x.id === initialWorkerId); if (w) return { id: w.id, name: w.name }; }
+    return null;
+  });
+  const [q, setQ] = useState("");
+  const rows = useMemo(() => {
+    const list = (data.workers || []).map((w) => ({ w, e: inbox[w.id] }));
+    const filtered = q.trim() ? list.filter((r) => r.w.name.includes(q.trim())) : list;
+    return filtered.sort((a, b) => {
+      const ta = a.e ? a.e.lastAt : "", tb = b.e ? b.e.lastAt : "";
+      if (ta && tb) return tb.localeCompare(ta);
+      if (ta) return -1;
+      if (tb) return 1;
+      return a.w.name.localeCompare(b.w.name, "ko");
+    });
+  }, [data.workers, inbox, q]);
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return dKey(d) === dKey(new Date()) ? chatTime(iso) : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  if (room) return <ChatRoom role="admin" workerId={room.id} workerName={room.name} onBack={() => { setRoom(null); onReload(); }} setToast={setToast} />;
+  return (
+    <div className="px-4 pt-3 pb-8" style={{ flex: 1 }}>
+      <div className="flex items-center gap-2" style={{ background: C.bgSoft, border: `1px solid ${C.lineDark}`, padding: "0 12px", height: 42 }}>
+        <Search size={15} color={C.onDarkSub} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="근무자 이름 검색"
+          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.onDark, fontSize: 14, fontFamily: SANS }} />
+      </div>
+      <div className="flex flex-col gap-2 mt-3">
+        {rows.length === 0 && <div style={{ color: C.onDarkSub, fontSize: 13, textAlign: "center", padding: 30 }}>근무자가 없어요</div>}
+        {rows.map(({ w, e }) => (
+          <Tile key={w.id} onClick={() => setRoom({ id: w.id, name: w.name })} style={{ padding: "12px 14px" }}>
+            <div className="flex items-center gap-3">
+              <div style={{ width: 38, height: 38, borderRadius: 999, background: C.bg, color: C.aqua, fontWeight: 900, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{w.name.slice(0, 1)}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</div>
+                  {e && e.lastAt && <div style={{ fontSize: 10.5, color: C.sub, flexShrink: 0 }}>{fmt(e.lastAt)}</div>}
+                </div>
+                <div className="flex items-center justify-between gap-2" style={{ marginTop: 2 }}>
+                  <div style={{ fontSize: 12.5, color: C.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {e && e.lastAt ? `${e.lastFrom === "admin" ? "나: " : ""}${e.lastText}` : "대화 시작하기"}
+                  </div>
+                  {e && e.unreadA > 0 && (
+                    <span style={{ minWidth: 18, height: 18, borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 }}>{e.unreadA > 99 ? "99+" : e.unreadA}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Tile>
+        ))}
+      </div>
     </div>
   );
 }
