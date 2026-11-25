@@ -1601,7 +1601,9 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
 
   const myPendingSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && !x.signedAt) : [];
   // 이미 서명한 정산서 중 최근 3건 — 내용을 다시 볼 수만 있고, 서명은 한번 완료되면 근무자가 취소할 수 없음(급여 지급이 끝난 정산서 보호)
-  const mySignedSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && x.signedAt).sort((a, b) => b.signedAt.localeCompare(a.signedAt)).slice(0, 3) : [];
+  const mySignedSigns = worker ? (data.payslipSigns || []).filter((x) => x.workerId === worker.id && x.signedAt).sort((a, b) => (b.ym || "").localeCompare(a.ym || "") || b.signedAt.localeCompare(a.signedAt)) : [];
+  const [payslipsOpen, setPayslipsOpen] = useState(false);
+  useBackClose(payslipsOpen, () => setPayslipsOpen(false));
   const myContractRequest = worker ? (data.contractRequests || []).find((x) => x.workerId === worker.id) : null;
   const [contractSignOpen, setContractSignOpen] = useState(false);
   const [contractSigData, setContractSigData] = useState(null);
@@ -2629,39 +2631,70 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         )}
       </Modal>
 
-      {/* 확인·서명 필요한 정산서 */}
-      {myPendingSigns.length > 0 && (
-        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
-          {myPendingSigns.map((sgn) => (
-            <div key={sgn.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.aquaDeep}` }}>
-              <div className="flex items-center gap-1.5" style={{ color: C.aquaDeep, fontSize: 11.5, fontWeight: 800 }}>
-                <Receipt size={12} /> 확인 · 서명이 필요해요
-              </div>
-              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>{ymLabel(sgn.ym)} 근무 정산서</div>
-              <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
-              <div className="mt-3">
-                <Btn full small onClick={() => { setSignOpen(sgn); setSigData(null); }}>정산서 확인하고 서명하기</Btn>
-              </div>
-            </div>
-          ))}
+      {/* 정산서 보기 버튼 — 정산서가 홈 화면에 계속 쌓이지 않도록 별도 화면으로 분리 */}
+      {worker && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
+          <button onClick={() => setPayslipsOpen(true)} className="w-full flex items-center justify-center gap-1.5"
+            style={{ background: C.bgSoft, border: `1px solid ${myPendingSigns.length > 0 ? C.aqua : C.lineDark}`, padding: "12px 0", color: C.onDark, fontSize: 12.5, fontWeight: 800 }}>
+            <Receipt size={14} /> 정산서
+            {myPendingSigns.length > 0 && (
+              <span style={{ minWidth: 18, height: 18, borderRadius: 999, background: C.red, color: "#fff", fontSize: 10.5, fontWeight: 900, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 5px", marginLeft: 4 }}>{myPendingSigns.length}</span>
+            )}
+            {myPendingSigns.length > 0 && <span style={{ color: C.aqua, fontSize: 11, fontWeight: 800 }}>서명 필요</span>}
+          </button>
         </div>
       )}
-
-      {/* 서명을 마친 정산서 — 내용 다시 보기 (취소 불가) */}
-      {mySignedSigns.length > 0 && (
-        <div className="w-full" style={{ maxWidth: 320, marginTop: 12 }}>
-          {mySignedSigns.map((sgn) => (
-            <div key={sgn.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1px solid ${C.lineDark}` }}>
-              <div className="flex items-center gap-1.5" style={{ color: ST.complete, fontSize: 11.5, fontWeight: 800 }}>
-                <Check size={12} /> 서명 완료 · {sgn.signedAt.slice(0, 10)}
-              </div>
-              <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, marginTop: 6 }}>{ymLabel(sgn.ym)} 근무 정산서</div>
-              <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
-              <div className="mt-3">
-                <Btn kind="ghost" full small onClick={() => { setSignOpen(sgn); setSigData(null); }}>내용 보기</Btn>
-              </div>
+      {payslipsOpen && worker && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 45, background: C.bg, display: "flex", flexDirection: "column", fontFamily: SANS }}>
+          <div className="flex items-center gap-2 px-3" style={{ height: 54, borderBottom: `1px solid ${C.lineDark}`, flexShrink: 0, paddingTop: "env(safe-area-inset-top)" }}>
+            <button onClick={() => setPayslipsOpen(false)} className="flex items-center justify-center" style={{ width: 36, height: 36 }}><ChevronLeft size={22} color={C.onDark} /></button>
+            <div style={{ fontSize: 15.5, fontWeight: 900, color: C.onDark }}>정산서</div>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 30px", WebkitOverflowScrolling: "touch" }}>
+            <div style={{ maxWidth: 420, margin: "0 auto" }}>
+              {myPendingSigns.length === 0 && mySignedSigns.length === 0 && (
+                <div style={{ textAlign: "center", color: C.onDarkSub, fontSize: 13, padding: "50px 10px", lineHeight: 1.7 }}>아직 받은 정산서가 없어요.<br />관리자가 정산서를 보내면 여기에 표시돼요.</div>
+              )}
+              {myPendingSigns.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: C.aqua, margin: "2px 2px 8px" }}>확인 · 서명이 필요해요 ({myPendingSigns.length})</div>
+                  {myPendingSigns.map((sgn) => (
+                    <div key={sgn.id} style={{ background: C.tile, padding: 14, marginBottom: 8, border: `1.5px solid ${C.aquaDeep}` }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{ymLabel(sgn.ym)} 근무 정산서</div>
+                      <div style={{ fontSize: 13, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
+                      <div className="mt-3">
+                        <Btn full small onClick={() => { setSignOpen(sgn); setSigData(null); }}>정산서 확인하고 서명하기</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {mySignedSigns.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: C.onDarkSub, margin: "14px 2px 8px" }}>서명 완료한 정산서 ({mySignedSigns.length})</div>
+                  {mySignedSigns.map((sgn, i) => {
+                    const yr = (sgn.ym || "").slice(0, 4);
+                    const showYr = i === 0 || (mySignedSigns[i - 1].ym || "").slice(0, 4) !== yr;
+                    return (
+                      <div key={sgn.id}>
+                        {showYr && <div style={{ fontSize: 11.5, fontWeight: 900, color: C.onDark, margin: "10px 2px 6px" }}>{yr}년</div>}
+                        <div className="flex items-center justify-between gap-2" style={{ background: C.tile, padding: "12px 14px", marginBottom: 6, border: `1px solid ${C.lineDark}` }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{ymLabel(sgn.ym)} 근무 정산서</div>
+                            <div style={{ fontSize: 12.5, color: C.coral, fontWeight: 900, marginTop: 2 }}>실지급액 {money(sgn.snapshot.net_pay)}원</div>
+                            <div className="flex items-center gap-1" style={{ color: ST.complete, fontSize: 11, fontWeight: 800, marginTop: 3 }}><Check size={11} /> 서명 완료 · {sgn.signedAt.slice(0, 10)}</div>
+                          </div>
+                          <div style={{ flexShrink: 0 }}>
+                            <Btn kind="ghost" small onClick={() => { setSignOpen(sgn); setSigData(null); }}>내용 보기</Btn>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
-          ))}
+          </div>
         </div>
       )}
 
@@ -8477,6 +8510,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     flatPay: r.flatPay != null ? String(r.flatPay) : "", isFlat: r.flatPay != null,
     coverForName: r.coverForName || "", capBase: !!r.capBase, manual: !!r.manual,
+    isExtra: !!r.isExtra || !!r.coverForName, // '대신 근무' 뱃지 켜짐 여부(대상자 이름이 없어도 켤 수 있음)
   });
   // 관리자가 특정 날짜에 "대신근무" 기록을 새로 직접 추가할 때 씀(기존 출퇴근 흐름을 안 거쳐도 됨) —
   // id를 비워두면(신규) saveCalEdit이 새 기록으로 추가하고, 있으면(기존 편집) 그대로 수정함.
@@ -8485,26 +8519,32 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
     setCalEdit({
       id: null, date: selDate, siteId: worker.siteId || "", siteName: worker.siteId ? (data.sites.find((s) => s.id === worker.siteId)?.name || "") : "",
       inT: "09:00", outT: "18:00", breakMinutes: "", note: "",
-      flatPay: "", isFlat: false, coverForName: "", capBase: false, manual: true,
+      flatPay: "", isFlat: false, coverForName: "", capBase: false, manual: true, isExtra: true,
     });
   };
   const [calEditBusy, setCalEditBusy] = useState(false);
   const saveCalEdit = async () => {
-    if (!calEdit.isFlat && !calEdit.siteId) { setToast("현장을 선택해 주세요"); return; }
+    if (!calEdit.siteId && !(calEdit.isFlat && calEdit.siteName.trim())) { setToast("현장을 선택하거나 이름을 입력해 주세요"); return; }
     setCalEditBusy(true);
     const mk = (t) => { if (!t) return null; const [h, mi] = t.split(":").map(Number); const d = parseKey(calEdit.date); d.setHours(h, mi, 0, 0); return d.toISOString(); };
     const site = data.sites.find((x) => x.id === calEdit.siteId);
-    const coverForName = calEdit.coverForName.trim() || null;
-    const resolvedSiteId = calEdit.isFlat ? null : (site?.id || calEdit.siteId || null);
+    // '대신 근무' 뱃지를 끄면 대상자·혼합 확정도 함께 지움, 켜면 대상자 이름은 선택 사항
+    const coverForName = calEdit.isExtra ? (calEdit.coverForName.trim() || null) : null;
+    const amtStr = String(calEdit.flatPay ?? "").trim();
+    if (calEdit.isFlat && amtStr !== "" && !(Number(amtStr) >= 0)) { setToast("금액은 숫자로 입력해 주세요"); setCalEditBusy(false); return; }
+    // 현장 목록에서 고른 현장이 있으면 금액을 직접 입력해도 그 현장을 유지함(없을 때만 직접 입력한 이름 사용)
+    const resolvedSiteId = (calEdit.isFlat && !calEdit.siteId) ? null : (site?.id || calEdit.siteId || null);
     const patch = {
-      ...(calEdit.isFlat
+      ...((calEdit.isFlat && !calEdit.siteId)
         ? { site: calEdit.siteName.trim() || "현장 미지정", siteId: null }
         : { site: site?.name || calEdit.siteName || "", siteId: resolvedSiteId }),
+      isExtra: !!calEdit.isExtra,
       clockIn: mk(calEdit.inT), clockOut: mk(calEdit.outT),
       breakMinutes: calEdit.breakMinutes === "" ? null : Number(calEdit.breakMinutes),
       note: calEdit.note,
-      coverForName, capBase: coverForName ? !!calEdit.capBase : false,
+      coverForName, capBase: calEdit.isExtra ? !!calEdit.capBase : false,
       ...(calEdit.isFlat ? { flatPay: Number(calEdit.flatPay) || 0, oneOffStatus: "approved" } : { flatPay: null }),
+      editedByAdminAt: new Date().toISOString(),
     };
     // 관리자가 "대신 근무 대상자"를 직접 채워 넣을 때, 마침 같은 근무자·날짜로 "승인은 됐지만
     // 근무자 본인의 혼합/순수 확인은 아직 안 된" 양도 신청이 있으면 그것도 같이 확정해줌 — 안 그러면
@@ -8914,19 +8954,18 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
               <Field label="지급 방식">
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => setCalEdit((f) => ({ ...f, isFlat: false }))} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: !calEdit.isFlat ? "#fff" : C.text, background: !calEdit.isFlat ? C.blue : C.tile }}>출퇴근시간으로 자동 계산</button>
-                  <button onClick={() => setCalEdit((f) => ({ ...f, isFlat: true }))} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: calEdit.isFlat ? "#fff" : C.text, background: calEdit.isFlat ? C.blue : C.tile }}>고정 금액 직접 입력</button>
+                  <button onClick={() => setCalEdit((f) => ({ ...f, isFlat: true }))} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: calEdit.isFlat ? "#fff" : C.text, background: calEdit.isFlat ? C.blue : C.tile }}>금액 직접 입력</button>
                 </div>
               </Field>
-              {calEdit.isFlat ? (
-                <Field label="현장 (직접 입력)">
+              <Field label={calEdit.isFlat ? "현장 (목록에서 고르거나, 없으면 아래에 직접 입력)" : "현장"}>
+                <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
+                  <option value="">{calEdit.isFlat ? "목록에 없음 (직접 입력)" : "현장 선택"}</option>
+                  {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              {calEdit.isFlat && !calEdit.siteId && (
+                <Field label="현장 이름 (직접 입력)">
                   <input value={calEdit.siteName} onChange={(e) => setCalEdit((f) => ({ ...f, siteName: e.target.value }))} placeholder="예: 강남현장" style={inputStyle} />
-                </Field>
-              ) : (
-                <Field label="현장">
-                  <select value={calEdit.siteId} onChange={(e) => setCalEdit((f) => ({ ...f, siteId: e.target.value }))} style={inputStyle}>
-                    <option value="">현장 선택</option>
-                    {data.sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
                 </Field>
               )}
               <div className="grid grid-cols-2 gap-2">
@@ -8938,7 +8977,7 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                 </Field>
               </div>
               {calEdit.isFlat ? (
-                <Field label="지급액 (원) — 일회성/대신근무 고정 금액">
+                <Field label="지급 금액 (원) — 입력한 금액이 시간과 상관없이 그대로 정산돼요">
                   <input type="number" value={calEdit.flatPay} onChange={(e) => setCalEdit((f) => ({ ...f, flatPay: e.target.value }))} style={inputStyle} />
                 </Field>
               ) : (
@@ -8946,10 +8985,14 @@ function AttendanceCalendar({ data, update, saveConfirmed, workerId, onClose, ca
                   <input type="number" value={calEdit.breakMinutes} onChange={(e) => setCalEdit((f) => ({ ...f, breakMinutes: e.target.value }))} style={inputStyle} />
                 </Field>
               )}
-              <Field label="대신 근무 대상자 (비우면 일반 근무로 기록)">
-                <input value={calEdit.coverForName} onChange={(e) => setCalEdit((f) => ({ ...f, coverForName: e.target.value }))} placeholder="예: 홍길동 (결근자 이름)" style={inputStyle} />
-              </Field>
-              {calEdit.coverForName.trim() && !calEdit.isFlat && (
+              <Toggle label="'대신 근무' 뱃지 표시 (끄면 일반 근무로 바뀌어요)" on={!!calEdit.isExtra}
+                onChange={(v) => setCalEdit((f) => ({ ...f, isExtra: v, ...(v ? {} : { coverForName: "", capBase: false }) }))} />
+              {calEdit.isExtra && (
+                <Field label="대신 근무 대상자 (선택 — 모르면 비워두세요)">
+                  <input value={calEdit.coverForName} onChange={(e) => setCalEdit((f) => ({ ...f, coverForName: e.target.value }))} placeholder="예: 홍길동 (결근자 이름)" style={inputStyle} />
+                </Field>
+              )}
+              {calEdit.isExtra && !calEdit.isFlat && (
                 <Toggle label="본인근무+대신근무 혼합으로 확정 (본인 몫은 정상 지급, 초과분만 대신근무로 계산)"
                   on={calEdit.capBase} onChange={(v) => setCalEdit((f) => ({ ...f, capBase: v }))} />
               )}
