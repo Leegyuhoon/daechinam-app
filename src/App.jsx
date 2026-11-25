@@ -7846,6 +7846,7 @@ function WorkerDetail({ data, update, saveConfirmed, canBadge, workerId, mode, a
   const addManual = () => setEdit({
     id: null, workerId, date: dKey(new Date()),
     siteId: worker.siteId || data.sites[0]?.id || "", inT: "09:00", outT: "18:00", breakMinutes: "", note: "", isFlat: false, siteName: "", flatPay: "", manual: true,
+    isExtra: false, coverForName: "", capBase: false,
   });
   const openEdit = (r) => setEdit({
     id: r.id, workerId, date: r.date, siteId: r.siteId || "",
@@ -7853,22 +7854,34 @@ function WorkerDetail({ data, update, saveConfirmed, canBadge, workerId, mode, a
     breakMinutes: r.breakMinutes == null ? "" : String(r.breakMinutes), note: r.note || "",
     isFlat: r.flatPay != null, siteName: r.site || "", flatPay: r.flatPay != null ? String(r.flatPay) : "",
     manual: !!r.manual,
+    isExtra: !!r.isExtra || !!r.coverForName, coverForName: r.coverForName || "", capBase: !!r.capBase, // '대신 근무' 뱃지(대상자 이름 없이도 켤 수 있음)
   });
   const [editBusy, setEditBusy] = useState(false);
   const saveEdit = async () => {
+    if (edit.isFlat && String(edit.flatPay ?? "").trim() !== "" && !(Number(edit.flatPay) >= 0)) { setToast("금액은 숫자로 입력해 주세요"); return; }
     setEditBusy(true);
     const mk = (t) => { if (!t) return null; const [h, m] = t.split(":").map(Number); const d = parseKey(edit.date); d.setHours(h, m, 0, 0); return d.toISOString(); };
     const site = data.sites.find((x) => x.id === edit.siteId);
     const newId = edit.id || uid(); // 저장 재시도 시에도 같은 id를 쓰도록 미리 한 번만 생성
+    // '대신 근무' 뱃지를 끄면 대상자·혼합 확정도 함께 지움 / 켜면 대상자 이름은 선택 사항
+    const coverFields = {
+      isExtra: !!edit.isExtra,
+      coverForName: edit.isExtra ? (edit.coverForName.trim() || null) : null,
+      capBase: edit.isExtra ? !!edit.capBase : false,
+      editedByAdminAt: new Date().toISOString(),
+    };
     const ok = await saveConfirmed((d) => {
+      // 금액을 직접 입력해도 목록에서 고른 현장은 유지함(목록에 없을 때만 직접 쓴 이름 사용)
       const base = edit.isFlat ? {
-        workerId, date: edit.date, site: edit.siteName.trim() || "현장 미지정", siteId: null,
+        workerId, date: edit.date,
+        ...(edit.siteId ? { site: site?.name || "현장 미지정", siteId: site?.id || null } : { site: edit.siteName.trim() || "현장 미지정", siteId: null }),
         clockIn: mk(edit.inT), clockOut: mk(edit.outT),
-        flatPay: Number(edit.flatPay) || 0, note: edit.note,
+        flatPay: Number(edit.flatPay) || 0, note: edit.note, ...coverFields,
       } : {
         workerId, date: edit.date, site: site?.name || "현장 미지정", siteId: site?.id || null,
         clockIn: mk(edit.inT), clockOut: mk(edit.outT),
-        breakMinutes: edit.breakMinutes === "" ? null : Number(edit.breakMinutes), note: edit.note,
+        flatPay: null, // 시간 기준 자동 계산으로 되돌리면 예전에 직접 넣은 금액을 지움
+        breakMinutes: edit.breakMinutes === "" ? null : Number(edit.breakMinutes), note: edit.note, ...coverFields,
       };
       return {
         ...d,
@@ -8333,30 +8346,46 @@ function WorkerDetail({ data, update, saveConfirmed, canBadge, workerId, mode, a
         {edit && (
           <>
             <Field label="날짜"><input type="date" value={edit.date} onChange={(ev) => setEdit({ ...edit, date: ev.target.value })} style={inputStyle} /></Field>
+            <Field label="지급 방식">
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setEdit({ ...edit, isFlat: false })} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: !edit.isFlat ? "#fff" : C.text, background: !edit.isFlat ? C.blue : C.tile }}>시간으로 자동 계산</button>
+                <button onClick={() => setEdit({ ...edit, isFlat: true })} className="pressable" style={{ fontSize: 12.5, fontWeight: 800, padding: "9px 0", borderRadius: RADIUS_SM, color: edit.isFlat ? "#fff" : C.text, background: edit.isFlat ? C.blue : C.tile }}>금액 직접 입력</button>
+              </div>
+            </Field>
             <div className="grid grid-cols-2 gap-2">
               <Field label="출근"><input type="time" value={edit.inT} onChange={(ev) => setEdit({ ...edit, inT: ev.target.value })} style={inputStyle} /></Field>
               <Field label="퇴근"><input type="time" value={edit.outT} onChange={(ev) => setEdit({ ...edit, outT: ev.target.value })} style={inputStyle} /></Field>
             </div>
-            {edit.isFlat ? (
-              <Field label="현장 (직접 입력)">
+            <Field label={edit.isFlat ? "현장 (목록에서 고르거나, 없으면 아래에 직접 입력)" : "현장"}>
+              <select value={edit.siteId} onChange={(ev) => setEdit({ ...edit, siteId: ev.target.value })} style={inputStyle}>
+                <option value="">{edit.isFlat ? "목록에 없음 (직접 입력)" : "현장 미지정"}</option>
+                {data.sites.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
+              </select>
+            </Field>
+            {edit.isFlat && !edit.siteId && (
+              <Field label="현장 이름 (직접 입력)">
                 <input value={edit.siteName} onChange={(ev) => setEdit({ ...edit, siteName: ev.target.value })} placeholder="예: 강남현장" style={inputStyle} />
-              </Field>
-            ) : (
-              <Field label="현장">
-                <select value={edit.siteId} onChange={(ev) => setEdit({ ...edit, siteId: ev.target.value })} style={inputStyle}>
-                  <option value="">현장 미지정</option>
-                  {data.sites.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
-                </select>
               </Field>
             )}
             {edit.isFlat ? (
-              <Field label="지급액 (원)">
-                <input type="number" value={edit.flatPay} onChange={(ev) => setEdit({ ...edit, flatPay: ev.target.value })} style={inputStyle} />
+              <Field label="지급 금액 (원) — 입력한 금액이 시간과 상관없이 그대로 정산돼요">
+                <input type="number" inputMode="numeric" value={edit.flatPay} onChange={(ev) => setEdit({ ...edit, flatPay: ev.target.value })} style={inputStyle} />
               </Field>
             ) : (
               <Field label="휴게시간 (분) · 비우면 자동 계산">
                 <input type="number" inputMode="numeric" placeholder="자동" value={edit.breakMinutes} onChange={(ev) => setEdit({ ...edit, breakMinutes: ev.target.value })} style={inputStyle} />
               </Field>
+            )}
+            <Toggle label="'대신 근무' 뱃지 표시 (끄면 일반 근무로 바뀌어요)" on={!!edit.isExtra}
+              onChange={(v) => setEdit({ ...edit, isExtra: v, ...(v ? {} : { coverForName: "", capBase: false }) })} />
+            {edit.isExtra && (
+              <Field label="대신 근무 대상자 (선택 — 모르면 비워두세요)">
+                <input value={edit.coverForName} onChange={(ev) => setEdit({ ...edit, coverForName: ev.target.value })} placeholder="예: 홍길동 (결근자 이름)" style={inputStyle} />
+              </Field>
+            )}
+            {edit.isExtra && !edit.isFlat && (
+              <Toggle label="본인근무+대신근무 혼합으로 확정 (본인 몫은 정상 지급, 초과분만 대신근무로 계산)"
+                on={!!edit.capBase} onChange={(v) => setEdit({ ...edit, capBase: v })} />
             )}
             {canBadge && <Toggle label="'수기' 뱃지 표시" on={!!edit.manual} onChange={(v) => setEdit({ ...edit, manual: v })} />}
             <Field label="비고">
