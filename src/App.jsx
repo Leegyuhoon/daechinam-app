@@ -4387,7 +4387,6 @@ function ChatAdminView({ data, inbox, onReload, setToast, initialWorkerId }) {
         {rows.map(({ w, e }) => (
           <Tile key={w.id} onClick={() => setRoom({ id: w.id, name: w.name })} style={{ padding: "12px 14px" }}>
             <div className="flex items-center gap-3">
-              <div style={{ width: 38, height: 38, borderRadius: 999, background: C.bg, color: C.aqua, fontWeight: 900, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{w.name.slice(0, 1)}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="flex items-center justify-between gap-2">
                   <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text }}>{w.name}</div>
