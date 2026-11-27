@@ -5321,7 +5321,7 @@ function SupplyAdminView({ data, update, setToast }) {
         const qty = Number(row.qty) || 1;
         if (row.id) {
           // 기존 요청 항목 — 구매 정보(수량 포함)를 갱신
-          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice } : x));
+          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, purchasedAt: x.purchasedAt || at } : x));
         } else if (row.itemName.trim()) {
           // "+"로 새로 추가한 항목 — 요청 과정 없이 바로 구매·전달완료로 등록
           const base = reqs.find((x) => purchaseEdit.groupIds.includes(x.id));
@@ -5330,7 +5330,7 @@ function SupplyAdminView({ data, update, setToast }) {
             workerId: base?.workerId || null, workerName: base?.workerName || "관리자",
             itemName: row.itemName.trim(), qty, note: "",
             status: "delivered", createdAt: at, respondedAt: at, batchId: groupBatchId,
-            vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice,
+            vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, purchasedAt: at,
           });
         }
       });
@@ -5549,7 +5549,7 @@ function SupplyAdminView({ data, update, setToast }) {
               )}
               {r.status === "approved" && <Btn small onClick={() => setStatus(r.id, "delivered")}>전달 완료 처리</Btn>}
               <Btn kind="ghost" small onClick={() => openPurchaseEdit(r)}>구매 정보 입력</Btn>
-              <button onClick={() => { if (window.confirm("이 요청을 정말 삭제할까요?")) remove(r.id); }} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
+              <button onClick={() => { if (window.confirm("이 요청을 정말 삭제할까요?\n삭제하면 용품 통계(사용량·금액)에서도 빠져요.")) remove(r.id); }} className="ml-auto flex items-center gap-1" style={{ fontSize: 12, color: C.sub, fontWeight: 700, flexShrink: 0 }}>
                 <Trash2 size={13} /> 삭제
               </button>
             </div>
