@@ -7470,7 +7470,7 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
       oneOffCount: a.oneOffCount + (r.oneOffCount || 0), oneOffMin: a.oneOffMin + (r.oneOffMin || 0), oneOffPay: a.oneOffPay + (r.oneOffPay || 0),
     };
   }, { net: 0, pay: 0, days: 0, times: 0, blocks: 0, otMin: 0, shortMin: 0, flags: 0, coverCount: 0, coverMin: 0, coverPay: 0, oneOffCount: 0, oneOffMin: 0, oneOffPay: 0, fixedCount: 0, fixedPay: 0 });
-  const maxNet = Math.max(1, ...rows.filter((r) => !r.w.fixedSalary).map((r) => r.net), 1);
+  const maxNet = Math.max(1, ...rows.map((r) => r.net || 0));
 
   const downloadCsv = () => {
     const head = isShiftMode
@@ -8120,8 +8120,8 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
                 </div>
               </div>
               <div className="mt-2.5 flex items-center gap-2">
-                <div style={{ flex: 1, height: 5, background: C.line }}>
-                  <div style={{ width: `${(net / maxNet) * 100}%`, height: "100%", background: C.aquaDeep }} />
+                <div style={{ flex: 1, minWidth: 0, height: 5, background: C.line, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, Math.max(0, ((net || 0) / maxNet) * 100))}%`, height: "100%", background: C.aquaDeep }} />
                 </div>
                 {blocks > 0 && !w.fixedSalary && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.blue, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>추가 {blocks}회</span>}
                 {shortMin > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: C.red, fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>−{minStr(shortMin)}</span>}
