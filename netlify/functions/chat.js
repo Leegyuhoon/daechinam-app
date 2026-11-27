@@ -21,12 +21,12 @@ const MAX_MESSAGES = 600; // 대화방 하나에 보관하는 최대 메시지 �
 
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: JSON_H });
 
-function getChatStore() {
+export function getChatStore() {
   try { return getStore({ name: "daechinam-chat", consistency: "strong" }); } catch (e) { return getStore("daechinam-chat"); }
 }
 
 // 여러 사람이 동시에 보내도 서로의 메시지를 덮어쓰지 않게, "내가 읽은 버전 그대로일 때만 저장"하고 아니면 다시 읽어서 재시도함
-async function mutate(store, key, fn) {
+export async function mutate(store, key, fn) {
   for (let attempt = 0; attempt < 8; attempt++) {
     let entry = null;
     try { entry = await store.getWithMetadata(key, { type: "json" }); } catch (e) { entry = null; }
@@ -114,7 +114,7 @@ async function sendPush(sub, payload) {
   return res.ok ? "ok" : `fail:${res.status}`;
 }
 
-async function pushTo(store, owner, payload) {
+export async function pushTo(store, owner, payload) {
   if (!process.env.VAPID_PUBLIC || !process.env.VAPID_PRIVATE) return;
   let list = [];
   try { list = (await store.get(`push:${owner}`, { type: "json" })) || []; } catch (e) { list = []; }
