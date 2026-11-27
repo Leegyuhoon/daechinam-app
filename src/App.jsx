@@ -1454,7 +1454,7 @@ function MainApp() {
   }
 
   return (
-    <div style={{ background: C.bg, fontFamily: SANS, minHeight: 720 }}>
+    <div style={{ background: C.bg, fontFamily: SANS, minHeight: "max(720px, 100vh)" }}>
       <style>{`
         @keyframes modalIn { from { opacity:0; transform:translateY(14px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
         @keyframes backdropIn { from { opacity:0; } to { opacity:1; } }
@@ -1463,7 +1463,7 @@ function MainApp() {
         .btn-press:active { transform: scale(0.96); filter: brightness(0.94); }
       `}</style>
       <div className="relative mx-auto flex flex-col" style={{
-        maxWidth: 560, minHeight: 720, overflow: "hidden",
+        maxWidth: 560, minHeight: "max(720px, 100vh)", overflow: "hidden",
         background: `radial-gradient(120% 60% at 50% 0%, ${C.bgSoft} 0%, ${C.bg} 55%)`,
       }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
@@ -8093,7 +8093,6 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
                 <Tile key={w.id} onClick={() => setDetail(w.id)} style={{ padding: "13px 14px" }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5" style={{ minWidth: 0 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 999, background: C.bgSoft, color: C.onDark, fontSize: 13, fontWeight: 800, flexShrink: 0 }} className="flex items-center justify-center">{w.name.slice(0, 1)}</div>
                   <div style={{ minWidth: 0 }}>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span style={{ fontWeight: 800, fontSize: 15.5, color: C.text }}>{w.name}</span>
