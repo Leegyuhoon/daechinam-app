@@ -1200,7 +1200,27 @@ const Row = ({ k, v, mono }) => (
 );
 
 /* ─────────────────────────  앱  ───────────────────────── */
+// 대표 승인 링크(/?approve=<id>.<token>)로 들어오면 관리자 앱 대신 승인 화면만 보여줌
+const __approveLink = (() => {
+  try {
+    const q = new URLSearchParams(window.location.search).get("approve");
+    if (!q) return null;
+    const [id, token] = q.split(".");
+    return id && token ? { id, token } : null;
+  } catch (e) { return null; }
+})();
+// 알림을 눌러 앱이 열렸을 때 곧바로 품의서 화면으로 가기 위한 정보 (?approvals=1)
+const __approvalsLink = (() => {
+  try {
+    if (new URLSearchParams(window.location.search).get("approvals") !== "1") return null;
+    window.history.replaceState(window.history.state, "", window.location.pathname);
+    return { used: false };
+  } catch (e) { return null; }
+})();
 export default function App() {
+  return __approveLink ? <CeoApprovalPage id={__approveLink.id} token={__approveLink.token} /> : <MainApp />;
+}
+function MainApp() {
   const [data, setData] = useState(null);
   const [dev, setDev] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3892,9 +3912,9 @@ function AdminGate({ data, update, setToast, onPass }) {
 
 /* ─────────────────────────  관리자 영역  ───────────────────────── */
 function AdminArea({ data, update, saveConfirmed, dev, updateDev, setToast, onLock, onRefresh }) {
-  const [view, setView] = useState(() => (__chatLink && __chatLink.role === "admin" && !__chatLink.used ? "chat" : "records"));
+  const [view, setView] = useState(() => (__chatLink && __chatLink.role === "admin" && !__chatLink.used ? "chat" : (__approvalsLink && !__approvalsLink.used ? "supplies" : "records")));
   const chatInitialWorker = useRef(__chatLink && __chatLink.role === "admin" && !__chatLink.used ? __chatLink.w : "");
-  useEffect(() => { if (__chatLink) __chatLink.used = true; }, []);
+  useEffect(() => { if (__chatLink) __chatLink.used = true; if (__approvalsLink) __approvalsLink.used = true; }, []);
   const chatUnread = useChatUnread("admin", null);
   const [settingsAutoOpenReqId, setSettingsAutoOpenReqId] = useState(null); // 배너 눌렀을 때 설정에서 바로 열어줄 서명요청 id
   const [seenTick, setSeenTick] = useState(0); // 배지 갱신 트리거
@@ -4333,6 +4353,464 @@ function ChatAdminView({ data, inbox, onReload, setToast, initialWorkerId }) {
   );
 }
 
+/* ─────────────────────────  품의서(구매 승인 요청)  ───────────────────────── */
+// 관리자가 작성 → 링크를 카톡 등으로 대표에게 전달 → 대표가 링크에서 승인/반려 + 지시사항 입력. 서버: netlify/functions/approval.js (/api/approval)
+const apFetch = async (qs, body) => {
+  const r = await fetch(`/api/approval${qs || ""}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
+  let j = {}; try { j = await r.json(); } catch (e) { /* 응답이 비어 있으면 그대로 */ }
+  if (!r.ok) { const err = new Error(j.error || "failed"); err.code = j.error; err.left = j.left; err.status = r.status; throw err; }
+  return j;
+};
+// 대표에게 보낼 링크의 토큰은 서버에 원문이 없어서, 만든 기기에만 저장해 둠(다른 기기에서는 '새 링크 만들기' 사용)
+const apTokGet = (id) => { try { return localStorage.getItem(`apTok:${id}`) || ""; } catch (e) { return ""; } };
+const apTokSet = (id, t) => { try { localStorage.setItem(`apTok:${id}`, t); } catch (e) { /* 저장 불가 환경이면 무시 */ } };
+const apLink = (id, token) => `${window.location.origin}/?approve=${id}.${token}`;
+const apStatusInfo = {
+  pending: ["승인 대기", "#B45309", "#FEF3C7"],
+  approved: ["승인됨", "#047857", "#D1FAE5"],
+  rejected: ["반려됨", "#B91C1C", "#FEE2E2"],
+};
+const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nl2br = (s) => escH(s).replace(/\n/g, "<br/>");
+const apKorDate = (k) => { if (!k) return "0000년 00월 00일"; const [y, m, d] = k.split("-"); return `${y}년 ${m}월 ${d}일`; };
+const apShort = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`; };
+const apCalc = (f) => {
+  const supply = (f.items || []).reduce((s, it) => s + Math.round((Number(it.qty) || 0) * (Number(it.price) || 0)), 0);
+  const vat = f.vatIncluded ? 0 : Math.round(supply * 0.1);
+  return { supply, vat, total: supply + vat };
+};
+const AP_CIRC = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+// 품의서 양식(HTML) — 업로드해 주신 한글 양식의 구성을 그대로 따름. 화면 표시와 PDF 만들기에 같이 씀
+function approvalHtml(doc) {
+  const f = doc.form || {};
+  const c = apCalc(f);
+  const bd = "1px solid #222";
+  const th = `border:${bd};background:#EDEDED;font-weight:700;text-align:center;padding:7px 4px;font-size:13px;letter-spacing:2px;white-space:nowrap`;
+  const td = `border:${bd};padding:7px 10px;font-size:13px`;
+  const items = (f.items || []).map((it, i) => {
+    const line = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
+    return `${i === 0 ? "" : "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"}${AP_CIRC[i] || `(${i + 1})`}${escH(it.name)} ${money(Number(it.qty) || 0)}${escH(it.unit)} (단가 ${money(Number(it.price) || 0)}원 × ${money(Number(it.qty) || 0)} = ${money(line)}원)`;
+  }).join("<br/>");
+  const body = `${f.intro ? nl2br(f.intro) + "<br/><br/>" : ""}<div style="text-align:center">- 아 래 -</div><br/>
+    1. 공급처 : ${escH(f.supplier)}<br/>
+    2. 공급품목 : ${items || "-"}<br/>
+    3. 납품 예정 일자 : ${apKorDate(f.deliverDate)}<br/>
+    4. 대금 예정 금액 : ${f.vatIncluded ? `합 계 ${money(c.total)}원 (부가세 포함)` : `공급가 ${money(c.supply)}원<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;V A T ${money(c.vat)}원<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>합 계 ${money(c.total)}원</b>`}<br/>
+    5. 대금 지급 일자 : ${apKorDate(f.payDate)}<br/>
+    6. 대금 지급 방법 : ${escH(f.payMethod)}${f.payNote ? `<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${nl2br(f.payNote)}` : ""}`;
+  const dec = doc.status === "approved" ? `<div style="color:#C0392B;font-weight:900;font-size:15px;border:2px solid #C0392B;border-radius:50%;display:inline-block;padding:5px 7px">승인</div><div style="font-size:10px;margin-top:2px">${apShort(doc.decidedAt)}</div>`
+    : doc.status === "rejected" ? `<div style="color:#555;font-weight:900;font-size:14px">반려</div><div style="font-size:10px;margin-top:2px">${apShort(doc.decidedAt)}</div>` : "";
+  const sign = (s) => `<td style="${td};height:54px;text-align:center;width:72px;padding:3px">${s}</td>`;
+  return `<div style="width:720px;background:#fff;color:#111;font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif;padding:26px 28px;box-sizing:border-box">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+    <div style="flex:1;text-align:center;font-size:30px;font-weight:900;letter-spacing:14px;padding-top:26px">품 의 서</div>
+    <table style="border-collapse:collapse"><tr><td rowspan="2" style="${th};width:26px;letter-spacing:0;line-height:1.5">결<br/>재<br/>란</td><td style="${th};width:72px">담 당</td><td style="${th};width:72px">이 사</td><td style="${th};width:72px">대 표</td></tr>
+    <tr>${sign(`<div style="font-size:12px;font-weight:700">${escH(f.authorName)}</div><div style="font-size:10px;margin-top:2px">${apShort(f.writeDate ? f.writeDate + "T00:00:00" : doc.createdAt)}</div>`)}${sign("")}${sign(dec)}</tr></table>
+  </div>
+  <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+    <tr><td style="${th};width:15%">문 서 번 호</td><td style="${td};width:35%;text-align:center">${escH(f.docNo)}</td><td style="${th};width:15%">부 서</td><td style="${td};width:35%">${escH(f.dept)}</td></tr>
+    <tr><td style="${th}">작 성 일 자</td><td style="${td};text-align:center">${apKorDate(f.writeDate)}</td><td style="${th}">직 급</td><td style="${td}">${escH(f.authorRank)}</td></tr>
+    <tr><td style="${th}">시 행 일 자</td><td style="${td};text-align:center">${apKorDate(f.execDate)}</td><td style="${th}">기 안 자</td><td style="${td}">${escH(f.authorName)}</td></tr>
+    <tr><td style="${th}">수 신/참 조</td><td style="${td};text-align:center">${escH(f.to || "품 의")}</td><td style="${th}">협 조 부 서</td><td style="${td}">${escH(f.coop)}</td></tr>
+    <tr><td style="${th}">제 목</td><td style="${td}" colspan="3">${escH(f.title)}</td></tr>
+    <tr><td style="${th};letter-spacing:6px" colspan="4">품 의 내 용</td></tr>
+    <tr><td style="${td};line-height:1.75;min-height:300px;height:300px;vertical-align:top;padding:14px 14px" colspan="4">${body}</td></tr>
+    <tr><td style="${th};letter-spacing:4px" colspan="2">총 예 상 비 용 (원)</td><td style="${td};text-align:center" colspan="2">(₩${money(c.total)})</td></tr>
+    <tr><td style="${th}">첨 부</td><td style="${td}" colspan="3">${escH(f.attachments)}</td></tr>
+    <tr><td style="${th}">비 고</td><td style="${td};height:48px;vertical-align:top" colspan="3">${nl2br(f.remark)}</td></tr>
+  </table>
+  <div style="text-align:center;font-weight:700;font-size:13.5px;margin:12px 0">위와 같은 사유로 품의 하오니 재가하여 주시기 바랍니다.</div>
+  <table style="border-collapse:collapse;width:100%"><tr><td style="${th};letter-spacing:3px">• 대표자 지시사항 •</td></tr>
+  <tr><td style="${td};height:74px;vertical-align:top;white-space:normal">${nl2br(doc.directive)}</td></tr></table>
+</div>`;
+}
+const apFileName = (doc) => `품의서_${(doc.form.title || "품의서").replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40)}.pdf`;
+async function apSavePdf(doc, setToast) {
+  try {
+    const blob = await htmlToPdfBlob(approvalHtml(doc), 720);
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = apFileName(doc);
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    setToast("PDF를 저장했어요");
+  } catch (e) { setToast("PDF를 만들지 못했어요"); }
+}
+// 화면 폭에 맞춰 줄여서 보여줌(양식은 720px 기준)
+function ScaledHtml({ html }) {
+  const wrap = useRef(null), inner = useRef(null);
+  const [k, setK] = useState(1), [h, setH] = useState(0);
+  const fit = useCallback(() => {
+    if (!wrap.current || !inner.current) return;
+    const s = Math.min(1, wrap.current.clientWidth / 720);
+    setK(s); setH(inner.current.offsetHeight * s);
+  }, []);
+  useEffect(() => { fit(); window.addEventListener("resize", fit); return () => window.removeEventListener("resize", fit); }, [fit, html]);
+  return (
+    <div ref={wrap} style={{ width: "100%", height: h || "auto", overflow: "hidden", background: "#fff", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }}>
+      <div ref={inner} style={{ width: 720, transform: `scale(${k})`, transformOrigin: "top left" }} dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+}
+function useApprovalDocs(ms) {
+  const [docs, setDocs] = useState(null);
+  const load = useCallback(async () => {
+    try { const j = await apFetch("?action=list"); setDocs(j.docs || []); } catch (e) { /* 일시 오류는 다음 확인 때 다시 */ }
+  }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, ms);
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [load, ms]);
+  return { docs, reload: load };
+}
+const apChip = (status) => {
+  const [label, col, bg] = apStatusInfo[status] || apStatusInfo.pending;
+  return <span style={{ fontSize: 10.5, fontWeight: 900, color: col, background: bg, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
+};
+
+// 관리자: 품의서 목록 · 작성 · 상세(카톡 보내기, PDF)
+function ApprovalAdmin({ data, onClose, setToast }) {
+  useBackClose(true, onClose);
+  const { docs, reload } = useApprovalDocs(15000);
+  const [editing, setEditing] = useState(null); // { id|null, form }
+  const [viewId, setViewId] = useState(null);
+  const [pinAsk, setPinAsk] = useState(null); // 새 링크 만들 때 승인 비밀번호 입력
+  const [busy, setBusy] = useState(false);
+  const view = viewId && docs ? docs.find((d) => d.id === viewId) : null;
+
+  const newForm = () => {
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem("apLast") || "{}"); } catch (e) { last = {}; }
+    const now = new Date(), yr = now.getFullYear();
+    const n = (docs || []).filter((d) => (d.form.docNo || "").includes(`${yr}-`)).length + 1;
+    return {
+      docNo: `제 ${yr}-${pad(n)} 호`, dept: last.dept || "", authorRank: last.authorRank || "", authorName: last.authorName || "",
+      writeDate: dKey(now), execDate: dKey(now), to: "품 의", coop: "", title: "", intro: "", supplier: "",
+      items: [{ name: "", qty: 1, unit: "", price: 0 }], vatIncluded: false, deliverDate: "", payDate: "", payMethod: "", payNote: "", attachments: "", remark: "",
+    };
+  };
+  const share = async (doc, token) => {
+    const link = apLink(doc.id, token);
+    const c = apCalc(doc.form);
+    const text = `[품의서 승인 요청]\n${doc.form.title || "구매 품의"}\n합계 ${money(c.total)}원\n링크를 열어 확인하고 승인/반려해 주세요.`;
+    try {
+      if (navigator.share) { await navigator.share({ title: "품의서 승인 요청", text, url: link }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    try { await navigator.clipboard.writeText(`${text}\n${link}`); setToast("링크를 복사했어요. 카톡에 붙여넣어 보내 주세요"); }
+    catch (e) { window.prompt("아래 링크를 복사해서 카톡으로 보내 주세요", link); }
+  };
+  const sendPdf = async (doc) => {
+    setBusy(true);
+    try {
+      const blob = await htmlToPdfBlob(approvalHtml(doc), 720);
+      const file = new File([blob], apFileName(doc), { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: "품의서" });
+      else setToast("이 기기에서는 파일 공유를 지원하지 않아요. PDF 저장 후 카톡에 첨부해 주세요");
+    } catch (e) { if (!e || e.name !== "AbortError") setToast("PDF를 보내지 못했어요"); }
+    setBusy(false);
+  };
+  const sendLink = (doc) => {
+    const tok = apTokGet(doc.id);
+    if (!tok) { setPinAsk({ doc, pin: "" }); return; }
+    share(doc, tok);
+  };
+  const relink = async () => {
+    setBusy(true);
+    try {
+      const j = await apFetch("", { action: "relink", id: pinAsk.doc.id, pin: pinAsk.pin });
+      apTokSet(pinAsk.doc.id, j.token);
+      const d = pinAsk.doc; setPinAsk(null); setBusy(false);
+      share(d, j.token);
+    } catch (e) { setBusy(false); setToast(e.code === "pin" ? "승인 비밀번호가 맞지 않아요" : "새 링크를 만들지 못했어요"); }
+  };
+  const remove = async (doc) => {
+    if (!window.confirm(`"${doc.form.title || "품의서"}"를 삭제할까요? 대표에게 보낸 링크도 열리지 않게 돼요.`)) return;
+    try { await apFetch("", { action: "delete", id: doc.id }); setViewId(null); reload(); setToast("삭제했어요"); } catch (e) { setToast("삭제하지 못했어요"); }
+  };
+
+  const Header = ({ title, onBack }) => (
+    <div className="flex items-center gap-2 px-3" style={{ height: 54, borderBottom: `1px solid ${C.lineDark}`, flexShrink: 0, paddingTop: "env(safe-area-inset-top)" }}>
+      <button onClick={onBack} className="flex items-center justify-center" style={{ width: 36, height: 36 }}><ChevronLeft size={22} color={C.onDark} /></button>
+      <div style={{ flex: 1, fontSize: 15.5, fontWeight: 900, color: C.onDark }}>{title}</div>
+    </div>
+  );
+
+  if (editing) return <ApprovalEditor data={data} docs={docs || []} init={editing} setToast={setToast}
+    onCancel={() => setEditing(null)}
+    onSaved={(doc) => { setEditing(null); reload(); setViewId(doc.id); }} />;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 55, background: C.bg, display: "flex", flexDirection: "column", fontFamily: SANS }}>
+      <Header title={view ? "품의서" : "품의서"} onBack={() => (view ? setViewId(null) : onClose())} />
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 40px", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto" }}>
+          {!view && (
+            <>
+              <Btn full onClick={() => setEditing({ id: null, form: newForm() })}>＋ 새 품의서 작성</Btn>
+              <div style={{ fontSize: 11.5, color: C.onDarkSub, margin: "10px 2px 8px", lineHeight: 1.6 }}>작성 후 "카톡으로 보내기"를 누르면 대표님께 승인 링크를 보낼 수 있어요. 승인·반려되면 이 앱으로 알림이 와요.</div>
+              {docs === null && <div className="flex justify-center" style={{ padding: 30 }}><Loader2 className="animate-spin" size={20} color={C.aqua} /></div>}
+              {docs && docs.length === 0 && <div style={{ textAlign: "center", color: C.onDarkSub, fontSize: 13, padding: "40px 10px" }}>작성한 품의서가 없어요.</div>}
+              {(docs || []).map((d) => (
+                <Tile key={d.id} onClick={() => setViewId(d.id)} style={{ padding: "12px 14px", marginBottom: 8 }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div style={{ fontSize: 14.5, fontWeight: 800, color: C.text, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.form.title || "(제목 없음)"}</div>
+                    {apChip(d.status)}
+                  </div>
+                  <div className="flex items-center justify-between" style={{ marginTop: 4, fontSize: 12, color: C.sub }}>
+                    <span>{d.form.docNo} · {d.form.writeDate}</span>
+                    <span style={{ color: C.coral, fontWeight: 900 }}>{money(apCalc(d.form).total)}원</span>
+                  </div>
+                  {d.status !== "pending" && d.directive && <div style={{ marginTop: 6, fontSize: 12, color: C.text, background: C.tileSoft, padding: "5px 7px" }}>대표 지시: {d.directive}</div>}
+                </Tile>
+              ))}
+            </>
+          )}
+          {view && (
+            <>
+              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                <div>{apChip(view.status)} <span style={{ fontSize: 11.5, color: C.onDarkSub, marginLeft: 6 }}>{view.decidedAt ? `${apShort(view.decidedAt)} 결재` : ""}</span></div>
+              </div>
+              {view.status !== "pending" && view.directive && (
+                <div style={{ background: C.tile, padding: "10px 12px", marginBottom: 10, fontSize: 13, color: C.text, borderLeft: `3px solid ${view.status === "approved" ? "#047857" : "#B91C1C"}` }}>
+                  <b>대표자 지시사항</b><br />{view.directive}
+                </div>
+              )}
+              <ScaledHtml html={approvalHtml(view)} />
+              <div className="grid grid-cols-2 gap-2" style={{ marginTop: 12 }}>
+                <Btn full disabled={busy} onClick={() => sendLink(view)}>카톡으로 보내기</Btn>
+                <Btn full kind="ghost" disabled={busy} onClick={() => apSavePdf(view, setToast)}>PDF 저장</Btn>
+                <Btn full kind="ghost" disabled={busy} onClick={() => sendPdf(view)}>PDF 파일로 보내기</Btn>
+                {view.status !== "approved"
+                  ? <Btn full kind="ghost" disabled={busy} onClick={() => setEditing({ id: view.id, form: view.form })}>{view.status === "rejected" ? "수정해서 다시 올리기" : "수정"}</Btn>
+                  : <Btn full kind="ghost" disabled>승인됨(수정 불가)</Btn>}
+              </div>
+              <div style={{ marginTop: 10 }}><Btn full kind="danger" onClick={() => remove(view)}>삭제</Btn></div>
+            </>
+          )}
+        </div>
+      </div>
+      <Modal open={!!pinAsk} onClose={() => !busy && setPinAsk(null)}>
+        {pinAsk && (
+          <>
+            <div style={{ fontSize: 17, fontWeight: 900, color: C.text }}>새 링크 만들기</div>
+            <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.6 }}>이 기기에는 대표님께 보낼 링크가 저장돼 있지 않아요. 문서를 만들 때 정한 <b>승인 비밀번호</b>를 입력하면 새 링크를 만들어요. (예전 링크는 열리지 않게 돼요)</div>
+            <div className="mt-3"><input type="password" inputMode="numeric" maxLength={8} value={pinAsk.pin} onChange={(e) => setPinAsk({ ...pinAsk, pin: e.target.value.replace(/\D/g, "") })} placeholder="승인 비밀번호(숫자 4~8자리)" style={inputStyle} /></div>
+            <div className="mt-3"><Btn full disabled={busy || pinAsk.pin.length < 4} onClick={relink}>{busy ? "만드는 중…" : "새 링크 만들고 보내기"}</Btn></div>
+          </>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// 품의서 작성 화면
+function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
+  useBackClose(true, onCancel);
+  const [f, setF] = useState(init.form);
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [picked, setPicked] = useState({});
+  const isNew = !init.id;
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const setItem = (i, k, v) => setF((x) => ({ ...x, items: x.items.map((it, j) => (j === i ? { ...it, [k]: v } : it)) }));
+  const c = apCalc(f);
+  const lbl = { fontSize: 11.5, fontWeight: 800, color: C.sub };
+
+  // 용품 요청(요청됨·승인됨)에서 품목을 불러와 채움 — 구매 정보(업체·단가)가 있으면 같이 가져옴
+  const cands = useMemo(() => [...(data.supplyRequests || [])].filter((r) => r.status === "requested" || r.status === "approved").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 60), [data.supplyRequests]);
+  const applyPick = () => {
+    const sel = cands.filter((r) => picked[r.id]);
+    if (!sel.length) { setPickOpen(false); return; }
+    setF((x) => {
+      const existing = x.items.filter((it) => it.name.trim());
+      const add = sel.map((r) => ({ name: r.itemName, qty: r.qty || 1, unit: "", price: r.unitPrice != null ? Number(r.unitPrice) : 0 }));
+      const vendor = sel.find((r) => r.vendor)?.vendor || "";
+      const site = sel[0].siteName && sel[0].siteName !== "현장 미지정" ? sel[0].siteName : "";
+      const d = new Date();
+      return {
+        ...x, items: [...existing, ...add],
+        supplier: x.supplier || vendor,
+        title: x.title || `${site ? site + " " : ""}물품 구매 결제 승인요청의 건.`,
+        intro: x.intro || `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${site ? site + "에" : ""} 필요한 청소 물품을 구매하고자 아래와 같이 품의 합니다.`,
+      };
+    });
+    setPicked({}); setPickOpen(false);
+  };
+
+  const save = async () => {
+    if (!f.title.trim()) { setToast("제목을 입력해 주세요"); return; }
+    if (!f.items.some((it) => it.name.trim())) { setToast("품목을 한 개 이상 입력해 주세요"); return; }
+    if (isNew && !/^\d{4,8}$/.test(pin)) { setToast("대표님이 승인할 때 쓸 비밀번호(숫자 4~8자리)를 정해 주세요"); return; }
+    setBusy(true);
+    const form = { ...f, items: f.items.filter((it) => it.name.trim()).map((it) => ({ ...it, qty: Number(it.qty) || 0, price: Number(it.price) || 0 })) };
+    try { localStorage.setItem("apLast", JSON.stringify({ dept: f.dept, authorRank: f.authorRank, authorName: f.authorName })); } catch (e) { /* 기억 못 해도 괜찮음 */ }
+    try {
+      let doc;
+      if (isNew) {
+        const j = await apFetch("", { action: "create", form, pin });
+        apTokSet(j.id, j.token); doc = j.doc;
+      } else {
+        const j = await apFetch("", { action: "update", id: init.id, form }); doc = j.doc;
+      }
+      setToast("저장했어요. '카톡으로 보내기'로 대표님께 보내세요");
+      onSaved(doc);
+    } catch (e) { setToast(e.code === "cannot update" ? "이미 승인된 문서는 수정할 수 없어요" : "저장하지 못했어요. 잠시 후 다시 시도해 주세요"); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 56, background: C.bg, display: "flex", flexDirection: "column", fontFamily: SANS }}>
+      <div className="flex items-center gap-2 px-3" style={{ height: 54, borderBottom: `1px solid ${C.lineDark}`, flexShrink: 0, paddingTop: "env(safe-area-inset-top)" }}>
+        <button onClick={onCancel} className="flex items-center justify-center" style={{ width: 36, height: 36 }}><ChevronLeft size={22} color={C.onDark} /></button>
+        <div style={{ flex: 1, fontSize: 15.5, fontWeight: 900, color: C.onDark }}>{isNew ? "품의서 작성" : "품의서 수정"}</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 30px", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ maxWidth: 560, margin: "0 auto", background: C.tile, padding: 14 }}>
+          <Btn full kind="ghost" onClick={() => setPickOpen(true)}>요청된 용품에서 불러오기</Btn>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <Field label="문서번호"><input value={f.docNo} onChange={(e) => set("docNo", e.target.value)} style={inputStyle} /></Field>
+            <Field label="부서"><input value={f.dept} onChange={(e) => set("dept", e.target.value)} placeholder="작성자의 부서" style={inputStyle} /></Field>
+            <Field label="직급"><input value={f.authorRank} onChange={(e) => set("authorRank", e.target.value)} placeholder="작성자의 직급" style={inputStyle} /></Field>
+            <Field label="기안자"><input value={f.authorName} onChange={(e) => set("authorName", e.target.value)} placeholder="작성자 성명" style={inputStyle} /></Field>
+            <Field label="작성일자"><input type="date" value={f.writeDate} onChange={(e) => set("writeDate", e.target.value)} style={inputStyle} /></Field>
+            <Field label="시행일자(구매 진행일)"><input type="date" value={f.execDate} onChange={(e) => set("execDate", e.target.value)} style={inputStyle} /></Field>
+            <Field label="수신/참조"><input value={f.to} onChange={(e) => set("to", e.target.value)} style={inputStyle} /></Field>
+            <Field label="협조부서(없으면 비움)"><input value={f.coop} onChange={(e) => set("coop", e.target.value)} style={inputStyle} /></Field>
+          </div>
+          <Field label="제목"><input value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="예: 메트라이프 생명보험 본사 물품구매 결제 승인요청의 건." style={inputStyle} /></Field>
+          <Field label="품의 내용 첫 문장"><textarea value={f.intro} rows={3} onChange={(e) => set("intro", e.target.value)} placeholder="예: 2026년 11월 메트라이프 생명보험 본사(종로점)에 필요한 청소 물품을 구매하고자 아래와 같이 품의 합니다." style={{ ...inputStyle, resize: "vertical" }} /></Field>
+          <Field label="1. 공급처"><input value={f.supplier} onChange={(e) => set("supplier", e.target.value)} placeholder="예: 제이엘그린환경" style={inputStyle} /></Field>
+
+          <div style={{ ...lbl, margin: "8px 0 6px" }}>2. 공급품목</div>
+          {f.items.map((it, i) => (
+            <div key={i} style={{ background: C.tileSoft, padding: 8, marginBottom: 6 }}>
+              <div className="flex gap-1.5">
+                <input value={it.name} onChange={(e) => setItem(i, "name", e.target.value)} placeholder="품목 (예: 종량제봉투 100L)" style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={() => setF((x) => ({ ...x, items: x.items.length > 1 ? x.items.filter((_, j) => j !== i) : x.items }))} style={{ width: 38, flexShrink: 0 }}><X size={16} color={C.sub} /></button>
+              </div>
+              <div className="grid gap-1.5 mt-1.5" style={{ gridTemplateColumns: "1fr 1fr 1.4fr" }}>
+                <input type="number" inputMode="numeric" value={it.qty} onChange={(e) => setItem(i, "qty", e.target.value)} placeholder="수량" style={inputStyle} />
+                <input value={it.unit} onChange={(e) => setItem(i, "unit", e.target.value)} placeholder="단위(박스)" style={inputStyle} />
+                <input type="number" inputMode="numeric" value={it.price || ""} onChange={(e) => setItem(i, "price", e.target.value)} placeholder="단가(원)" style={inputStyle} />
+              </div>
+              <div style={{ textAlign: "right", fontSize: 12, color: C.sub, marginTop: 4 }}>금액 {money(Math.round((Number(it.qty) || 0) * (Number(it.price) || 0)))}원</div>
+            </div>
+          ))}
+          <Btn full kind="ghost" small onClick={() => setF((x) => ({ ...x, items: [...x.items, { name: "", qty: 1, unit: "", price: 0 }] }))}>＋ 품목 추가</Btn>
+          <Toggle label="입력한 단가에 부가세가 이미 포함돼 있어요" desc="켜면 부가세를 따로 더하지 않아요" on={!!f.vatIncluded} onChange={(v) => set("vatIncluded", v)} />
+          <div style={{ background: C.tileSoft, padding: "10px 12px", fontSize: 13, color: C.text, lineHeight: 1.8 }}>
+            4. 대금 예정 금액<br />
+            공급가 {money(c.supply)}원{!f.vatIncluded && <> · 부가세 {money(c.vat)}원</>}<br />
+            <b style={{ color: C.coral }}>합계 {money(c.total)}원</b>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <Field label="3. 납품 예정 일자"><input type="date" value={f.deliverDate} onChange={(e) => set("deliverDate", e.target.value)} style={inputStyle} /></Field>
+            <Field label="5. 대금 지급 일자"><input type="date" value={f.payDate} onChange={(e) => set("payDate", e.target.value)} style={inputStyle} /></Field>
+          </div>
+          <Field label="6. 대금 지급 방법"><input value={f.payMethod} onChange={(e) => set("payMethod", e.target.value)} placeholder="예: [00은행 000-000-0000] 예금주 - 제이엘그린환경" style={inputStyle} /></Field>
+          <Field label="지급 방법 추가 설명(선택)"><input value={f.payNote} onChange={(e) => set("payNote", e.target.value)} placeholder="예: * 선결제 계좌이체 후 세금계산서 발행 업체 *" style={inputStyle} /></Field>
+          <Field label="첨부"><input value={f.attachments} onChange={(e) => set("attachments", e.target.value)} placeholder="예: 사업자 등록증 사본 1부, 통장사본 1부, 견적서 1부" style={inputStyle} /></Field>
+          <Field label="비고"><textarea value={f.remark} rows={2} onChange={(e) => set("remark", e.target.value)} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+          {isNew && (
+            <Field label="대표님 승인 비밀번호 (숫자 4~8자리)">
+              <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="정해서 대표님께 따로 알려 주세요" style={inputStyle} />
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>링크를 받은 사람이 아무나 승인하지 못하도록, 대표님이 승인할 때 이 번호를 입력해요. 링크와 함께 보내지 말고 말씀이나 문자로 따로 알려 주세요.</div>
+            </Field>
+          )}
+          <div className="mt-3"><Btn full disabled={busy} onClick={save}>{busy ? "저장 중…" : isNew ? "저장" : "수정해서 저장 (다시 승인 대기)"}</Btn></div>
+        </div>
+      </div>
+      <Modal open={pickOpen} onClose={() => setPickOpen(false)} title="요청된 용품 불러오기">
+        {cands.length === 0 && <div style={{ fontSize: 13, color: C.sub, padding: "10px 0" }}>불러올 용품 요청이 없어요.</div>}
+        <div style={{ maxHeight: "50vh", overflowY: "auto" }}>
+          {cands.map((r) => (
+            <button key={r.id} onClick={() => setPicked((p) => ({ ...p, [r.id]: !p[r.id] }))} className="flex items-center gap-2 w-full text-left"
+              style={{ padding: "9px 4px", borderBottom: `1px solid ${C.line}`, background: picked[r.id] ? C.tileSoft : "transparent" }}>
+              <span style={{ width: 20, height: 20, border: `2px solid ${picked[r.id] ? C.aquaDeep : C.line}`, background: picked[r.id] ? C.aquaDeep : "transparent", color: "#fff", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{picked[r.id] ? "✓" : ""}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.itemName} × {r.qty}</span>
+                <span style={{ display: "block", fontSize: 11.5, color: C.sub }}>{r.siteName} · {r.workerName} · {r.date}{r.vendor ? ` · ${r.vendor}` : ""}{r.unitPrice != null ? ` · 단가 ${money(r.unitPrice)}원` : ""}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="mt-3"><Btn full onClick={applyPick}>선택한 품목 넣기</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+
+// 대표용 승인 화면 — 링크(/?approve=…)로 열림. 관리자 잠금 없이 이 문서 한 건만 보이고, 승인 비밀번호가 맞아야 결재됨
+function CeoApprovalPage({ id, token }) {
+  const [doc, setDoc] = useState(null);
+  const [state, setState] = useState("loading"); // loading | ok | notfound
+  const [directive, setDirective] = useState("");
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { try { window.dispatchEvent(new Event("app-ready")); } catch (e) { /* 스플래시가 없으면 무시 */ } }, []);
+  useEffect(() => {
+    let alive = true;
+    apFetch(`?action=doc&id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`)
+      .then((j) => { if (alive) { setDoc(j.doc); setState("ok"); } })
+      .catch(() => { if (alive) setState("notfound"); });
+    return () => { alive = false; };
+  }, [id, token]);
+  const decide = async (decision) => {
+    if (!/^\d{4,8}$/.test(pin)) { setMsg("승인 비밀번호(숫자)를 입력해 주세요"); return; }
+    if (decision === "rejected" && !directive.trim() && !window.confirm("지시사항 없이 반려할까요?")) return;
+    setBusy(true); setMsg("");
+    try {
+      const j = await apFetch("", { action: "decide", id, token, pin, decision, directive });
+      setDoc(j.doc);
+    } catch (e) {
+      setMsg(e.code === "pin" ? `비밀번호가 맞지 않아요${e.left != null ? ` (남은 횟수 ${e.left}회)` : ""}`
+        : e.code === "locked" ? "비밀번호를 여러 번 틀려서 10분간 잠겼어요. 잠시 후 다시 시도해 주세요"
+        : e.code === "done" ? "이미 처리된 문서예요" : "처리하지 못했어요. 잠시 후 다시 시도해 주세요");
+    }
+    setBusy(false);
+  };
+  const toast = (m) => setMsg(m);
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: SANS, padding: "16px 14px 40px" }}>
+      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        <div style={{ color: C.onDark, fontSize: 16, fontWeight: 900, marginBottom: 12 }}>품의서 승인</div>
+        {state === "loading" && <div className="flex justify-center" style={{ padding: 40 }}><Loader2 className="animate-spin" size={22} color={C.aqua} /></div>}
+        {state === "notfound" && <div style={{ color: C.onDark, fontSize: 14, lineHeight: 1.7, background: C.bgSoft, padding: 18 }}>이 링크는 열 수 없어요. 링크가 잘못됐거나 새 링크로 바뀌었거나 문서가 삭제됐을 수 있어요.<br />작성한 담당자에게 새 링크를 요청해 주세요.</div>}
+        {state === "ok" && doc && (
+          <>
+            <div style={{ marginBottom: 8 }}>{apChip(doc.status)}</div>
+            <ScaledHtml html={approvalHtml(doc)} />
+            {doc.status === "pending" ? (
+              <div style={{ background: C.tile, padding: 14, marginTop: 14 }}>
+                <Field label="대표자 지시사항 (선택)">
+                  <textarea value={directive} rows={3} onChange={(e) => setDirective(e.target.value)} placeholder="전달할 지시사항이 있으면 적어 주세요" style={{ ...inputStyle, resize: "vertical" }} />
+                </Field>
+                <Field label="승인 비밀번호">
+                  <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="담당자에게 받은 숫자" style={inputStyle} />
+                </Field>
+                {msg && <div style={{ color: C.coral, fontSize: 12.5, fontWeight: 800, marginBottom: 8 }}>{msg}</div>}
+                <div className="grid grid-cols-2 gap-2">
+                  <Btn full kind="danger" disabled={busy} onClick={() => decide("rejected")}>반려</Btn>
+                  <Btn full disabled={busy} onClick={() => decide("approved")}>{busy ? "처리 중…" : "승인"}</Btn>
+                </div>
+              </div>
+            ) : (
+              <div style={{ background: C.tile, padding: 14, marginTop: 14, fontSize: 13.5, color: C.text, lineHeight: 1.7 }}>
+                {doc.status === "approved" ? "승인했어요." : "반려했어요."} 담당자에게 알림이 전달됐어요.
+                <div className="mt-3"><Btn full kind="ghost" onClick={() => apSavePdf(doc, toast)}>PDF 저장</Btn></div>
+                {msg && <div style={{ color: C.sub, fontSize: 12, marginTop: 6 }}>{msg}</div>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────────  현장 사진 관리(관리자, 폴더 구조)  ───────────────────────── */
 /* 관리자가 현장 검수 중 사진·영상을 직접 등록하는 모달 */
 function AdminUploadModal({ open, onClose, form, setForm, sites, busy, onSubmit, onPickFiles, onRemovePhotoAt }) {
@@ -4730,6 +5208,9 @@ function PhotoAdminView({ data, update, setToast }) {
 /* ─────────────────────────  용품 요청 관리(관리자)  ───────────────────────── */
 function SupplyAdminView({ data, update, setToast }) {
   const sites = data.sites || [];
+  const [apOpen, setApOpen] = useState(() => !!(__approvalsLink && !__approvalsLink.used));
+  const apList = useApprovalDocs(30000);
+  const apPending = (apList.docs || []).filter((d) => d.status === "pending").length;
   const [filter, setFilter] = useState("all");
   const [siteFilter, setSiteFilter] = useState(null);
   const [monthFilter, setMonthFilter] = useState(null); // null = 전체 기간
@@ -4949,6 +5430,12 @@ function SupplyAdminView({ data, update, setToast }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
+      <button onClick={() => setApOpen(true)} className="w-full flex items-center justify-center gap-1.5 mb-3"
+        style={{ background: C.tile, border: `1.5px solid ${C.aquaDeep}`, padding: "11px 0", color: C.text, fontSize: 13, fontWeight: 900 }}>
+        <FileText size={15} /> 품의서 (구매 전 대표 승인)
+        {apPending > 0 && <span style={{ fontSize: 11, fontWeight: 900, color: "#B45309", background: "#FEF3C7", padding: "1px 7px" }}>승인 대기 {apPending}</span>}
+      </button>
+      {apOpen && <ApprovalAdmin data={data} onClose={() => { setApOpen(false); apList.reload(); }} setToast={setToast} />}
       <div className="flex gap-1.5 mb-2" style={{ overflowX: "auto" }}>
         {[["all", "전체"], ["requested", "요청"], ["approved", "승인"], ["delivered", "전달완료"], ["declined", "거절"]].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
