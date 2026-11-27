@@ -2057,8 +2057,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     mine.forEach((r) => { const k = r.batchId || r.id; if (!map.has(k)) map.set(k, []); map.get(k).push(r); });
     return [...map.values()];
   })();
-  const confirmReceive = async (group) => {
-    const unchecked = group.filter((r) => !recvChecks[r.id]);
+  const confirmReceive = async (group, allOk) => {
+    const unchecked = allOk ? [] : group.filter((r) => !recvChecks[r.id]);
     if (unchecked.length > 0 && !window.confirm(`체크하지 않은 ${unchecked.length}개 품목(${unchecked.map((r) => r.itemName).join(", ")})은 "미수령/불일치"로 관리자에게 전달돼요. 계속할까요?`)) return;
     setRecvBusy(true);
     const at = new Date().toISOString();
@@ -2066,7 +2066,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
     const ok = await saveConfirmed((d) => ({
       ...d,
       supplyRequests: (d.supplyRequests || []).map((x) => (ids.has(x.id) && !x.receiveStatus
-        ? { ...x, receiveStatus: recvChecks[x.id] ? "ok" : "missing", receivedAt: at, receivedByName: worker.name }
+        ? { ...x, receiveStatus: (allOk || recvChecks[x.id]) ? "ok" : "missing", receivedAt: at, receivedByName: worker.name }
         : x)),
     }));
     setRecvBusy(false);
@@ -3353,6 +3353,14 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         </div>
       )}
       {chatOpen && worker && <ChatRoom role="worker" workerId={worker.id} workerName={worker.name} onBack={() => { setChatOpen(false); workerChat.reload(); }} setToast={setToast} />}
+      {pendingRecvGroups.length > 0 && (
+        <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
+          <button onClick={() => setSupplyHistoryOpen(true)} className="w-full flex items-center justify-center gap-1.5"
+            style={{ background: C.aqua, border: `1px solid ${C.aqua}`, padding: "13px 0", color: C.bg, fontSize: 13.5, fontWeight: 900 }}>
+            <Package size={15} /> 📦 전달된 용품 {pendingRecvGroups.reduce((n, g) => n + g.length, 0)}건 — 수령 확인하기
+          </button>
+        </div>
+      )}
       {mySupplyRequests.length > 0 && (
         <div className="w-full" style={{ maxWidth: 320, marginTop: 8 }}>
           <button onClick={() => setSupplyHistoryOpen(true)} className="w-full flex items-center justify-center gap-1.5"
@@ -3378,7 +3386,8 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                   </label>
                 ))}
               </div>
-              <div className="mt-2.5"><Btn full small disabled={recvBusy} onClick={() => confirmReceive(group)}>{recvBusy ? "처리 중…" : "수령 완료"}</Btn></div>
+              <div className="mt-2.5"><Btn full disabled={recvBusy} onClick={() => confirmReceive(group, true)}>{recvBusy ? "처리 중…" : "전부 받았어요"}</Btn></div>
+              <div className="mt-1.5"><Btn full small kind="ghost" disabled={recvBusy} onClick={() => confirmReceive(group)}>체크한 것만 받았어요 (나머지는 미수령)</Btn></div>
             </div>
           ))}
           {mySupplyRequests.map((r) => (
@@ -5762,6 +5771,9 @@ function SupplyAdminView({ data, update, setToast }) {
                     </Field>
                     {row.matchedFromCatalog && (
                       <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: "#0369A1", padding: "1px 5px", whiteSpace: "nowrap", display: "inline-block", marginTop: 4 }}>등록된 정보로 자동 입력됨</span>
+                    )}
+                    {!row.matchedFromCatalog && !row.vendor && row.unitPrice === "" && (
+                      <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4 }}>같은 이름의 이전 구매 내역을 찾지 못했어요 · 화면 버전 v5</div>
                     )}
                   </div>
 
