@@ -5297,8 +5297,22 @@ function SupplyAdminView({ data, update, setToast }) {
   const matchCatalog = (itemName) => {
     const norm = itemName.trim().toLowerCase();
     if (!norm) return null;
-    return catalog.find((c) => c.itemName.trim().toLowerCase() === norm)
+    const found = catalog.find((c) => c.itemName.trim().toLowerCase() === norm)
       || catalog.find((c) => norm.includes(c.itemName.trim().toLowerCase()) || c.itemName.trim().toLowerCase().includes(norm));
+    if (found) return found;
+    // 목록에 없어도, 이전에 같은 이름으로 구매 정보를 입력한 요청이 있으면 그 내용(최근 순)으로 자동 입력
+    const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
+    const past = list.filter((x) => nk(x.itemName) === nk(itemName) && (x.vendor || x.unitPrice != null || x.totalPrice != null))
+      .sort((a, b) => (b.purchasedAt || b.createdAt || "").localeCompare(a.purchasedAt || a.createdAt || ""));
+    if (!past.length) return null;
+    const vendors = [];
+    past.forEach((x) => {
+      const unitPrice = x.unitPrice != null ? Number(x.unitPrice)
+        : (x.totalPrice != null && x.vatAmount == null ? Number((Number(x.totalPrice) / (Number(x.qty) || 1)).toFixed(4)) : null);
+      const method = x.purchaseMethod || "online";
+      if (!vendors.some((v) => v.vendor === (x.vendor || "") && v.method === method)) vendors.push({ vendor: x.vendor || "", method, unitPrice });
+    });
+    return { itemName, unit: past.map((x) => unitOf(x.unit)).find(Boolean) || "", vendors };
   };
 
   // 구매 정보(업체·구매방식·단가·구매가격) 입력 — 같이 요청한 묶음 전체를 한 모달에서, "+"로 자유롭게 추가하며 처리
