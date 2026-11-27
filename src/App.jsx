@@ -5346,7 +5346,15 @@ function SupplyAdminView({ data, update, setToast }) {
     if (found) return found;
     // 목록에 없어도, 이전에 같은 이름으로 구매 정보를 입력한 요청이 있으면 그 내용(최근 순)으로 자동 입력
     const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
-    const past = list.filter((x) => nk(x.itemName) === nk(itemName) && (x.vendor || x.unitPrice != null || x.totalPrice != null))
+    // 이름 뒤에 메모를 덧붙여 쓴 경우("핸드타월(1박스반 남았습니다)")도 같은 품목으로 봄: 괄호 안 내용은 빼고 비교하고, 한쪽 이름이 다른 쪽에 포함돼도(3글자 이상) 연결
+    const base = (t) => nk((t || "").replace(/\([^)]*\)|\[[^\]]*\]/g, ""));
+    const nb = base(itemName);
+    const sameItem = (t) => {
+      if (nk(t) === nk(itemName)) return true;
+      const b = base(t);
+      return !!b && !!nb && (b === nb || (b.length >= 3 && nb.length >= 3 && (b.includes(nb) || nb.includes(b))));
+    };
+    const past = list.filter((x) => sameItem(x.itemName) && (x.vendor || x.unitPrice != null || x.totalPrice != null))
       .sort((a, b) => (b.purchasedAt || b.createdAt || "").localeCompare(a.purchasedAt || a.createdAt || ""));
     if (!past.length) return null;
     const vendors = [];
