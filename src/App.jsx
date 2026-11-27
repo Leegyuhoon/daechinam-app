@@ -5292,7 +5292,10 @@ function SupplyAdminView({ data, update, setToast }) {
           return {
             id: x.id, itemName: x.itemName, qty: String(x.qty || 1),
             vendor: x.vendor || "", method: x.purchaseMethod || "online",
-            unitPrice: x.unitPrice != null ? String(x.unitPrice) : "", totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
+            // 예전에 구매가격(합계)만 입력해 둔 건은 그 금액을 부가세 별도 금액으로 보고 단가를 거꾸로 계산해 채움
+            unitPrice: x.unitPrice != null ? String(x.unitPrice)
+              : (x.totalPrice != null && x.vatAmount == null ? String(Number((Number(x.totalPrice) / (Number(x.qty) || 1)).toFixed(4))) : ""),
+            totalPrice: x.totalPrice != null ? String(x.totalPrice) : "",
             catalogOptions,
           };
         }
