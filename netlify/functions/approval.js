@@ -73,11 +73,12 @@ export default async (req) => {
     const b = await req.json().catch(() => ({}));
 
     if (b.action === "create") {
-      if (!okPin(b.pin)) return json({ error: "pin" }, 400);
+      const noPin = b.noPin === true; // 비밀번호 없이 링크만으로 승인하도록 선택한 문서
+      if (!noPin && !okPin(b.pin)) return json({ error: "pin" }, 400);
       const id = crypto.randomUUID().slice(0, 12);
       const token = newToken(), salt = crypto.randomBytes(12).toString("hex");
       const now = new Date().toISOString();
-      const d = { id, tokenHash: sha(token), salt, pinHash: pinHash(b.pin, salt), createdAt: now, updatedAt: now, status: "pending", form: cleanForm(b.form), directive: "", decidedAt: null, fails: 0, lockedUntil: 0 };
+      const d = { id, tokenHash: sha(token), salt, pinHash: noPin ? "" : pinHash(b.pin, salt), noPin, createdAt: now, updatedAt: now, status: "pending", form: cleanForm(b.form), directive: "", decidedAt: null, fails: 0, lockedUntil: 0 };
       await st.setJSON(`d:${id}`, d);
       return json({ ok: true, id, token, doc: pub(d) });
     }
@@ -93,7 +94,7 @@ export default async (req) => {
 
     if (b.action === "relink") { // 새 링크 발급(기존 링크는 못 쓰게 됨) — 승인 비밀번호 필요
       const cur = await st.get(`d:${clip(b.id, 40)}`, { type: "json" }).catch(() => null);
-      if (!cur || !okPin(b.pin) || !safeEq(pinHash(b.pin, cur.salt), cur.pinHash)) return json({ error: "pin" }, 403);
+      if (!cur || (!cur.noPin && (!okPin(b.pin) || !safeEq(pinHash(b.pin, cur.salt), cur.pinHash)))) return json({ error: "pin" }, 403);
       const token = newToken();
       await mutate(st, `d:${cur.id}`, (c) => (c ? { next: { ...c, tokenHash: sha(token) } } : undefined));
       return json({ ok: true, token });
@@ -113,7 +114,7 @@ export default async (req) => {
         if (!cur || !safeEq(sha(b.token || ""), cur.tokenHash)) { result = { code: "notfound" }; return undefined; }
         if (cur.status !== "pending") { result = { code: "done" }; return undefined; }
         if (cur.lockedUntil && cur.lockedUntil > Date.now()) { result = { code: "locked" }; return undefined; }
-        if (!okPin(b.pin) || !safeEq(pinHash(b.pin, cur.salt), cur.pinHash)) {
+        if (!cur.noPin && (!okPin(b.pin) || !safeEq(pinHash(b.pin, cur.salt), cur.pinHash))) {
           const fails = (cur.fails || 0) + 1;
           result = { code: "pin", left: Math.max(0, 5 - fails) };
           return { next: { ...cur, fails: fails >= 5 ? 0 : fails, lockedUntil: fails >= 5 ? Date.now() + 10 * 60 * 1000 : 0 } };
