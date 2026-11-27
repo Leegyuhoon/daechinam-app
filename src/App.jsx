@@ -1992,6 +1992,31 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
 
   const [supplyOpen, setSupplyOpen] = useState(false);
   const [supplyForm, setSupplyForm] = useState({ siteId: "", items: [{ itemName: "", qty: "1", unit: "개" }], note: "" });
+  // 품목명 자동완성 — 용품 목록 + 이전 요청에 쓰인 이름(많이 쓴 순). 눌러서 고르면 이름이 통일돼서 구매 정보 자동 입력이 잘 연결됨
+  const [sugRow, setSugRow] = useState(-1);
+  const supplyNames = useMemo(() => {
+    const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
+    const sid = supplyForm.siteId;
+    const m = new Map();
+    (data.supplyCatalog || []).forEach((c) => { const k = nk(c.itemName); if (k) m.set(k, { name: c.itemName.trim(), unit: unitOf(c.unit), n: 3, siteN: 0, inv: false, at: "" }); });
+    // 전체 근무자가 요청한 내역 기준(이름 통일). 선택한 현장에서 쓴 이름은 더 위로
+    [...(data.supplyRequests || [])].sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "")).forEach((r) => {
+      const k = nk(r.itemName); if (!k) return;
+      const cur = m.get(k) || { name: r.itemName.trim(), unit: "", n: 0, siteN: 0, inv: false, at: "" };
+      m.set(k, { ...cur, name: cur.n && !cur.at ? cur.name : r.itemName.trim(), unit: unitOf(r.unit) || cur.unit, n: cur.n + 1, siteN: cur.siteN + (sid && r.siteId === sid ? 1 : 0), at: r.createdAt || cur.at });
+    });
+    // 이 현장 재고에 등록된 품목 이름이 최우선 — 재고와 요청 이름이 같아야 재고·금액 계산이 안 꼬임
+    (data.inventory || []).filter((x) => sid && x.siteId === sid).forEach((x) => {
+      const k = nk(x.name); if (!k) return;
+      const cur = m.get(k) || { name: x.name.trim(), unit: "", n: 0, siteN: 0, inv: true, at: "" };
+      m.set(k, { ...cur, name: x.name.trim(), unit: unitOf(x.unit) || cur.unit, inv: true });
+    });
+    return [...m.values()].sort((a, b) => (b.inv - a.inv) || b.siteN - a.siteN || b.n - a.n || (b.at || "").localeCompare(a.at || ""));
+  }, [data.supplyCatalog, data.supplyRequests, data.inventory, supplyForm.siteId]);
+  const suggestFor = (text) => {
+    const q = (text || "").trim().toLowerCase().replace(/\s+/g, "");
+    return supplyNames.filter((x) => { const k = x.name.toLowerCase().replace(/\s+/g, ""); return k !== q && (!q || k.includes(q) || q.includes(k)); }).slice(0, 6);
+  };
   const openSupply = () => {
     setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", items: [{ itemName: "", qty: "1", unit: "개" }], note: "" });
     setSupplyOpen(true);
@@ -3506,10 +3531,29 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <div className="flex flex-col gap-2 mt-2">
               {supplyForm.items.map((it, i) => (
                 <div key={i} className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                  <input value={it.itemName} onChange={(e) => {
-                    const next = [...supplyForm.items]; next[i] = { ...it, itemName: e.target.value };
-                    setSupplyForm((f) => ({ ...f, items: next }));
-                  }} placeholder="예: 고무장갑, 세제, 대걸레" style={{ ...inputStyle, flex: 2 }} />
+                  <div style={{ flex: 2, minWidth: 0, position: "relative" }}>
+                    <input value={it.itemName} onFocus={() => setSugRow(i)} onBlur={() => setTimeout(() => setSugRow((r) => (r === i ? -1 : r)), 150)} onChange={(e) => {
+                      const next = [...supplyForm.items]; next[i] = { ...it, itemName: e.target.value };
+                      setSupplyForm((f) => ({ ...f, items: next }));
+                    }} placeholder="예: 고무장갑, 세제, 대걸레" style={{ ...inputStyle, width: "100%" }} />
+                    {sugRow === i && suggestFor(it.itemName).length > 0 && (
+                      <div style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 30, background: C.tile, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(0,0,0,.18)", maxHeight: 220, overflowY: "auto" }}>
+                        <div style={{ fontSize: 10.5, color: C.sub, padding: "5px 10px 2px" }}>이전에 쓴 이름 — 눌러서 고르세요</div>
+                        {suggestFor(it.itemName).map((sg) => (
+                          <button key={sg.name} type="button"
+                            onPointerDown={(e) => {
+                              e.preventDefault();
+                              const next = [...supplyForm.items]; next[i] = { ...it, itemName: sg.name, ...(sg.unit ? { unit: sg.unit } : {}) };
+                              setSupplyForm((f) => ({ ...f, items: next }));
+                              setSugRow(-1);
+                            }}
+                            style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 10px", fontSize: 13.5, fontWeight: 700, color: C.text, borderTop: `1px solid ${C.line}` }}>
+                            {sg.name}{sg.unit ? <span style={{ color: C.sub, fontWeight: 600, fontSize: 11.5 }}> · {sg.unit}</span> : null}{sg.inv ? <span style={{ color: C.aquaDeep, fontWeight: 800, fontSize: 10.5 }}> · 우리 현장 재고</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input type="number" min="1" value={it.qty} onChange={(e) => {
                     const next = [...supplyForm.items]; next[i] = { ...it, qty: e.target.value };
                     setSupplyForm((f) => ({ ...f, items: next }));
