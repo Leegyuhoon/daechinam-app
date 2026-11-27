@@ -4374,6 +4374,13 @@ const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&"
 const nl2br = (s) => escH(s).replace(/\n/g, "<br/>");
 const apKorDate = (k) => { if (!k) return "0000년 00월 00일"; const [y, m, d] = k.split("-"); return `${y}년 ${m}월 ${d}일`; };
 const apShort = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`; };
+// 구매 정보 계산 — 단가는 부가세 별도 금액. 공급가액 = 단가×수량, 부가세 10%, 합계(VAT 포함)
+const vatCalc = (unitPrice, qty) => {
+  if (unitPrice === "" || unitPrice == null || Number.isNaN(Number(unitPrice))) return null;
+  const supply = Math.round(Number(unitPrice) * (Number(qty) || 1));
+  const vat = Math.round(supply * 0.1);
+  return { supply, vat, total: supply + vat };
+};
 const apCalc = (f) => {
   const supply = (f.items || []).reduce((s, it) => s + Math.round((Number(it.qty) || 0) * (Number(it.price) || 0)), 0);
   const vat = f.vatIncluded ? 0 : Math.round(supply * 0.1);
@@ -4512,15 +4519,16 @@ function ApprovalAdmin({ data, onClose, setToast }) {
   };
   const sendLink = (doc) => {
     const tok = apTokGet(doc.id);
-    if (!tok) { setPinAsk({ doc, pin: "" }); return; }
+    if (!tok) { if (doc.noPin) { relink(doc); return; } setPinAsk({ doc, pin: "" }); return; }
     share(doc, tok);
   };
-  const relink = async () => {
+  const relink = async (docIn) => {
+    const d = docIn || pinAsk.doc;
     setBusy(true);
     try {
-      const j = await apFetch("", { action: "relink", id: pinAsk.doc.id, pin: pinAsk.pin });
-      apTokSet(pinAsk.doc.id, j.token);
-      const d = pinAsk.doc; setPinAsk(null); setBusy(false);
+      const j = await apFetch("", { action: "relink", id: d.id, pin: docIn ? "" : pinAsk.pin });
+      apTokSet(d.id, j.token);
+      setPinAsk(null); setBusy(false);
       share(d, j.token);
     } catch (e) { setBusy(false); setToast(e.code === "pin" ? "승인 비밀번호가 맞지 않아요" : "새 링크를 만들지 못했어요"); }
   };
@@ -4596,7 +4604,7 @@ function ApprovalAdmin({ data, onClose, setToast }) {
             <div style={{ fontSize: 17, fontWeight: 900, color: C.text }}>새 링크 만들기</div>
             <div style={{ fontSize: 12.5, color: C.sub, marginTop: 4, lineHeight: 1.6 }}>이 기기에는 대표님께 보낼 링크가 저장돼 있지 않아요. 문서를 만들 때 정한 <b>승인 비밀번호</b>를 입력하면 새 링크를 만들어요. (예전 링크는 열리지 않게 돼요)</div>
             <div className="mt-3"><input type="password" inputMode="numeric" maxLength={8} value={pinAsk.pin} onChange={(e) => setPinAsk({ ...pinAsk, pin: e.target.value.replace(/\D/g, "") })} placeholder="승인 비밀번호(숫자 4~8자리)" style={inputStyle} /></div>
-            <div className="mt-3"><Btn full disabled={busy || pinAsk.pin.length < 4} onClick={relink}>{busy ? "만드는 중…" : "새 링크 만들고 보내기"}</Btn></div>
+            <div className="mt-3"><Btn full disabled={busy || pinAsk.pin.length < 4} onClick={() => relink()}>{busy ? "만드는 중…" : "새 링크 만들고 보내기"}</Btn></div>
           </>
         )}
       </Modal>
@@ -4609,6 +4617,7 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
   useBackClose(true, onCancel);
   const [f, setF] = useState(init.form);
   const [pin, setPin] = useState("");
+  const [usePin, setUsePin] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const [picked, setPicked] = useState({});
@@ -4625,8 +4634,10 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
     if (!sel.length) { setPickOpen(false); return; }
     setF((x) => {
       const existing = x.items.filter((it) => it.name.trim());
-      const add = sel.map((r) => ({ name: r.itemName, qty: r.qty || 1, unit: "", price: r.unitPrice != null ? Number(r.unitPrice) : 0 }));
-      const vendor = sel.find((r) => r.vendor)?.vendor || "";
+      const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
+      const cat = (r) => (data.supplyCatalog || []).find((c) => nk(c.itemName) === nk(r.itemName))?.vendors?.[0];
+      const add = sel.map((r) => ({ name: r.itemName, qty: r.qty || 1, unit: "", price: r.unitPrice != null ? Number(r.unitPrice) : (cat(r)?.unitPrice != null ? Number(cat(r).unitPrice) : 0) }));
+      const vendor = sel.find((r) => r.vendor)?.vendor || sel.map((r) => cat(r)?.vendor).find(Boolean) || "";
       const site = sel[0].siteName && sel[0].siteName !== "현장 미지정" ? sel[0].siteName : "";
       const d = new Date();
       return {
@@ -4642,14 +4653,14 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
   const save = async () => {
     if (!f.title.trim()) { setToast("제목을 입력해 주세요"); return; }
     if (!f.items.some((it) => it.name.trim())) { setToast("품목을 한 개 이상 입력해 주세요"); return; }
-    if (isNew && !/^\d{4,8}$/.test(pin)) { setToast("대표님이 승인할 때 쓸 비밀번호(숫자 4~8자리)를 정해 주세요"); return; }
+    if (isNew && usePin && !/^\d{4,8}$/.test(pin)) { setToast("대표님이 승인할 때 쓸 비밀번호(숫자 4~8자리)를 정해 주세요"); return; }
     setBusy(true);
     const form = { ...f, items: f.items.filter((it) => it.name.trim()).map((it) => ({ ...it, qty: Number(it.qty) || 0, price: Number(it.price) || 0 })) };
     try { localStorage.setItem("apLast", JSON.stringify({ dept: f.dept, authorRank: f.authorRank, authorName: f.authorName })); } catch (e) { /* 기억 못 해도 괜찮음 */ }
     try {
       let doc;
       if (isNew) {
-        const j = await apFetch("", { action: "create", form, pin });
+        const j = await apFetch("", { action: "create", form, pin: usePin ? pin : "", noPin: !usePin });
         apTokSet(j.id, j.token); doc = j.doc;
       } else {
         const j = await apFetch("", { action: "update", id: init.id, form }); doc = j.doc;
@@ -4714,9 +4725,21 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
           <Field label="첨부"><input value={f.attachments} onChange={(e) => set("attachments", e.target.value)} placeholder="예: 사업자 등록증 사본 1부, 통장사본 1부, 견적서 1부" style={inputStyle} /></Field>
           <Field label="비고"><textarea value={f.remark} rows={2} onChange={(e) => set("remark", e.target.value)} style={{ ...inputStyle, resize: "vertical" }} /></Field>
           {isNew && (
-            <Field label="대표님 승인 비밀번호 (숫자 4~8자리)">
-              <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="정해서 대표님께 따로 알려 주세요" style={inputStyle} />
-              <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>링크를 받은 사람이 아무나 승인하지 못하도록, 대표님이 승인할 때 이 번호를 입력해요. 링크와 함께 보내지 말고 말씀이나 문자로 따로 알려 주세요.</div>
+            <Field label="대표님 승인 비밀번호">
+              <div className="grid grid-cols-2 gap-1.5" style={{ marginBottom: 6 }}>
+                {[[true, "비밀번호 사용"], [false, "사용 안 함"]].map(([v, l]) => (
+                  <button key={String(v)} type="button" onClick={() => setUsePin(v)}
+                    style={{ padding: "8px 0", fontSize: 12, fontWeight: 800, background: usePin === v ? C.aquaDeep : C.tile, color: usePin === v ? "#fff" : C.sub }}>{l}</button>
+                ))}
+              </div>
+              {usePin ? (
+                <>
+                  <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="숫자 4~8자리 — 정해서 대표님께 따로 알려 주세요" style={inputStyle} />
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.5 }}>링크를 받은 사람이 아무나 승인하지 못하도록, 대표님이 승인할 때 이 번호를 입력해요. 링크와 함께 보내지 말고 말씀이나 문자로 따로 알려 주세요.</div>
+                </>
+              ) : (
+                <div style={{ fontSize: 11, color: C.coral, marginTop: 2, lineHeight: 1.5 }}>비밀번호 없이 링크만 열면 바로 승인·반려할 수 있어요. 링크가 다른 사람에게 전달되지 않게 대표님께만 보내 주세요.</div>
+              )}
             </Field>
           )}
           <div className="mt-3"><Btn full disabled={busy} onClick={save}>{busy ? "저장 중…" : isNew ? "저장" : "수정해서 저장 (다시 승인 대기)"}</Btn></div>
@@ -4759,7 +4782,7 @@ function CeoApprovalPage({ id, token }) {
     return () => { alive = false; };
   }, [id, token]);
   const decide = async (decision) => {
-    if (!/^\d{4,8}$/.test(pin)) { setMsg("승인 비밀번호(숫자)를 입력해 주세요"); return; }
+    if (!(doc && doc.noPin) && !/^\d{4,8}$/.test(pin)) { setMsg("승인 비밀번호(숫자)를 입력해 주세요"); return; }
     if (decision === "rejected" && !directive.trim() && !window.confirm("지시사항 없이 반려할까요?")) return;
     setBusy(true); setMsg("");
     try {
@@ -4788,9 +4811,11 @@ function CeoApprovalPage({ id, token }) {
                 <Field label="대표자 지시사항 (선택)">
                   <textarea value={directive} rows={3} onChange={(e) => setDirective(e.target.value)} placeholder="전달할 지시사항이 있으면 적어 주세요" style={{ ...inputStyle, resize: "vertical" }} />
                 </Field>
-                <Field label="승인 비밀번호">
-                  <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="담당자에게 받은 숫자" style={inputStyle} />
-                </Field>
+                {!doc.noPin && (
+                  <Field label="승인 비밀번호">
+                    <input type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} placeholder="담당자에게 받은 숫자" style={inputStyle} />
+                  </Field>
+                )}
                 {msg && <div style={{ color: C.coral, fontSize: 12.5, fontWeight: 800, marginBottom: 8 }}>{msg}</div>}
                 <div className="grid grid-cols-2 gap-2">
                   <Btn full kind="danger" disabled={busy} onClick={() => decide("rejected")}>반려</Btn>
@@ -5317,11 +5342,14 @@ function SupplyAdminView({ data, update, setToast }) {
       let reqs = [...(d.supplyRequests || [])];
       purchaseEdit.rows.forEach((row) => {
         const unitPrice = row.unitPrice === "" ? null : Number(row.unitPrice);
-        const totalPrice = row.totalPrice === "" ? null : Number(row.totalPrice);
         const qty = Number(row.qty) || 1;
+        const vc = vatCalc(unitPrice, qty);
+        // 단가가 있으면 공급가+부가세(10%)=합계로 계산, 단가 없이 예전에 입력된 합계만 있으면 그대로 유지
+        const totalPrice = vc ? vc.total : (row.totalPrice === "" ? null : Number(row.totalPrice));
+        const vatF = { supplyPrice: vc ? vc.supply : null, vatAmount: vc ? vc.vat : null };
         if (row.id) {
           // 기존 요청 항목 — 구매 정보(수량 포함)를 갱신
-          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, purchasedAt: x.purchasedAt || at } : x));
+          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, ...vatF, purchasedAt: x.purchasedAt || at } : x));
         } else if (row.itemName.trim()) {
           // "+"로 새로 추가한 항목 — 요청 과정 없이 바로 구매·전달완료로 등록
           const base = reqs.find((x) => purchaseEdit.groupIds.includes(x.id));
@@ -5330,11 +5358,25 @@ function SupplyAdminView({ data, update, setToast }) {
             workerId: base?.workerId || null, workerName: base?.workerName || "관리자",
             itemName: row.itemName.trim(), qty, note: "",
             status: "delivered", createdAt: at, respondedAt: at, batchId: groupBatchId,
-            vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, purchasedAt: at,
+            vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, ...vatF, purchasedAt: at,
           });
         }
       });
-      return { ...d, supplyRequests: reqs };
+      // 처음 입력한 상품 정보(구매처·구매방식·단가)를 상품 목록에 저장 — 같은 품목을 다시 요청하면 자동으로 채워짐.
+      // 이미 있는 품목은 단가를 덮어쓰지 않고, 새로운 구매처일 때만 구매처를 추가함
+      const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
+      const cat = [...(d.supplyCatalog || [])];
+      purchaseEdit.rows.forEach((row) => {
+        const name = row.itemName.trim(); const vendor = row.vendor.trim();
+        const up = row.unitPrice === "" ? null : Number(row.unitPrice);
+        if (!name || (!vendor && up == null)) return;
+        const idx = cat.findIndex((c) => nk(c.itemName) === nk(name));
+        const v = { vendor, method: row.method, unitPrice: up };
+        if (idx < 0) cat.push({ id: uid(), itemName: name, vendors: [v] });
+        else if (vendor && !(cat[idx].vendors || []).some((x) => (x.vendor || "").trim() === vendor && x.method === row.method)) cat[idx] = { ...cat[idx], vendors: [...(cat[idx].vendors || []), v] };
+        else if (up != null && (cat[idx].vendors || []).length === 1 && cat[idx].vendors[0].unitPrice == null) cat[idx] = { ...cat[idx], vendors: [{ ...cat[idx].vendors[0], unitPrice: up }] };
+      });
+      return { ...d, supplyRequests: reqs, supplyCatalog: cat };
     });
     setToast("구매 정보를 저장했습니다");
     setPurchaseEdit(null);
@@ -5343,7 +5385,7 @@ function SupplyAdminView({ data, update, setToast }) {
   const totalSpent = shown.reduce((sum, r) => sum + (Number(r.totalPrice) || 0), 0);
 
   const downloadSupplyCsv = () => {
-    const head = "날짜,현장,용품명,수량,요청자,전달상태,요청일시,승인일시,전달완료일시,수령확인,수령확인일시,구매처,구매방식,단가,구매가격,메모";
+    const head = "날짜,현장,용품명,수량,요청자,전달상태,요청일시,승인일시,전달완료일시,수령확인,수령확인일시,구매처,구매방식,단가(부가세별도),공급가액,부가세,구매가격(부가세포함),메모";
     const methodLabel = { online: "온라인", offline: "오프라인" };
     const statusLabel = { requested: "요청됨", approved: "승인됨", delivered: "전달완료", declined: "거절됨" };
     const lines = shown.map((r) => [
@@ -5351,7 +5393,7 @@ function SupplyAdminView({ data, update, setToast }) {
       statusLabel[r.status] || r.status,
       dtStr(supplyTimes(r).requestedAt), dtStr(supplyTimes(r).approvedAt), dtStr(supplyTimes(r).deliveredAt),
       recvLabel(r), dtStr(supplyTimes(r).receivedAt),
-      r.vendor || "", methodLabel[r.purchaseMethod] || "", r.unitPrice ?? "", r.totalPrice ?? "",
+      r.vendor || "", methodLabel[r.purchaseMethod] || "", r.unitPrice ?? "", r.supplyPrice ?? "", r.vatAmount ?? "", r.totalPrice ?? "",
       (r.note || "").replace(/,/g, " "),
     ].join(","));
     const csvText = "\uFEFF" + [head, ...lines].join("\n");
@@ -5409,8 +5451,8 @@ function SupplyAdminView({ data, update, setToast }) {
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">수령확인</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">구매처</th>
                 <th style="padding:7px 8px; text-align:left; font-size:11px;">구매방식</th>
-                <th style="padding:7px 8px; text-align:right; font-size:11px;">단가</th>
-                <th style="padding:7px 8px; text-align:right; font-size:11px;">구매가격</th>
+                <th style="padding:7px 8px; text-align:right; font-size:11px;">단가(VAT별도)</th>
+                <th style="padding:7px 8px; text-align:right; font-size:11px;">구매가격(VAT포함)</th>
               </tr>
             </thead>
             <tbody>${rowsHtml}</tbody>
@@ -5533,8 +5575,9 @@ function SupplyAdminView({ data, update, setToast }) {
                   <div style={{ fontSize: 11.5, color: C.text, marginTop: 5, background: C.tileSoft, padding: "5px 8px" }}>
                     {r.vendor && <>구매처: {r.vendor} · </>}
                     {r.purchaseMethod && <>{r.purchaseMethod === "online" ? "온라인" : "오프라인"} · </>}
-                    {r.unitPrice != null && <>단가 {money(r.unitPrice)}원 · </>}
-                    {r.totalPrice != null && <span style={{ fontWeight: 800, color: C.coral }}>구매가격 {money(r.totalPrice)}원</span>}
+                    {r.unitPrice != null && <>단가 {money(r.unitPrice)}원(부가세 별도) · </>}
+                    {r.vatAmount != null && <>부가세 {money(r.vatAmount)}원 · </>}
+                    {r.totalPrice != null && <span style={{ fontWeight: 800, color: C.coral }}>구매가격 {money(r.totalPrice)}원{r.vatAmount != null ? " (부가세 포함)" : ""}</span>}
                   </div>
                 )}
               </div>
@@ -5632,31 +5675,31 @@ function SupplyAdminView({ data, update, setToast }) {
                       <input type="number" min="1" value={row.qty} onChange={(e) => {
                         const qty = e.target.value;
                         const rows = [...purchaseEdit.rows];
-                        const auto = row.unitPrice !== "" ? String(Math.round(Number(row.unitPrice) * (Number(qty) || 1))) : row.totalPrice;
-                        rows[i] = { ...row, qty, totalPrice: auto };
+                        rows[i] = { ...row, qty };
                         setPurchaseEdit((f) => ({ ...f, rows }));
                       }} style={{ ...inputStyle, background: C.tile }} />
                     </Field>
                   </div>
 
-                  {/* ⑤ 가격(구매가격) → ⑥ 단가 */}
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <Field label="⑤ 구매가격 (원)">
-                      <input type="number" value={row.totalPrice} onChange={(e) => {
-                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, totalPrice: e.target.value };
-                        setPurchaseEdit((f) => ({ ...f, rows }));
-                      }} placeholder="총 결제금액" style={{ ...inputStyle, background: C.tile }} />
-                    </Field>
-                    <Field label="⑥ 단가 (원)">
+                  {/* ⑤ 단가(부가세 별도) → 자동 계산 */}
+                  <div className="mt-2">
+                    <Field label="⑤ 단가 (원, 부가세 별도)">
                       <input type="number" value={row.unitPrice} onChange={(e) => {
-                        const unitPrice = e.target.value;
-                        const rows = [...purchaseEdit.rows];
-                        const qty = Number(row.qty) || 1;
-                        const auto = unitPrice === "" ? "" : String(Math.round(Number(unitPrice) * qty));
-                        rows[i] = { ...row, unitPrice, totalPrice: auto };
+                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, unitPrice: e.target.value };
                         setPurchaseEdit((f) => ({ ...f, rows }));
-                      }} placeholder="개당 가격" style={{ ...inputStyle, background: C.tile }} />
+                      }} placeholder="개당 가격 (부가세 빼고)" style={{ ...inputStyle, background: C.tile }} />
                     </Field>
+                    {(() => {
+                      const c = vatCalc(row.unitPrice, row.qty);
+                      if (!c) return row.totalPrice !== "" ? <div style={{ fontSize: 11, color: C.sub, marginTop: 5 }}>기존에 입력된 구매가격 {money(Number(row.totalPrice))}원 (부가세 미적용) · 단가를 입력하면 부가세 포함으로 다시 계산돼요</div> : null;
+                      return (
+                        <div style={{ fontSize: 12, marginTop: 6, background: C.tile, padding: "7px 9px", lineHeight: 1.7 }}>
+                          <div className="flex justify-between"><span style={{ color: C.sub }}>공급가액 (단가×수량)</span><span style={{ fontWeight: 700 }}>{money(c.supply)}원</span></div>
+                          <div className="flex justify-between"><span style={{ color: C.sub }}>부가세 (10%)</span><span style={{ fontWeight: 700 }}>{money(c.vat)}원</span></div>
+                          <div className="flex justify-between" style={{ borderTop: `1px solid ${C.line}`, marginTop: 2, paddingTop: 2 }}><span style={{ fontWeight: 800 }}>합계 (부가세 포함)</span><span style={{ fontWeight: 900, color: C.coral }}>{money(c.total)}원</span></div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
@@ -5664,7 +5707,7 @@ function SupplyAdminView({ data, update, setToast }) {
                 style={{ padding: "10px 0", fontSize: 12.5, fontWeight: 800, color: C.aquaDeep, border: `1.5px dashed ${C.line}` }}>
                 <Plus size={14} /> 항목 추가
               </button>
-              <div style={{ fontSize: 11, color: C.sub }}>단가를 입력하면 수량만큼 곱해서 구매가격을 자동으로 채워드려요. 직접 수정도 가능해요.</div>
+              <div style={{ fontSize: 11, color: C.sub }}>단가(부가세 별도)를 입력하면 수량을 곱하고 부가세 10%를 더해 합계를 자동 계산해요. 처음 입력한 구매 정보는 저장돼서, 같은 품목을 다시 요청하면 구매처·단가가 자동으로 채워져요.</div>
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Btn kind="ghost" full onClick={() => setPurchaseEdit(null)}>취소</Btn>
@@ -11172,7 +11215,7 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
                         </Field>
                       </div>
                       <div className="mt-1.5">
-                        <Field label="④ 단가 (원)">
+                        <Field label="④ 단가 (원, 부가세 별도)">
                           <input type="number" value={v.unitPrice} onChange={(e) => {
                             const vendors = [...catalogEdit.vendors]; vendors[i] = { ...v, unitPrice: e.target.value };
                             setCatalogEdit((f) => ({ ...f, vendors }));
