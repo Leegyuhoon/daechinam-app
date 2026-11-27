@@ -1991,9 +1991,9 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
   };
 
   const [supplyOpen, setSupplyOpen] = useState(false);
-  const [supplyForm, setSupplyForm] = useState({ siteId: "", items: [{ itemName: "", qty: "1" }], note: "" });
+  const [supplyForm, setSupplyForm] = useState({ siteId: "", items: [{ itemName: "", qty: "1", unit: "개" }], note: "" });
   const openSupply = () => {
-    setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", items: [{ itemName: "", qty: "1" }], note: "" });
+    setSupplyForm({ siteId: worker?.siteId || sites[0]?.id || "", items: [{ itemName: "", qty: "1", unit: "개" }], note: "" });
     setSupplyOpen(true);
   };
   const submitSupply = () => {
@@ -2009,7 +2009,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
         ...validItems.map((it) => ({
           id: uid(), date: today, siteId: s?.id || null, siteName: s?.name || "현장 미지정",
           workerId: worker.id, workerName: worker.name,
-          itemName: it.itemName.trim(), qty: Number(it.qty) || 1, note: supplyForm.note.trim(),
+          itemName: it.itemName.trim(), qty: Number(it.qty) || 1, unit: unitOf(it.unit) || "개", note: supplyForm.note.trim(),
           status: "requested", createdAt: at, respondedAt: null, batchId,
         })),
       ],
@@ -3349,7 +3349,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                 {group.map((r) => (
                   <label key={r.id} className="flex items-center gap-2" style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
                     <input type="checkbox" checked={!!recvChecks[r.id]} onChange={(e) => setRecvChecks((c) => ({ ...c, [r.id]: e.target.checked }))} style={{ width: 20, height: 20 }} />
-                    <span>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></span>
+                    <span>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}{unitOf(r.unit)}</span></span>
                   </label>
                 ))}
               </div>
@@ -3360,7 +3360,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <Tile key={r.id} style={{ padding: "11px 13px" }}>
               <div className="flex items-start justify-between gap-2">
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}{unitOf(r.unit)}</span></div>
                   <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3 }}>
                     {r.siteName}{r.workerId !== worker.id ? ` · ${r.workerName}` : ""}
                   </div>
@@ -3505,7 +3505,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
             <Eyebrow>품목</Eyebrow>
             <div className="flex flex-col gap-2 mt-2">
               {supplyForm.items.map((it, i) => (
-                <div key={i} className="flex items-center gap-2">
+                <div key={i} className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                   <input value={it.itemName} onChange={(e) => {
                     const next = [...supplyForm.items]; next[i] = { ...it, itemName: e.target.value };
                     setSupplyForm((f) => ({ ...f, items: next }));
@@ -3514,6 +3514,10 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                     const next = [...supplyForm.items]; next[i] = { ...it, qty: e.target.value };
                     setSupplyForm((f) => ({ ...f, items: next }));
                   }} style={{ ...inputStyle, flex: 1 }} />
+                  <UnitPicker value={it.unit} onChange={(u) => {
+                    const next = [...supplyForm.items]; next[i] = { ...it, unit: u };
+                    setSupplyForm((f) => ({ ...f, items: next }));
+                  }} style={{ width: 84, flex: "0 0 84px" }} />
                   {supplyForm.items.length > 1 && (
                     <button onClick={() => setSupplyForm((f) => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }))}>
                       <X size={16} color={C.sub} />
@@ -3522,7 +3526,7 @@ function ClockTab({ data, update, saveConfirmed, saveConfirmedVerified, dev, now
                 </div>
               ))}
             </div>
-            <button onClick={() => setSupplyForm((f) => ({ ...f, items: [...f.items, { itemName: "", qty: "1" }] }))}
+            <button onClick={() => setSupplyForm((f) => ({ ...f, items: [...f.items, { itemName: "", qty: "1", unit: "개" }] }))}
               className="flex items-center gap-1 mt-2" style={{ fontSize: 12, fontWeight: 800, color: C.aquaDeep }}>
               <Plus size={13} /> 품목 추가
             </button>
@@ -4374,6 +4378,26 @@ const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&"
 const nl2br = (s) => escH(s).replace(/\n/g, "<br/>");
 const apKorDate = (k) => { if (!k) return "0000년 00월 00일"; const [y, m, d] = k.split("-"); return `${y}년 ${m}월 ${d}일`; };
 const apShort = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`; };
+// 단위 선택 — 자주 쓰는 단위 목록에서 고르거나 "직접 입력"으로 자유롭게 작성
+const UNIT_PRESETS = ["개", "박스", "롤", "팩", "세트", "병", "통", "장", "켤레", "포", "kg", "L"];
+function UnitPicker({ value, onChange, style }) {
+  const v = value == null ? "" : value;
+  const custom = v !== "" && !UNIT_PRESETS.includes(v);
+  const [manual, setManual] = useState(false);
+  const showText = manual || custom;
+  return (
+    <>
+      <select value={showText ? "__c" : (v || "개")} onChange={(e) => {
+        if (e.target.value === "__c") { setManual(true); onChange(""); } else { setManual(false); onChange(e.target.value); }
+      }} style={{ ...inputStyle, ...style }}>
+        {UNIT_PRESETS.map((u) => <option key={u} value={u}>{u}</option>)}
+        <option value="__c">직접 입력</option>
+      </select>
+      {showText && <input value={v} onChange={(e) => onChange(e.target.value)} placeholder="단위 직접 입력 (예: 말, 갑)" style={{ ...inputStyle, flexBasis: "100%", ...(style && style.background ? { background: style.background } : {}) }} />}
+    </>
+  );
+}
+const unitOf = (u) => (u && String(u).trim()) || "";
 // 구매 정보 계산 — 단가는 부가세 별도 금액. 공급가액 = 단가×수량, 부가세 10%, 합계(VAT 포함)
 const vatCalc = (unitPrice, qty) => {
   if (unitPrice === "" || unitPrice == null || Number.isNaN(Number(unitPrice))) return null;
@@ -4636,7 +4660,7 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
       const existing = x.items.filter((it) => it.name.trim());
       const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
       const cat = (r) => (data.supplyCatalog || []).find((c) => nk(c.itemName) === nk(r.itemName))?.vendors?.[0];
-      const add = sel.map((r) => ({ name: r.itemName, qty: r.qty || 1, unit: "", price: r.unitPrice != null ? Number(r.unitPrice) : (cat(r)?.unitPrice != null ? Number(cat(r).unitPrice) : 0) }));
+      const add = sel.map((r) => ({ name: r.itemName, qty: r.qty || 1, unit: unitOf(r.unit), price: r.unitPrice != null ? Number(r.unitPrice) : (cat(r)?.unitPrice != null ? Number(cat(r).unitPrice) : 0) }));
       const vendor = sel.find((r) => r.vendor)?.vendor || sel.map((r) => cat(r)?.vendor).find(Boolean) || "";
       const site = sel[0].siteName && sel[0].siteName !== "현장 미지정" ? sel[0].siteName : "";
       const d = new Date();
@@ -4753,7 +4777,7 @@ function ApprovalEditor({ data, docs, init, onCancel, onSaved, setToast }) {
               style={{ padding: "9px 4px", borderBottom: `1px solid ${C.line}`, background: picked[r.id] ? C.tileSoft : "transparent" }}>
               <span style={{ width: 20, height: 20, border: `2px solid ${picked[r.id] ? C.aquaDeep : C.line}`, background: picked[r.id] ? C.aquaDeep : "transparent", color: "#fff", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{picked[r.id] ? "✓" : ""}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.itemName} × {r.qty}</span>
+                <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: C.text }}>{r.itemName} × {r.qty}{unitOf(r.unit)}</span>
                 <span style={{ display: "block", fontSize: 11.5, color: C.sub }}>{r.siteName} · {r.workerName} · {r.date}{r.vendor ? ` · ${r.vendor}` : ""}{r.unitPrice != null ? ` · 단가 ${money(r.unitPrice)}원` : ""}</span>
               </span>
             </button>
@@ -5290,7 +5314,7 @@ function SupplyAdminView({ data, update, setToast }) {
         // 이미 구매 정보가 있으면 그대로, 없으면 카탈로그 첫 구매처로 자동 채움
         if (x.vendor || x.unitPrice != null) {
           return {
-            id: x.id, itemName: x.itemName, qty: String(x.qty || 1),
+            id: x.id, itemName: x.itemName, qty: String(x.qty || 1), unit: unitOf(x.unit) || unitOf(m?.unit) || "개",
             vendor: x.vendor || "", method: x.purchaseMethod || "online",
             // 예전에 구매가격(합계)만 입력해 둔 건은 그 금액을 부가세 별도 금액으로 보고 단가를 거꾸로 계산해 채움
             unitPrice: x.unitPrice != null ? String(x.unitPrice)
@@ -5303,7 +5327,7 @@ function SupplyAdminView({ data, update, setToast }) {
         const unitPrice = opt?.unitPrice != null ? opt.unitPrice : "";
         const totalPrice = unitPrice !== "" ? Math.round(unitPrice * (x.qty || 1)) : "";
         return {
-          id: x.id, itemName: x.itemName, qty: String(x.qty || 1),
+          id: x.id, itemName: x.itemName, qty: String(x.qty || 1), unit: unitOf(x.unit) || unitOf(m?.unit) || "개",
           vendor: opt?.vendor || "", method: opt?.method || "online",
           unitPrice: unitPrice === "" ? "" : String(unitPrice), totalPrice: totalPrice === "" ? "" : String(totalPrice),
           matchedFromCatalog: !!opt, catalogOptions,
@@ -5312,16 +5336,17 @@ function SupplyAdminView({ data, update, setToast }) {
     });
   };
   const addPurchaseRow = () => {
-    setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", qty: "1", vendor: "", method: "online", unitPrice: "", totalPrice: "", catalogOptions: [] }] }));
+    setPurchaseEdit((f) => ({ ...f, rows: [...f.rows, { id: null, itemName: "", qty: "1", unit: "개", vendor: "", method: "online", unitPrice: "", totalPrice: "", catalogOptions: [] }] }));
   };
   const applyCatalogToRow = (i, itemName) => {
     const m = matchCatalog(itemName);
     const catalogOptions = m?.vendors || [];
     const opt = catalogOptions[0];
-    if (!opt) { setPurchaseEdit((f) => { const rows = [...f.rows]; rows[i] = { ...rows[i], itemName, catalogOptions }; return { ...f, rows }; }); return; }
+    const mUnit = unitOf(m?.unit);
+    if (!opt) { setPurchaseEdit((f) => { const rows = [...f.rows]; rows[i] = { ...rows[i], itemName, catalogOptions, ...(mUnit ? { unit: mUnit } : {}) }; return { ...f, rows }; }); return; }
     setPurchaseEdit((f) => {
       const rows = [...f.rows];
-      rows[i] = { ...rows[i], itemName, vendor: opt.vendor || "", method: opt.method || "online", unitPrice: opt.unitPrice != null ? String(opt.unitPrice) : "", matchedFromCatalog: true, catalogOptions };
+      rows[i] = { ...rows[i], itemName, ...(mUnit ? { unit: mUnit } : {}), vendor: opt.vendor || "", method: opt.method || "online", unitPrice: opt.unitPrice != null ? String(opt.unitPrice) : "", matchedFromCatalog: true, catalogOptions };
       return { ...f, rows };
     });
   };
@@ -5352,14 +5377,14 @@ function SupplyAdminView({ data, update, setToast }) {
         const vatF = { supplyPrice: vc ? vc.supply : null, vatAmount: vc ? vc.vat : null };
         if (row.id) {
           // 기존 요청 항목 — 구매 정보(수량 포함)를 갱신
-          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, ...vatF, purchasedAt: x.purchasedAt || at } : x));
+          reqs = reqs.map((x) => (x.id === row.id ? { ...x, itemName: row.itemName.trim() || x.itemName, qty, unit: unitOf(row.unit) || "개", vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, ...vatF, purchasedAt: x.purchasedAt || at } : x));
         } else if (row.itemName.trim()) {
           // "+"로 새로 추가한 항목 — 요청 과정 없이 바로 구매·전달완료로 등록
           const base = reqs.find((x) => purchaseEdit.groupIds.includes(x.id));
           reqs.push({
             id: uid(), date: base?.date || dKey(new Date()), siteId: base?.siteId || null, siteName: base?.siteName || "현장 미지정",
             workerId: base?.workerId || null, workerName: base?.workerName || "관리자",
-            itemName: row.itemName.trim(), qty, note: "",
+            itemName: row.itemName.trim(), qty, unit: unitOf(row.unit) || "개", note: "",
             status: "delivered", createdAt: at, respondedAt: at, batchId: groupBatchId,
             vendor: row.vendor.trim(), purchaseMethod: row.method, unitPrice, totalPrice, ...vatF, purchasedAt: at,
           });
@@ -5375,7 +5400,8 @@ function SupplyAdminView({ data, update, setToast }) {
         if (!name || (!vendor && up == null)) return;
         const idx = cat.findIndex((c) => nk(c.itemName) === nk(name));
         const v = { vendor, method: row.method, unitPrice: up };
-        if (idx < 0) cat.push({ id: uid(), itemName: name, vendors: [v] });
+        if (idx < 0) cat.push({ id: uid(), itemName: name, unit: unitOf(row.unit) || "개", vendors: [v] });
+        else if (!unitOf(cat[idx].unit) && unitOf(row.unit)) cat[idx] = { ...cat[idx], unit: unitOf(row.unit) };
         else if (vendor && !(cat[idx].vendors || []).some((x) => (x.vendor || "").trim() === vendor && x.method === row.method)) cat[idx] = { ...cat[idx], vendors: [...(cat[idx].vendors || []), v] };
         else if (up != null && (cat[idx].vendors || []).length === 1 && cat[idx].vendors[0].unitPrice == null) cat[idx] = { ...cat[idx], vendors: [{ ...cat[idx].vendors[0], unitPrice: up }] };
       });
@@ -5388,11 +5414,11 @@ function SupplyAdminView({ data, update, setToast }) {
   const totalSpent = shown.reduce((sum, r) => sum + (Number(r.totalPrice) || 0), 0);
 
   const downloadSupplyCsv = () => {
-    const head = "날짜,현장,용품명,수량,요청자,전달상태,요청일시,승인일시,전달완료일시,수령확인,수령확인일시,구매처,구매방식,단가(부가세별도),공급가액,부가세,구매가격(부가세포함),메모";
+    const head = "날짜,현장,용품명,수량,단위,요청자,전달상태,요청일시,승인일시,전달완료일시,수령확인,수령확인일시,구매처,구매방식,단가(부가세별도),공급가액,부가세,구매가격(부가세포함),메모";
     const methodLabel = { online: "온라인", offline: "오프라인" };
     const statusLabel = { requested: "요청됨", approved: "승인됨", delivered: "전달완료", declined: "거절됨" };
     const lines = shown.map((r) => [
-      r.date, r.siteName || "", r.itemName, r.qty, r.workerName || "",
+      r.date, r.siteName || "", r.itemName, r.qty, unitOf(r.unit), r.workerName || "",
       statusLabel[r.status] || r.status,
       dtStr(supplyTimes(r).requestedAt), dtStr(supplyTimes(r).approvedAt), dtStr(supplyTimes(r).deliveredAt),
       recvLabel(r), dtStr(supplyTimes(r).receivedAt),
@@ -5421,7 +5447,7 @@ function SupplyAdminView({ data, update, setToast }) {
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.date}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.siteName || ""}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.itemName}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:center;">${r.qty}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px; text-align:center;">${r.qty}${unitOf(r.unit)}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${r.workerName || ""}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:11px;">${statusLabel[r.status] || r.status}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; white-space:nowrap;">${dtStr(supplyTimes(r).requestedAt)}</td>
@@ -5547,7 +5573,7 @@ function SupplyAdminView({ data, update, setToast }) {
             <div className="flex items-start justify-between gap-2">
               <div style={{ minWidth: 0 }}>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}</span></div>
+                  <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>{r.itemName} <span style={{ color: C.coral }}>×{r.qty}{unitOf(r.unit)}</span></div>
                   {r.batchId && batchMates.length > 1 && (
                     <span style={{ fontSize: 9, fontWeight: 900, color: "#fff", background: C.aqua, padding: "1px 5px", whiteSpace: "nowrap" }}>
                       함께 요청 {batchMates.length}종
@@ -5570,7 +5596,7 @@ function SupplyAdminView({ data, update, setToast }) {
                 ); })()}
                 {r.batchId && batchMates.length > 1 && (
                   <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
-                    같이 요청한 다른 품목: {batchMates.filter((x) => x.id !== r.id).map((x) => `${x.itemName}×${x.qty}`).join(", ")}
+                    같이 요청한 다른 품목: {batchMates.filter((x) => x.id !== r.id).map((x) => `${x.itemName}×${x.qty}${unitOf(x.unit)}`).join(", ")}
                   </div>
                 )}
                 {r.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 4 }}>{r.note}</div>}
@@ -5674,13 +5700,19 @@ function SupplyAdminView({ data, update, setToast }) {
 
                   {/* ④ 수량 */}
                   <div className="mt-2">
-                    <Field label="④ 수량">
+                    <Field label="④ 수량 · 단위">
+                     <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                       <input type="number" min="1" value={row.qty} onChange={(e) => {
                         const qty = e.target.value;
                         const rows = [...purchaseEdit.rows];
                         rows[i] = { ...row, qty };
                         setPurchaseEdit((f) => ({ ...f, rows }));
-                      }} style={{ ...inputStyle, background: C.tile }} />
+                      }} style={{ ...inputStyle, background: C.tile, flex: 1, minWidth: 0 }} />
+                      <UnitPicker value={row.unit} onChange={(u) => {
+                        const rows = [...purchaseEdit.rows]; rows[i] = { ...row, unit: u };
+                        setPurchaseEdit((f) => ({ ...f, rows }));
+                      }} style={{ background: C.tile, width: 96, flex: "0 0 96px" }} />
+                     </div>
                     </Field>
                   </div>
 
@@ -10421,7 +10453,8 @@ function SettingsView({ data, update, dev, updateDev, setToast, autoOpenContract
     const c = { id: catalogEdit.id || uid(), itemName: catalogEdit.itemName.trim(), vendors };
     update((d) => ({
       ...d,
-      supplyCatalog: catalogEdit.id ? (d.supplyCatalog || []).map((x) => (x.id === c.id ? c : x)) : [...(d.supplyCatalog || []), c],
+      // 구매 정보에서 저장해 둔 단위는 목록을 수정해도 유지
+      supplyCatalog: catalogEdit.id ? (d.supplyCatalog || []).map((x) => (x.id === c.id ? { ...c, ...(x.unit ? { unit: x.unit } : {}) } : x)) : [...(d.supplyCatalog || []), c],
     }));
     setToast("저장했습니다");
     setCatalogEdit(null);
