@@ -5343,7 +5343,8 @@ function SupplyAdminView({ data, update, setToast }) {
     if (!norm) return null;
     const found = catalog.find((c) => c.itemName.trim().toLowerCase() === norm)
       || catalog.find((c) => norm.includes(c.itemName.trim().toLowerCase()) || c.itemName.trim().toLowerCase().includes(norm));
-    if (found) return found;
+    // 목록에 같은 품목이 있어도 구매처·단가가 비어 있으면(이름만 등록된 경우) 이전 구매 내역으로 계속 찾음
+    if (found && (found.vendors || []).some((v) => v.vendor || v.unitPrice != null)) return found;
     // 목록에 없어도, 이전에 같은 이름으로 구매 정보를 입력한 요청이 있으면 그 내용(최근 순)으로 자동 입력
     const nk = (t) => (t || "").trim().toLowerCase().replace(/\s+/g, "");
     // 이름 뒤에 메모를 덧붙여 쓴 경우("핸드타월(1박스반 남았습니다)")도 같은 품목으로 봄: 괄호 안 내용은 빼고 비교하고, 한쪽 이름이 다른 쪽에 포함돼도(3글자 이상) 연결
@@ -5356,7 +5357,7 @@ function SupplyAdminView({ data, update, setToast }) {
     };
     const past = list.filter((x) => sameItem(x.itemName) && (x.vendor || x.unitPrice != null || x.totalPrice != null))
       .sort((a, b) => (b.purchasedAt || b.createdAt || "").localeCompare(a.purchasedAt || a.createdAt || ""));
-    if (!past.length) return null;
+    if (!past.length) return found || null;
     const vendors = [];
     past.forEach((x) => {
       const unitPrice = x.unitPrice != null ? Number(x.unitPrice)
@@ -5364,7 +5365,7 @@ function SupplyAdminView({ data, update, setToast }) {
       const method = x.purchaseMethod || "online";
       if (!vendors.some((v) => v.vendor === (x.vendor || "") && v.method === method)) vendors.push({ vendor: x.vendor || "", method, unitPrice });
     });
-    return { itemName, unit: past.map((x) => unitOf(x.unit)).find(Boolean) || "", vendors };
+    return { itemName, unit: past.map((x) => unitOf(x.unit)).find(Boolean) || unitOf(found?.unit) || "", vendors };
   };
 
   // 구매 정보(업체·구매방식·단가·구매가격) 입력 — 같이 요청한 묶음 전체를 한 모달에서, "+"로 자유롭게 추가하며 처리
