@@ -7301,6 +7301,7 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
 
     const mkTime = () => { const d = parseKey(boardDate); d.setHours(9, 0, 0, 0); const out = new Date(d.getTime() + 3600000); return { in: d.toISOString(), out: out.toISOString() }; };
     let overwrittenCount = 0;
+    let chainedCount = 0;
     update((d) => {
       let recs = [...d.records];
       coverValidParts.forEach((p, i) => {
@@ -7325,20 +7326,28 @@ function RecordsView({ data, update, saveConfirmed, dev, setToast }) {
           }
         }
         // 순수 대체가 아니거나(본인 정규 근무 + 추가), 아직 출퇴근 기록이 없는 경우엔 별도로 추가
-        const t = mkTime();
+        // 그날 같은 현장에서 이미 기본 근무(출퇴근)를 한 사람이면 그 퇴근 시각 바로 뒤로 이어 붙임.
+        // 길이는 근무자가 확인해 준 초과 시간(excessHours)이 있으면 그 시간, 없으면 1시간(금액은 flatPay가 정하므로 시간은 표시용)
+        const sameDay = recs.filter((r) => r.workerId === p.workerId && r.date === boardDate && r.clockOut && (r.siteId ? r.siteId === site.id : r.site === site.name));
+        const tr = (d.transfers || []).find((x) => x.date === boardDate && x.siteId === site.id && x.assignedWorkerId === p.workerId && Number(x.excessHours) > 0);
+        const baseEnd = sameDay.length ? Math.max(...sameDay.map((r) => new Date(r.clockOut).getTime())) : null;
+        const durMs = Math.max(0.25, Number(tr?.excessHours) || 1) * 3600000;
+        const chained = baseEnd != null && !Number.isNaN(baseEnd);
+        if (chained) chainedCount++;
+        const t = chained ? { in: new Date(baseEnd).toISOString(), out: new Date(baseEnd + durMs).toISOString() } : mkTime();
         recs.push({
           id: uid(), workerId: p.workerId, date: boardDate, site: site.name, siteId: site.id,
           clockIn: t.in, clockOut: t.out,
           flatPay: coverShares[i], oneOffStatus: "approved",
-          breakMinutes: null, note: noteBase, manual: true, isExtra: true,
+          breakMinutes: null, note: chained ? `${noteBase} (기본 근무 퇴근 시각 뒤로 연결)` : noteBase, manual: true, isExtra: true,
           inLoc: null, outLoc: null, inDist: null, outDist: null, outFlag: false,
         });
       });
       return { ...d, records: recs };
     });
-    setToast(overwrittenCount > 0
+    setToast((overwrittenCount > 0
       ? `등록했습니다 (${overwrittenCount}명은 이중 계산 방지를 위해 기존 출퇴근 금액을 배분액으로 바꿨어요)`
-      : "등록했습니다");
+      : "등록했습니다") + (chainedCount > 0 ? ` · ${chainedCount}명은 기본 근무 퇴근 시각 뒤로 이어서 추가했어요` : ""));
     setCoverOpen(false);
   };
 
